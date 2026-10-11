@@ -1864,7 +1864,7 @@ def test_war_dialer_sysop_failure_rolls_back_reset_and_audit(tmp_path, db_path, 
     before = admin.world_status(db_path, path)
     def fail_audit(*args, **kwargs):
         raise OSError("audit write failed")
-    monkeypatch.setattr(admin, "_audit", fail_audit)
+    monkeypatch.setattr(admin.wd, "_admin_audit", fail_audit)
     with pytest.raises(BackupError, match="audit write failed"):
         admin.change_competition(db_path, path, identity_dir=identity_dir, backup_to=tmp_path / "backup",
                                  confirm=path.name, reason="test", reset=True)

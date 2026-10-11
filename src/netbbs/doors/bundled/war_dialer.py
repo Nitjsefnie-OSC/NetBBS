@@ -65,6 +65,7 @@ XP earned" vs. "current HP" split any RPG already makes.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
@@ -78,7 +79,7 @@ import tempfile
 import time
 import unicodedata
 import zlib
-from contextlib import contextmanager, nullcontext, ExitStack
+from contextlib import closing, contextmanager, nullcontext, ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -6118,7 +6119,163 @@ def rolls_for_bust(action: str, target=None) -> bool:
     return action in ("trade", "job", "raid", "root")
 
 
+def inspect_world(world: Path) -> dict:
+    """Public host API: validate and read an existing world without changing it.
+
+    Does not settle clocks, migrate schemas, bind owners, or create a database.
+    Hosts retain their own path, size and owner policy around this inspection.
+    """
+    world = Path(world).expanduser().resolve()
+    with closing(sqlite3.connect(world.as_uri() + "?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
+        version = _world_schema_version(conn)
+        _validate_world_layout(conn, version)
+        if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise WorldStateError("War Dialer world failed SQLite integrity validation.")
+        meta = dict(conn.execute("SELECT key,value FROM meta WHERE key IN "
+                                 "('node_owner','active_season','maintenance','sysop_audit')"))
+        audit = json.loads(meta.get("sysop_audit", "[]"))
+        if not isinstance(audit, list):
+            raise WorldStateError("World audit data is invalid; preserve the world for recovery.")
+        result = {"world": str(world), "schema": version, "owner": meta.get("node_owner"),
+                  "maintenance": meta.get("maintenance", "off"),
+                  "stored_season": meta.get("active_season", "not started"),
+                  "recent_operations": audit[-10:]}
+        for table in ("players", "exchanges", "events"):
+            result[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        return result
+
+
+def _admin_audit(conn, action, *, operator, reason="", before=None, after=None,
+                 snapshot=None, node_backup=None):
+    row = conn.execute("SELECT value FROM meta WHERE key='sysop_audit'").fetchone()
+    entries = json.loads(row[0]) if row else []
+    if not isinstance(entries, list):
+        raise WorldStateError("World audit data is invalid; preserve the world for recovery.")
+    entry = {"at": to_iso(now_utc()), "action": action,
+             "operator": (operator or os.environ.get("USERNAME") or os.environ.get("USER") or "local SysOp")[:80],
+             "reason": reason[:240], "before_season": before, "after_season": after}
+    if snapshot is not None:
+        entry["snapshot"] = str(snapshot)
+    if node_backup is not None:
+        # Host-supplied evidence; the host, not the game, verifies its node backup.
+        entry["backup"] = node_backup["backup"]
+        entry["manifest_sha256"] = node_backup["manifest_sha256"]
+    conn.execute("INSERT INTO meta (key,value) VALUES ('sysop_audit',?) "
+                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                 (json.dumps([*entries[-99:], entry]),))
+
+
+def administer_world(world: Path, command: str, *, maintenance: bool | None = None,
+                     confirm: str = "", reason: str = "", operator: str | None = None,
+                     snapshot: Path | None = None, node_backup: dict | None = None) -> dict:
+    """Public host API, also used by --admin; returns the resulting status.
+
+    Status is read-only. Mutations own the exclusive session guard and audit
+    transaction. close-season/reset require maintenance, a reason and the exact
+    filename, and first back up SQLite (including WAL) to a fresh snapshot.
+    The optional node_backup mapping labels an independently verified host backup.
+    """
+    if command not in ("status", "maintenance", "close-season", "reset"):
+        raise ValueError(f"Unknown War Dialer administration command: {command}")
+    world = Path(world).expanduser().resolve()
+    status = inspect_world(world)  # Never manufacture a world for an admin typo.
+    if command == "status":
+        return status
+    if command == "maintenance" and not isinstance(maintenance, bool):
+        raise ValueError("Maintenance must be on or off.")
+    destructive = command in ("close-season", "reset")
+    if destructive and (confirm != world.name or not reason.strip() or len(reason) > 240):
+        raise WorldStateError("Confirm the exact world filename and supply a reason of 1-240 characters.")
+    with world_session(world, maintenance=True):
+        status = inspect_world(world)
+        if destructive:
+            if status["maintenance"] != "on":
+                raise WorldStateError("Enable maintenance first and close game sessions; no season was changed.")
+            # Reserve a fresh filename before connecting: never overwrite a backup
+            # (or the live database), including through a symlink or hard link.
+            if snapshot is None:
+                fd, name = tempfile.mkstemp(prefix=world.name + ".before-" + command + "-",
+                                            suffix=".db", dir=world.parent)
+                os.close(fd)
+                snapshot = Path(name)
+            else:
+                snapshot = Path(snapshot).expanduser().absolute()
+                with snapshot.open("xb"):
+                    pass
+            try:
+                with closing(sqlite3.connect(world.as_uri() + "?mode=ro", uri=True)) as source:
+                    with closing(sqlite3.connect(snapshot)) as saved:
+                        source.backup(saved)
+                        saved.execute("PRAGMA journal_mode=DELETE")
+                inspect_world(snapshot)
+            except BaseException:
+                snapshot.unlink(missing_ok=True)
+                raise
+        with closing(connect(world)) as conn:
+            with _write_transaction(conn):
+                if command == "maintenance":
+                    value = "on" if maintenance else "off"
+                    conn.execute("INSERT INTO meta (key,value) VALUES ('maintenance',?) "
+                                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (value,))
+                    _admin_audit(conn, "maintenance " + value, operator=operator)
+                else:
+                    now = now_utc()
+                    # Settle overdue natural cutoffs on their original calendar.
+                    _settle_world(conn, now)
+                    before = current_world_season(conn, now)
+                    season = before + 1
+                    conn.execute("UPDATE meta SET value=? WHERE key='season_anchor'",
+                                 (to_iso(now - (season - 1) * SEASON),))
+                    _settle_world(conn, now)
+                    if command == "reset":
+                        conn.execute("DELETE FROM events")
+                        if _world_schema_version(conn) >= 9:
+                            conn.execute("DELETE FROM scene")
+                    _admin_audit(conn, "reset competition" if command == "reset" else "advance season",
+                                 operator=operator, reason=reason, before=before, after=season,
+                                 snapshot=snapshot, node_backup=node_backup)
+        return inspect_world(world)
+
+
+def admin_main(argv=None) -> int:
+    """CLI adapter; no drop file, caller terminal, or NetBBS installation needed."""
+    parser = argparse.ArgumentParser(description="Inspect or maintain a War Dialer world.")
+    parser.add_argument("--admin", choices=("status", "maintenance", "close-season", "reset"), required=True)
+    parser.add_argument("state", nargs="?", choices=("on", "off"))
+    parser.add_argument("--world", type=Path, help="existing world; defaults to WAR_DIALER_DB_PATH")
+    parser.add_argument("--json", action="store_true", help="machine-readable status or error")
+    parser.add_argument("--confirm", default="", help="exact world filename for close-season/reset")
+    parser.add_argument("--reason", default="", help="reason for close-season/reset, 1-240 characters")
+    parser.add_argument("--snapshot", type=Path, help="fresh snapshot filename; default beside the world")
+    parser.add_argument("--operator", help="operator label for the world's audit")
+    args = parser.parse_args(argv)
+    if (args.admin == "maintenance") != (args.state is not None):
+        parser.error("maintenance requires on or off; other commands take no state")
+    try:
+        result = administer_world(args.world if args.world is not None else _resolve_db_path(), args.admin,
+                                  maintenance=args.state == "on", confirm=args.confirm, reason=args.reason,
+                                  snapshot=args.snapshot, operator=args.operator)
+    except (WorldStateError, OSError, sqlite3.Error, ValueError) as exc:
+        message = _event_plain(str(exc))[:500]
+        if args.json:
+            print(json.dumps({"error": message}))
+        else:
+            print(textwrap.fill("War Dialer operation failed: " + message, width=80), file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result))
+    else:
+        for key, value in result.items():
+            rendered = json.dumps(value, ensure_ascii=True) if isinstance(value, list) else str(value)
+            print(textwrap.fill(f"{key}: {_event_plain(rendered)}", width=80))
+    return 0
+
+
 def main() -> int:
+    if "--admin" in sys.argv[1:] or any(arg.startswith("--admin=") for arg in sys.argv[1:]):
+        return admin_main()
     global _OUTPUT_WIDTH
 
     sys.stdout.reconfigure(encoding="utf-8")

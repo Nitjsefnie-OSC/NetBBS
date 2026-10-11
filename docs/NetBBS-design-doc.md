@@ -15364,13 +15364,23 @@ an unbound world never stays unbound past its first launch. Rejected:
   a lockout.
 
 **Decision 4 — administration moves into the door, and NetBBS wraps it.**
-`war_dialer.py --admin` will offer `status`, `maintenance`, `close-season`
+`war_dialer.py --admin` offers `status`, `maintenance`, `close-season`
 and `reset`. Its backup is a SQLite-consistent snapshot taken with SQLite's
 backup API under the door's own maintenance lock, never a copy of the `.db`
 file alone, whose latest committed pages may still be in the `-wal` file.
 This is the same rule as the node backup's world component above.
 NetBBS's `war_dialer_admin` calls these commands and keeps its own
 requirement of a verified node backup before a destructive operation.
+The documented `administer_world` function is the in-process equivalent of
+the CLI; NetBBS uses it so the console and CLI share the same transactions.
+`status` remains read-only. Every mutation records an audit entry, and reset
+retains player identities, account age, ownership and the latest 100 entries.
+Destructive commands require maintenance on, the exact world filename and a
+reason; maintenance stays on afterward. Snapshots default to a fresh file
+beside the world, or `--snapshot` names a new file; existing files are refused.
+`--world` overrides `WAR_DIALER_DB_PATH`, and `--json` selects machine-readable
+status/errors. Backup inspection uses `inspect_world`; hosts still enforce
+their own path and ownership policy and use `world_session` for maintenance.
 Rejected: administration that only NetBBS provides, which would leave
 another BBS's SysOp no season or reset tools.
 
