@@ -16,7 +16,8 @@ from netbbs.net.admin_flow import _load_chrome
 from netbbs.net.breadcrumb_preference import set_breadcrumb_collapsed_enabled
 from netbbs.net.char_input import EditorKey, EditorKeyKind
 from netbbs.net.menu_description_preference import set_menu_description_level
-from netbbs.rendering import strip_ansi, visible_width
+from netbbs.net.redraw_preference import set_redraw_in_place_enabled
+from netbbs.rendering import clear_screen, strip_ansi, visible_width
 from tests.test_bot_runtime import db, lane, sysop, channel, FakeSession  # noqa: F401
 
 
@@ -79,6 +80,23 @@ def test_catalogue_actions_and_prompt_fit_the_terminal(db, lane, sysop, count, w
     asyncio.run(bot_flow.bot_menu(session, lane, sysop))
     assert len(session.plain.splitlines()) <= 24
     assert all(visible_width(line) <= width for line in session.plain.splitlines())
+
+
+@pytest.mark.parametrize("populated", [False, True])
+def test_catalogue_redraw_starts_the_breadcrumb_on_the_first_row(db, lane, sysop, populated):
+    if populated:
+        save_bot(db, actor=sysop, name="Baud", channels=[], defaults=[])
+    set_redraw_in_place_enabled(db, sysop, True)
+    set_breadcrumb_collapsed_enabled(db, sysop, False)
+    # Check both entry and the return from another screen.
+    session = Screen(["m", "b", "b"])
+    session.node_display_name = "Reliable Link"
+    asyncio.run(bot_flow.bot_menu(session, lane, sysop))
+    frames = "".join(session.written).split(clear_screen())[1:]
+    catalogue_frames = [strip_ansi(frame) for frame in frames if "Bots read addressed" in strip_ansi(frame)]
+    assert len(catalogue_frames) == 2
+    for frame in catalogue_frames:
+        assert frame.splitlines()[0] == "Reliable Link \u203a Chat bots"
 
 
 @pytest.mark.parametrize("collapsed,width", [(True, 80), (False, 40)])
