@@ -76,7 +76,7 @@ async def bot_menu(session, lane, actor):
                       MenuEntry(label=menu_key("S", "top all"), brief="Stop every bot persistently"),
                       MenuEntry(label=menu_key("M", "odel settings"), brief="Provider, privacy and budgets"),
                       MenuEntry(label=menu_key("U", "sage"), brief="Spending, callers and limits")),
-            masthead="Bots read addressed messages by default. Broader access and Linked channels require explicit grants. Changes apply within a second.",
+            preamble="Bots read addressed messages by default. Broader access and Linked channels require explicit grants. Changes apply within a second.",
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
             collapsed=chrome.collapsed, header_color=chrome.header_color,
             accent_color=chrome.accent_color, description_level=description_level,
@@ -225,7 +225,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 title=label, breadcrumb=breadcrumb,
                 empty_message=("No public sources are available." if key in ("boards", "files") else
                                "No eligible channels. Channel-specific grants require allowed channels first."),
-                masthead="Select rows to toggle; [B]ack returns to the draft. Save the bot to apply changes.",
+                preamble="Select rows to toggle; [B]ack returns to the draft. Save the bot to apply changes.",
                 live_label=lambda: f"{len(values[key])} selected", on_toggle=toggle, **chrome_args,
             )
 
