@@ -1037,7 +1037,9 @@ async def pick_item(
                 # return from a cancelled create were all appending
                 # below the editor instead of replacing it.
                 await session.write(clear_screen())
-            heading = "\r\n" + screen_title(
+            # After a clear, the breadcrumb belongs on the first row.
+            # Keep the separator when appending or following a masthead.
+            heading = ("\r\n" if prefix or not redraw_in_place else "") + screen_title(
                 title, breadcrumb=(session.node_display_name, *breadcrumb),
                 width=render_width, clear=False, unicode_style=unicode_style,
                 collapsed=collapsed, header_color=header_color,
