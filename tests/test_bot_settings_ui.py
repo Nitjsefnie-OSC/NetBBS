@@ -78,10 +78,12 @@ def test_catalogue_actions_and_prompt_fit_the_terminal(db, lane, sysop, count, w
     assert all(visible_width(line) <= width for line in session.plain.splitlines())
 
 
-def test_collapsed_preference_reaches_bot_editor_and_resource_picker(db, lane, sysop):
+@pytest.mark.parametrize("collapsed,width", [(True, 80), (False, 40)])
+def test_collapsed_preference_reaches_bot_editor_and_resource_picker(db, lane, sysop, collapsed, width):
     create_channel(db, "Lobby", creator=sysop)
-    set_breadcrumb_collapsed_enabled(db, sysop, True)
-    session = Screen(["c", "0", "3", "b", "b", "b"])
+    set_breadcrumb_collapsed_enabled(db, sysop, collapsed)
+    session = Screen(["c", "0", "3", "b", "b", "b"], width=width)
+    session.node_display_name = "A moderately long NetBBS name"
     asyncio.run(bot_flow.bot_menu(session, lane, sysop))
     lines = session.plain.splitlines()
     assert "Chat bots" in lines

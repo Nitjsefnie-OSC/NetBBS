@@ -1583,7 +1583,9 @@ async def pick_item(
                 highlighted = None
                 page_items = await _render()
             else:
-                await session.write(reject_keystroke())
+                # Paging keys have not been echoed; erasing one would
+                # backspace into the Choice prompt instead.
+                await session.write("\a")
             continue
         if step == -1:
             if page_start > 0:
@@ -1598,7 +1600,7 @@ async def pick_item(
                 highlighted = None
                 page_items = await _render()
             else:
-                await session.write(reject_keystroke())
+                await session.write("\a")
             continue
 
         if key.kind != EditorKeyKind.CHAR or key.char is None:
