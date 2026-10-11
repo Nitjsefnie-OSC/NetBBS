@@ -6,6 +6,7 @@ from netbbs.bots.model import ModelSettings, SECRET_KEY, settings, save_settings
 from netbbs.bots.registry import BotError, require_sysop
 from netbbs.config import get_config
 from netbbs.net.confirm import prompt_yes_no
+from netbbs.net.menu_description_preference import menu_description_level
 from netbbs.net.resource_editor import (
     FieldSpec, InputCancelled, bool_field, bool_step, choice_field, choice_step,
     edit_resource_draft, inline_field, read_field_line, text_field, write_field_prompt,
@@ -89,6 +90,7 @@ async def model_editor(session, lane, actor, chrome):
         preamble="Optional: run Ollama or llama.cpp locally first. Only explicitly addressed conversation is submitted after caller disclosure. No provider request happens on this screen. Install netbbs[bots] if HTTP support is missing. Changes take effect on the next request.",
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
         collapsed=chrome.collapsed, header_color=chrome.header_color,
+        accent_color=chrome.accent_color, description_level=await lane.run(menu_description_level, actor),
     )
 
 

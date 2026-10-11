@@ -1,7 +1,7 @@
 """Explicit content sources whose metadata is safe for every channel audience."""
-from netbbs.boards.boards import BoardError, get_board_by_name
+from netbbs.boards.boards import BoardError, get_board_by_name, list_boards
 from netbbs.boards.posts import visible_post
-from netbbs.files.areas import FileAreaError, get_file_area_by_name
+from netbbs.files.areas import FileAreaError, get_file_area_by_name, list_file_areas
 from netbbs.bots.registry import BotError, allowed_channel, get_bot, local_channel
 from netbbs.communities import get_effective_min_read_level, get_effective_min_age, get_effective_name_requirement
 from netbbs.link.enforcement import envelope_content_visible, decide_node_action, LinkPolicyAction
@@ -15,6 +15,18 @@ def _public(db, resource):
             get_effective_name_requirement(db, resource) is not None):
         raise BotError("Announcement sources must be readable by everyone, including inherited Community gates.")
     return resource
+
+
+def public_sources(db, *, kind):
+    """Visible resources whose inherited audience gates permit announcements."""
+    resources = list_boards(db) if kind == "boards" else list_file_areas(db)
+    result = []
+    for resource in resources:
+        try:
+            result.append(_public(db, resource))
+        except BotError:
+            continue
+    return result
 
 
 def validate_sources(db, board_names, area_names, destination_name, allowed, approved, *, announce_posts, announce_files):

@@ -14356,6 +14356,17 @@ The bot that ships with NetBBS gets no privilege that others lack. What
 protects callers is consent and transparency, and a code privilege would
 add nothing: NetBBS is open source, and a SysOp can change its chat code.
 
+The SysOp bot editor selects channels, board sources and file-area sources
+from searchable lists with selection markers; it does not require typing
+resource names. Channel-specific grants offer the draft's allowed channels,
+Linked approvals offer its Linked channels, and sources offer only resources
+readable by everyone. The announcement destination is a single-choice picker
+with an explicit none option. Toggling a list updates only the draft; Back
+returns to the editor and Save applies it with the existing access approvals.
+Removing an allowed channel clears its dependent grants and destination in
+the draft. Existing unavailable grants stay visible for removal. Names,
+program arguments, provider details and numeric budgets remain editable text.
+
 **Decision 5 (locked in): the bot API.**
 - **Process.** A bot is an external program that NetBBS starts and
   supervises, like a native door. A crash restarts it with backoff and never

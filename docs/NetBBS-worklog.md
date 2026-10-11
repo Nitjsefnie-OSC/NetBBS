@@ -2109,6 +2109,15 @@ shorter brief.
 
 ### Picker line width
 
+`pick_item(on_toggle=...)` keeps paging, highlighting and Find inside the
+picker while a caller edits a multi-selection draft. Find must not toggle a
+single match: resource searches cannot grant bot access as a side effect.
+List-valued draft fields replace their list on each edit rather than mutating
+it in place, because the resource editor's original draft is a shallow copy
+used to detect unsaved changes. Both descriptive and compact navigation
+budgets include `live_nav`; omitting the caller's actions can move the prompt
+off screen even when the ordinary picker navigation fits.
+
 `netbbs.net.picker.pick_item` truncates each rendered row to terminal width
 (`truncate`, `netbbs.net.picker.py`) — the 2-digit selector, `name_of`, and
 `description_of` all share that one line. This is invisible until an item's
