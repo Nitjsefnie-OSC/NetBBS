@@ -16247,20 +16247,50 @@ add nothing: NetBBS is open source, and a SysOp can change its chat code.
   `BOT_API_VERSION`.
   - NetBBS sends events: a line, a join or a leave, a new post or file in an
     area the bot watches, and a timer tick.
-  - The bot sends actions: say a line in a channel, reply to a user, and read
-    or write its own state.
+  - The bot sends actions: say a line in a channel, reply to a user, read
+    or write its own state, and make specifically permitted node queries.
   - The door hook's file drop is rejected for this: a bot has to receive
     events as they happen.
-- **Scopes,** which the SysOp grants per bot and per channel:
-  - `addressed`, the default: the bot sees only lines that name it or use its
-    command prefix;
+- **Scopes** are explicit and additive. The SysOp grants them per bot and
+  per source channel, board or file area as applicable:
+  - `addressed`, the default: the bot receives only messages directed to it,
+    through explicit naming or the channel's default-bot commands below;
   - `channel`: everything said in the channel;
-  - `events`: posts, files, joins and leaves.
+  - `events`: posts, files, joins and leaves from specifically approved
+    sources. Greetings require join events from the approved channel;
+    announcements require events from approved boards or file areas.
 
   A grant of `channel` comes with a warning. While a bot holds it, the
   channel's heading and `/who` say that the bot reads the channel.
+  Enabling an ability shows the SysOp the additional access it needs and
+  requires the corresponding explicit grants.
+- **Node queries** have specific permissions for statistics and `!seen`,
+  rather than general database access. `!seen` follows the requesting
+  caller's visibility rules and reports when someone was last online,
+  without exposing their private-channel activity.
+- **Announcement audiences.** Initially, automatic announcements may carry
+  information only from boards and file areas readable by every caller
+  allowed into the destination channel. NetBBS refuses a source-to-channel
+  mapping if it cannot establish this; even a restricted post's title must
+  not leak through an announcement.
+- **Addressing.** Explicit names work for commands and conversation alike:
+  `Baud.bot: help` or `Baud.bot: <message>`. Each channel may have one default
+  bot, selected locally by each node. Short commands such as `!help` and
+  `!seen` go only to that bot. Without a default, NetBBS explains how to
+  address one explicitly. Ordinary chat never triggers the default bot.
+  - A remote bot requires its node-qualified identity, such as
+    `Baud.bot@Node: help`, resolved through existing Link identity rules.
+    A command is never broadcast to every bot with the same name.
+  - Only the caller's own node handles their shorthand commands; other
+    nodes in a Linked channel do not dispatch that shorthand to their
+    defaults.
+  - Each eligible live human message selects at most one bot. Bot messages,
+    announcements and replayed scrollback never become new requests;
+    bots cannot automatically trigger other bots.
 - **Memory.** Each bot has a store of its own under `<db>.bots/<name>/`,
-  mirroring doors' `<db>.doors/<name>/`, and backups include it.
+  mirroring doors' `<db>.doors/<name>/`, and backups include it. Persistent
+  state such as reminders is separate from the temporary language-model
+  conversation context described below.
 
 **Decision 6 (locked in): the house bot, `Baud`.**
 - **Off by default.** The SysOp switches it on, chooses its channels and may
@@ -16275,9 +16305,11 @@ add nothing: NetBBS is open source, and a SysOp can change its chat code.
   - reminders;
   - greetings and announcements of new posts and files, each switched on
     separately.
-- **Scope.** `!seen`, greetings and announcements come from facts the node
-  already holds, through `events` and node queries. Baud therefore runs with
-  `addressed` alone unless the SysOp grants more.
+- **Scope.** Baud starts with `addressed` alone; help and reminders work
+  with that scope. Enabling greetings or announcements requires the
+  corresponding source-specific `events` grants. Statistics and `!seen`
+  require their specific node-query permissions. These abilities do not
+  require access to ordinary channel conversation.
 
 **Decision 7 (locked in): conversation through a language model is narrow
 and off by default.**
@@ -16286,11 +16318,22 @@ and off by default.**
 - **Provider.** Any endpoint that speaks the OpenAI-compatible API. A model on
   the SysOp's own machine (Ollama, llama.cpp) is offered first: no chat
   leaves the node and nothing costs money per request.
-- **What the model sees.** Only lines addressed to the bot, plus at most N
-  lines of context; the SysOp sets N, and it may be 0. Ordinary chat is never
-  sent.
-- **Callers are told.** The first time a caller addresses it, the bot says
-  once what is sent and to whom, before anything is sent.
+- **What the model sees.** Only the caller's message addressed to the bot,
+  plus at most N lines of prior context; the SysOp sets N, and it may be 0.
+  Context is separate for each authenticated caller, bot instance and
+  channel, and contains only that caller's addressed messages and the bot's
+  replies to them. Ordinary chat and other callers' exchanges never enter
+  it. Replies remain visible in the channel where the caller addressed the
+  bot; separate context does not make channel conversation private.
+- **Context lifetime.** Context stays in memory only, expires after 30
+  minutes of inactivity, and is cleared on restart. A caller has an explicit
+  command to clear their current conversation context. The command explains
+  that it does not delete channel scrollback or provider-held records.
+- **Callers are told.** The first conversational request receives a notice
+  identifying the provider, context policy and whether prompt logging is
+  enabled. That request is neither forwarded nor retained as context; the
+  caller submits again to proceed. Disclosure is repeated when any of those
+  settings change.
 - **Limits.** NetBBS enforces these on top of the provider's own:
   - a node budget per day and per month;
   - a per-user daily quota;
