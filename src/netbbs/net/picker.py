@@ -308,6 +308,7 @@ async def pick_item(
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
     start_stable_id: int | None = None,
     masthead: str | Callable[[], Awaitable[str]] = "",
+    preamble: str = "",
     selectable_of: Callable[[T], bool] | None = None,
     slot_art: SlotArt | None = None,
     slot_column_of: Callable[[T], str] | None = None,
@@ -542,6 +543,11 @@ async def pick_item(
     `screen_title` call below and the redraw-in-place clear (if wanted)
     is issued by hand *before* the masthead instead.
 
+    `preamble` is explanatory text below the title and above the rows,
+    including for an empty list. It wraps and is included in the page
+    budget. Use this for instructions; `masthead` is reserved for banners.
+    A preamble uses the generated layout: slot art has no place for it.
+
     `selectable_of` (issue #920), if given, marks the rows that are shown
     but cannot be picked: the mail To prompt's list shows the people the
     caller cannot write to, each with the reason as its description. Such a
@@ -644,6 +650,9 @@ async def pick_item(
         # further up. Measured rather than assumed to be one line,
         # because a SysOp-authored masthead can be several.
         lines = 0
+        if preamble:
+            width, _ = _dimensions()
+            lines += wrap_terminal_text(preamble, max(1, width)).count("\r\n") + 1
         if masthead_text and not redraw_in_place:
             # The blank row `_masthead_prefix` adds to get off the
             # "Choice: " line (Codex review). It is a physical row, and
@@ -860,7 +869,7 @@ async def pick_item(
         """Whether this render draws the list into the SysOp's art; see
         `slot_art` above for when it does not."""
         art = slot_art
-        if art is None or art.list is None or art.problems or not working_set:
+        if preamble or art is None or art.list is None or art.problems or not working_set:
             return False
         if getattr(session, "output_charset", None) == ASCII:
             return False
@@ -1035,6 +1044,8 @@ async def pick_item(
                 node_name_gradient=session.node_name_gradient,
             )
             await session.write_line(heading)
+            if preamble:
+                await session.write_line(colored(preamble, fg_color=MUTED_COLOR))
             await session.write_line(colored(empty_message, fg_color=MUTED_COLOR))
             entries = []
             if working_set is not items and items:
@@ -1071,7 +1082,7 @@ async def pick_item(
             )
             # Empty catalogues still use the normal menu vocabulary. Keep
             # the compact fallback when descriptions would hide the prompt.
-            drawn = (prefix, heading, empty_message, nav, trailer, *notice_lines)
+            drawn = (prefix, heading, preamble, empty_message, nav, trailer, *notice_lines)
             rows = sum(wrap_terminal_text(line, render_width).count("\r\n") + 1 for line in drawn if line)
             if description_level == "off" or rows + 2 > render_height:
                 nav = action_bar([entry.label for entry in entries], width=render_width, height=render_height)
@@ -1201,6 +1212,8 @@ async def pick_item(
                 unicode_style=unicode_style, collapsed=collapsed,
                 header_color=header_color, node_name_gradient=session.node_name_gradient)
         )
+        if preamble:
+            await session.write_line(colored(preamble, fg_color=MUTED_COLOR))
         # Issue #528. Decided per render against the live terminal
         # width, so a resize mid-session gets whichever form actually
         # fits rather than the one that fitted on entry. `None` here
@@ -1571,7 +1584,9 @@ async def pick_item(
                 highlighted = None
                 page_items = await _render()
             else:
-                await session.write(reject_keystroke())
+                # Paging keys have not been echoed; erasing one would
+                # backspace into the Choice prompt instead.
+                await session.write("\a")
             continue
         if step == -1:
             if page_start > 0:
@@ -1586,7 +1601,7 @@ async def pick_item(
                 highlighted = None
                 page_items = await _render()
             else:
-                await session.write(reject_keystroke())
+                await session.write("\a")
             continue
 
         if key.kind != EditorKeyKind.CHAR or key.char is None:

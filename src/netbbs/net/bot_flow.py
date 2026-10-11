@@ -68,7 +68,7 @@ async def bot_menu(session, lane, actor):
             session, await refresh(),
             name_of=lambda b: f"{b.label} ({statuses.get(b.id, ('stopped', ''))[0] if b.enabled else 'off'})",
             stable_id_of=lambda b: b.id,
-            description_of=description, title="Chat bots", breadcrumb=("SysOp", "Content"),
+            description_of=description, title="Chat bots",
             empty_message="No bots installed. Create an instance of Baud to get started.",
             refresh=refresh, on_create=create, live_keys={"s": stop_all, "m": model_settings, "u": model_usage}, item_keys={"k": stop_one, "d": delete_one},
             live_nav=(MenuEntry(label=menu_key("K", "ill selected"), brief="Stop this bot persistently"),
@@ -76,7 +76,7 @@ async def bot_menu(session, lane, actor):
                       MenuEntry(label=menu_key("S", "top all"), brief="Stop every bot persistently"),
                       MenuEntry(label=menu_key("M", "odel settings"), brief="Provider, privacy and budgets"),
                       MenuEntry(label=menu_key("U", "sage"), brief="Spending, callers and limits")),
-            masthead="Bots read addressed messages by default. Broader access and Linked channels require explicit grants. Changes apply within a second.",
+            preamble="Bots read addressed messages by default. Broader access and Linked channels require explicit grants. Changes apply within a second.",
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
             collapsed=chrome.collapsed, header_color=chrome.header_color,
             accent_color=chrome.accent_color, description_level=description_level,
@@ -180,13 +180,12 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 collapsed=chrome.collapsed, header_color=chrome.header_color,
                 accent_color=chrome.accent_color, description_level=description_level,
             )
-            breadcrumb = ("SysOp", "Content", "Chat bots", bot.label if bot else "New bot")
             if not multiple:
                 # A real None entry clears the field; Back keeps its value.
                 options = [None, *eligible]
                 picked = await pick_item(
                     session, list(enumerate(options)), name_of=lambda row: row[1] or "(none)",
-                    stable_id_of=lambda row: row[0], title=label, breadcrumb=breadcrumb,
+                    stable_id_of=lambda row: row[0], title=label,
                     empty_message="No allowed channels.", **chrome_args,
                 )
                 if picked is not None:
@@ -222,10 +221,10 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                     (name, chrome.accent_color),
                 ),
                 description_of=lambda name: "Unavailable; remove this grant" if name not in eligible else None,
-                title=label, breadcrumb=breadcrumb,
+                title=label,
                 empty_message=("No public sources are available." if key in ("boards", "files") else
                                "No eligible channels. Channel-specific grants require allowed channels first."),
-                masthead="Select rows to toggle; [B]ack returns to the draft. Save the bot to apply changes.",
+                preamble="Select rows to toggle; [B]ack returns to the draft. Save the bot to apply changes.",
                 live_label=lambda: f"{len(values[key])} selected", on_toggle=toggle, **chrome_args,
             )
 
@@ -266,7 +265,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                   "Install trusted programs only: they run as the NetBBS OS user, not in a security sandbox."),
     ]
     return await edit_resource_draft(
-        session, lane, title="Edit chat bot" if bot else "Create chat bot", breadcrumb=("SysOp", "Content", "Chat bots"),
+        session, lane, title="Edit chat bot" if bot else "Create chat bot",
         fields=fields, draft=draft, save=save, error_type=BotError, save_menu_text=menu_key("S", "ave"),
         back_menu_text=menu_key("B", "ack"), preamble=status + "Addressed-only by default. Read whole channels shares other callers' conversation with the program; grant only deliberately. Replies, reminders and greetings are public. "
         "Baud supports help, remind, reminders and cancel; stats, seen and model conversation require their own grants. "

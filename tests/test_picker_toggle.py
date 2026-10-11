@@ -10,7 +10,8 @@ from tests.test_bot_settings_ui import Screen
 
 @pytest.mark.parametrize("width", [40, 80])
 @pytest.mark.parametrize("description_level", ["off", "brief"])
-def test_selection_count_and_instructions_fit_with_many_resources(width, description_level):
+@pytest.mark.parametrize("redraw", [False, True])
+def test_selection_count_and_instructions_fit_with_many_resources(width, description_level, redraw):
     items = [f"channel {i:02d}" for i in range(50)]
     session = Screen(["b"], width=width, height=24)
 
@@ -20,10 +21,12 @@ def test_selection_count_and_instructions_fit_with_many_resources(width, descrip
     asyncio.run(pick_item(
         session, items, name_of=str, stable_id_of=items.index,
         title="Channels", empty_message="None", on_toggle=toggle,
-        masthead="Select rows to toggle; [B]ack returns to the draft. Save the bot to apply changes.",
+        preamble="Select rows to toggle; [B]ack returns to the draft. Save the bot to apply changes.",
+        redraw_in_place=redraw,
         live_label=lambda: "32 selected", description_level=description_level,
     ))
     assert len(session.plain.splitlines()) <= 24
+    assert session.plain.index("Channels") < session.plain.index("Select rows") < session.plain.index("channel 00")
 
 
 def test_toggles_keep_the_page_and_accept_numbers_enter_and_space():

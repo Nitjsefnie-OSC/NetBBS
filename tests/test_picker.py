@@ -479,6 +479,38 @@ def test_repeated_invalid_keys_produce_nothing_but_an_echo_and_a_bell():
     assert result["value"] is None
 
 
+def test_page_boundary_keys_do_not_erase_the_choice_prompt():
+    async def handler(session: Session):
+        await pick_item(
+            session, ["only item"], name_of=str, stable_id_of=lambda _: 1,
+            title="Test", empty_message="none",
+        )
+
+    async def scenario():
+        server = await _run_server(handler)
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", server.port)
+            try:
+                await skip_initial_negotiation(reader, writer)
+                assert b"Choice: " in await _read_until_quiet(reader)
+                # Left/Right, PgUp/PgDn and < > arrive unechoed. Repeating
+                # a boundary key must never backspace into the prompt.
+                keys = b"\x1b[D\x1b[C\x1b[5~\x1b[6~<>" * 8
+                writer.write(keys)
+                await writer.drain()
+                assert await _read_until_quiet(reader) == b"\a" * 48
+                writer.write(b"b")
+                await writer.drain()
+                await _read_until_quiet(reader)
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
 # -- search ----------------------------------------------------------------
 
 
