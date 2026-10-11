@@ -546,6 +546,7 @@ async def pick_item(
     `preamble` is explanatory text below the title and above the rows,
     including for an empty list. It wraps and is included in the page
     budget. Use this for instructions; `masthead` is reserved for banners.
+    A preamble uses the generated layout: slot art has no place for it.
 
     `selectable_of` (issue #920), if given, marks the rows that are shown
     but cannot be picked: the mail To prompt's list shows the people the
@@ -868,7 +869,7 @@ async def pick_item(
         """Whether this render draws the list into the SysOp's art; see
         `slot_art` above for when it does not."""
         art = slot_art
-        if art is None or art.list is None or art.problems or not working_set:
+        if preamble or art is None or art.list is None or art.problems or not working_set:
             return False
         if getattr(session, "output_charset", None) == ASCII:
             return False

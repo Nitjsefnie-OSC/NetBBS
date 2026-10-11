@@ -190,6 +190,19 @@ def _last_screen(session) -> list[str]:
     return _screen(text[text.rfind(ESC + "[2J"):])
 
 
+def test_preamble_uses_generated_layout_so_instructions_stay_visible():
+    session = SlotSession(["b"])
+    art = parse_slot_art(LIST_ART, require_menu=False, require_list=True)
+    asyncio.run(pick_item(
+        session, BOARDS, name_of=str, stable_id_of=BOARDS.index,
+        title="Message boards", empty_message="No boards.", slot_art=art,
+        preamble="Select the board to open.",
+    ))
+    text = strip_ansi("".join(session.written))
+    assert text.index("Message boards") < text.index("Select the board to open.") < text.index("General")
+    assert "+------------------------------------------+" not in text
+
+
 def test_a_page_fills_the_region_and_the_prompt_goes_below_the_art():
     picked, session = _pick(["b"])
     assert picked is None
