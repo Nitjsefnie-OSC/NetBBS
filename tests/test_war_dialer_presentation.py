@@ -311,6 +311,24 @@ def test_read_key_with_timeout_returns_none_when_nothing_arrives():
     assert result is None
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows inherited pipe API")
+def test_windows_poll_needs_no_set_blocking_and_detects_closed_pipe(monkeypatch):
+    monkeypatch.delattr(os, "set_blocking", raising=False)
+    read_fd, write_fd = os.pipe()
+    try:
+        assert wd._poll_read_key_windows(read_fd, 0.01) is None
+        os.write(write_fd, b"x")
+        os.close(write_fd)
+        write_fd = None
+        assert wd._poll_read_key_windows(read_fd, 0.1) == "x"
+        with pytest.raises(EOFError):
+            wd._poll_read_key_windows(read_fd, 0.1)
+    finally:
+        if write_fd is not None:
+            os.close(write_fd)
+        os.close(read_fd)
+
+
 def test_press_any_key_consumes_full_csi_sequence_over_a_real_pipe():
     # Codex review (PR #241/#242): the strongest form of this regression
     # test -- exercises the REAL read_key() and REAL

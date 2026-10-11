@@ -393,6 +393,12 @@ one as new would silently reset a truncated world. Keep a simultaneous initial
 connect regression, because a check-then-create sequence exposes an empty file.
 The world filesystem must support hard links (the normal NetBSD/NTFS paths do).
 
+War Dialer's Windows input lookahead uses `PeekNamedPipe` before an unbuffered
+read. Python 3.11 has no Windows `os.set_blocking`, and Windows `select` accepts
+only sockets. Keep this path covered by real pipes, including idle timeout,
+queued control sequences and closed-writer EOF; newer Python alone misses the
+minimum-version compatibility failure.
+
 War Dialer maintenance uses a separate rollback-journal SQLite file at
 `<world>.sessions`. Play retains a read transaction for the complete process;
 maintenance retains BEGIN EXCLUSIVE. Do not use WAL for this guard: WAL readers

@@ -482,10 +482,8 @@ def _read_key_with_timeout(timeout: float) -> str | None:
     original PR #239 leak (right-arrow silently firing Crew Recruit)
     fully reproducible there. `select()` genuinely works for this on
     POSIX (a pipe or tty fd), so it's tried first; the Windows fallback
-    instead polls via short non-blocking `os.read()` attempts, verified
-    directly to behave correctly on a real Windows pipe fd (unlike
-    `select()`) -- `os.set_blocking()` is implemented for pipe handles
-    on Windows specifically for this kind of non-blocking-I/O use."""
+    peeks at the pipe before reading, including on Python 3.11 where
+    `os.set_blocking()` is unavailable on Windows."""
     if _PENDING_INPUT:
         return read_key()
     fd = sys.stdin.fileno()
@@ -502,6 +500,43 @@ def _poll_read_key_windows(fd: int, timeout: float) -> str | None:
     """Windows-only fallback for `_read_key_with_timeout` -- see that
     function's own docstring for why `select()` can't be used here."""
     deadline = time.monotonic() + timeout
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.GetFileType.argtypes = [wintypes.HANDLE]
+        kernel.GetFileType.restype = wintypes.DWORD
+        kernel.PeekNamedPipe.argtypes = [
+            wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+            ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p,
+        ]
+        kernel.PeekNamedPipe.restype = wintypes.BOOL
+        handle = msvcrt.get_osfhandle(fd)
+        kind = kernel.GetFileType(handle)
+        while True:
+            if kind == 1 or (kind == 2 and msvcrt.kbhit()):
+                break
+            if kind == 3:
+                available = wintypes.DWORD()
+                if not kernel.PeekNamedPipe(handle, None, 0, None,
+                                             ctypes.byref(available), None):
+                    error = ctypes.get_last_error()
+                    if error in (109, 232):
+                        raise EOFError("stdin closed")
+                    raise ctypes.WinError(error)
+                if available.value:
+                    break
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(min(_WINDOWS_POLL_INTERVAL_SECONDS,
+                           max(0, deadline - time.monotonic())))
+        data = os.read(fd, 1)
+        if not data:
+            raise EOFError("stdin closed")
+        return data.decode("ascii", errors="replace")
+    # POSIX tests also exercise this fallback with select deliberately failing.
     os.set_blocking(fd, False)
     try:
         while True:
