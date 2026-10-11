@@ -236,7 +236,8 @@ def test_editor_requires_explicit_link_approval_before_persisting(tmp_path, monk
             return next(answers)
 
         async def editor(session, lane, **kwargs):
-            draft = {**kwargs["draft"], "channels": channel.name, "linked": channel.name, "enabled": True}
+            draft = {**kwargs["draft"], "channels": channel.name, "linked": channel.name,
+                     "reading": channel.name, "enabled": True}
             with pytest.raises(BotError, match="draft has been kept"):
                 await kwargs["save"](draft)
             assert list_bots(origin.db) == []
@@ -249,6 +250,7 @@ def test_editor_requires_explicit_link_approval_before_persisting(tmp_path, monk
                                             await _load_chrome(origin.lane, origin.sysop))
             assert bot.linked_channels == (channel.name,)
             assert len(prompts) == 2 and "other nodes" in prompts[0]
+            assert "every live human message" in prompts[0]  # one combined final prompt, not a chain
         finally:
             await peer.close()
             await origin.close()
@@ -256,7 +258,8 @@ def test_editor_requires_explicit_link_approval_before_persisting(tmp_path, monk
     asyncio.run(run())
 
 
-def test_presence_refuses_fabricated_authors_before_retention_and_capacity_is_not_a_strike(tmp_path, monkeypatch):
+@pytest.mark.parametrize("kind", ["bot_presence", "bot_readers"])
+def test_presence_refuses_fabricated_authors_before_retention_and_capacity_is_not_a_strike(tmp_path, monkeypatch, kind):
     from netbbs.bots import link as bot_link_module
 
     async def run():
@@ -268,22 +271,23 @@ def test_presence_refuses_fabricated_authors_before_retention_and_capacity_is_no
             other_source = SimpleNamespace(remote_fingerprint=other.identity.fingerprint, closed=asyncio.Event())
 
             def frame(author):
-                return build_bot_frame("bot_presence", {"channel_id": rc.channel_id,
+                return build_bot_frame(kind, {"channel_id": rc.channel_id,
                     "author_node_fingerprint": author, "labels": ["Baud.bot"]})
 
             for index in range(20):
                 await receiver.bots.handle_frame(source, frame(f"fabricated-{index}"))
-            assert receiver.bots.remote == {}
+            roster = receiver.bots.remote_readers if kind == "bot_readers" else receiver.bots.remote
+            assert roster == {}
             assert receiver.db.connection.execute(
                 "SELECT COUNT(*) FROM link_trust_subjects WHERE node_fingerprint LIKE 'fabricated-%'"
             ).fetchone()[0] == 0
             monkeypatch.setattr(bot_link_module, "MAX_REMOTE_ROSTERS", 1)
             await receiver.bots.handle_frame(source, frame(origin.identity.fingerprint))
-            assert len(receiver.bots.remote) == 1
+            assert len(roster) == 1
             # An unrelated honest peer must not receive a strike because
             # this node's global roster is already full.
             await receiver.bots.handle_frame(other_source, frame(other.identity.fingerprint))
-            assert len(receiver.bots.remote) == 1
+            assert len(roster) == 1
         finally:
             for node in (other, receiver, origin):
                 await node.close()
