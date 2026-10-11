@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -12,9 +10,6 @@ from pathlib import Path
 from netbbs import backup
 from netbbs.doors.bundled import war_dialer as wd
 from netbbs.rendering.reflow import print_wrapped, terminal_wrapped
-
-AUDIT_LIMIT = 100
-
 
 def _target(db_path: Path, world: Path) -> Path:
     world = world.expanduser().resolve()
@@ -24,58 +19,21 @@ def _target(db_path: Path, world: Path) -> Path:
     return world
 
 
-def _os_operator() -> str:
-    """The CLI's operator label: the local OS account running the command."""
-    return os.environ.get("USERNAME") or os.environ.get("USER") or "local SysOp"
-
-
-def _audit(conn, action, *, operator=None, reason="", backup_path=None, before=None, after=None):
-    row = conn.execute("SELECT value FROM meta WHERE key='sysop_audit'").fetchone()
-    entries = json.loads(row[0]) if row else []
-    if not isinstance(entries, list):
-        raise backup.BackupError("World audit data is invalid; preserve the world for recovery.")
-    entry = {"at": wd.to_iso(wd.now_utc()), "action": action,
-             "operator": (operator or _os_operator())[:80],
-             "reason": reason[:240], "before_season": before, "after_season": after}
-    if backup_path is not None:
-        entry["backup"] = str(backup_path.resolve())[:1024]
-        entry["manifest_sha256"] = backup._sha256_of_file(backup_path / "manifest.json")
-    entries = [*entries[-(AUDIT_LIMIT - 1):], entry]
-    conn.execute("INSERT INTO meta (key,value) VALUES ('sysop_audit',?) "
-                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(entries),))
+def _plain(value: str) -> str:
+    return "".join(ch if ch.isprintable() else " " for ch in value)
 
 
 def world_status(db_path: Path, world: Path) -> dict:
-    """Read current stored state without settling clocks, creating files or rows."""
-    world = _target(db_path, world)
-    with contextlib.closing(sqlite3.connect(world.as_uri() + "?mode=ro", uri=True)) as conn:
-        conn.execute("BEGIN")
-        meta = dict(conn.execute("SELECT key,value FROM meta WHERE key IN "
-                                 "('node_owner','active_season','maintenance','sysop_audit')"))
-        result = {"world": str(world), "schema": conn.execute("PRAGMA user_version").fetchone()[0],
-                  "owner": meta.get("node_owner"), "maintenance": meta.get("maintenance", "off"),
-                  "stored_season": meta.get("active_season", "not started")}
-        for table in ("players", "exchanges", "events"):
-            result[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        audit = json.loads(meta.get("sysop_audit", "[]"))
-        if not isinstance(audit, list):
-            raise backup.BackupError("World audit data is invalid; preserve the world for recovery.")
-        result["recent_operations"] = audit[-10:]
-        return result
+    """Read stored state through the door's public administration boundary."""
+    return wd.administer_world(_target(db_path, world), "status")
 
 
 def set_maintenance(db_path: Path, world: Path, enabled: bool, *, operator: str | None = None) -> None:
-    """Close or reopen a world to new callers; refuses while any session is inside.
-
-    `operator` labels the world's own audit entry: the SysOp account when the
-    console calls this, the OS account (the default) from the CLI."""
-    world = _target(db_path, world)
-    with backup._war_dialer_maintenance(world), contextlib.closing(wd.connect(world)) as conn:
-        with wd._write_transaction(conn):
-            value = "on" if enabled else "off"
-            conn.execute("INSERT INTO meta (key,value) VALUES ('maintenance',?) "
-                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (value,))
-            _audit(conn, "maintenance " + value, operator=operator)
+    """Close or reopen the configured world through the door's own audit/guard."""
+    try:
+        wd.administer_world(_target(db_path, world), "maintenance", maintenance=enabled, operator=operator)
+    except (wd.WorldStateError, sqlite3.Error, OSError, ValueError) as exc:
+        raise backup.BackupError(str(exc)) from exc
 
 
 def change_competition(db_path: Path, world: Path, *, identity_dir: Path, backup_to: Path,
@@ -100,27 +58,14 @@ def change_competition(db_path: Path, world: Path, *, identity_dir: Path, backup
         raise backup.BackupError(f"Node identity directory {identity_dir} is unavailable; no season was changed.")
     backup.create_backup(db_path=db_path, identity_dir=identity_dir, destination=backup_to)
     backup._validate_backup_source(backup_to, allow_migrate=False)
-    with backup._war_dialer_maintenance(world), contextlib.closing(wd.connect(world)) as conn:
-        with wd._write_transaction(conn):
-            if conn.execute("SELECT value FROM meta WHERE key='maintenance'").fetchone()[0] != "on":
-                raise backup.BackupError("Maintenance was disabled; no season was changed.")
-            now = wd.now_utc()
-            # Honor already-published natural cutoffs before moving the anchor.
-            # Otherwise an overdue active marker would use the new calendar
-            # to archive old territory earnings and permanently change awards.
-            wd._settle_world(conn, now)
-            before = wd.current_world_season(conn, now)
-            season = before + 1
-            anchor = wd.to_iso(now - (season - 1) * wd.SEASON)
-            conn.execute("UPDATE meta SET value=? WHERE key='season_anchor'", (anchor,))
-            wd._settle_world(conn, now)
-            if reset:
-                conn.execute("DELETE FROM events")
-                if wd._world_schema_version(conn) >= 9:
-                    conn.execute("DELETE FROM scene")
-            _audit(conn, "reset competition" if reset else "advance season", operator=operator, reason=reason,
-                   backup_path=backup_to, before=before, after=season)
-    return world_status(db_path, world)
+    try:
+        return wd.administer_world(
+            world, "reset" if reset else "close-season", confirm=confirm, reason=reason,
+            operator=operator, node_backup={"backup": str(backup_to.resolve()),
+                                          "manifest_sha256": backup._sha256_of_file(backup_to / "manifest.json")})
+    except (wd.WorldStateError, sqlite3.Error, OSError, ValueError) as exc:
+        raise backup.BackupError(str(exc)) from exc
+
 
 
 def main(argv=None) -> None:
@@ -148,9 +93,9 @@ def main(argv=None) -> None:
         status = world_status(args.db, args.world)
         for key, value in status.items():
             rendered = json.dumps(value, ensure_ascii=False) if isinstance(value, list) else str(value)
-            print_wrapped(f"{key}: {wd._event_plain(rendered)}")
+            print_wrapped(f"{key}: {_plain(rendered)}")
     except (backup.BackupError, wd.WorldStateError, OSError, sqlite3.Error, ValueError) as exc:
-        raise SystemExit(terminal_wrapped(f"War Dialer operation failed: {wd._event_plain(str(exc))[:500]}",
+        raise SystemExit(terminal_wrapped(f"War Dialer operation failed: {_plain(str(exc))[:500]}",
                                          stream=sys.stderr)) from exc
 
 

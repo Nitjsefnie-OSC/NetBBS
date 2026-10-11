@@ -761,18 +761,12 @@ def _inspect_war_dialer(path: Path, owner: str | None) -> int:
     if not path.is_file() or path.is_symlink() or path.stat().st_size > _WAR_DIALER_MAX_BYTES:
         raise BackupError(f"War Dialer world is not a regular database within the 512 MiB limit: {path}")
     try:
-        with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
-            conn.row_factory = sqlite3.Row
-            version = wd._world_schema_version(conn)
-            wd._validate_world_layout(conn, version)
-            if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                raise BackupError("War Dialer world failed SQLite integrity validation.")
-            bound = conn.execute("SELECT value FROM meta WHERE key='node_owner'").fetchone()
-            if owner is None or bound is None or bound[0] != owner:
-                raise BackupError("War Dialer world does not belong to this node's user-ID namespace. "
-                                  "For an unbound legacy world, verify user ownership and launch it once through its owning node.")
-            return version
-    except (sqlite3.Error, wd.WorldStateError) as exc:
+        status = wd.inspect_world(path)
+        if owner is None or status["owner"] != owner:
+            raise BackupError("War Dialer world does not belong to this node's user-ID namespace. "
+                              "For an unbound legacy world, verify user ownership and launch it once through its owning node.")
+        return status["schema"]
+    except (sqlite3.Error, wd.WorldStateError, ValueError) as exc:
         raise BackupError(f"War Dialer world cannot be read: {exc}") from exc
 
 

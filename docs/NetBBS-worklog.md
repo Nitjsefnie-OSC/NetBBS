@@ -393,6 +393,12 @@ one as new would silently reset a truncated world. Keep a simultaneous initial
 connect regression, because a check-then-create sequence exposes an empty file.
 The world filesystem must support hard links (the normal NetBSD/NTFS paths do).
 
+War Dialer's Windows input lookahead uses `PeekNamedPipe` before an unbuffered
+read. Python 3.11 has no Windows `os.set_blocking`, and Windows `select` accepts
+only sockets. Keep this path covered by real pipes, including idle timeout,
+queued control sequences and closed-writer EOF; newer Python alone misses the
+minimum-version compatibility failure.
+
 War Dialer maintenance uses a separate rollback-journal SQLite file at
 `<world>.sessions`. Play retains a read transaction for the complete process;
 maintenance retains BEGIN EXCLUSIVE. Do not use WAL for this guard: WAL readers
@@ -4530,6 +4536,16 @@ breath.
 
 Use SQLite's online backup API; never copy a live WAL database as if it were a
 single inert file.
+
+War Dialer's `administer_world` owns mutations, audit and the exclusive session
+guard. Before a season close or reset it snapshots through SQLite's backup API
+and validates the result, before opening the write transaction: backing up from
+the same connection inside its write transaction can stall. A failed mutation
+rolls back its audit too; its completed recovery snapshot remains available.
+NetBBS verifies its complete node backup first, then passes that evidence to the
+door. `inspect_world` validates without migrating or settling clocks; node path,
+size and owner checks remain in NetBBS. These public names, `world_session` and
+`WorldStateError` are pinned by `test_war_dialer_host_api.py`.
 
 The live SysOp Backup screen invokes the same synchronous, path-based backup
 primitive via a worker thread, using the database lane's path and the running
