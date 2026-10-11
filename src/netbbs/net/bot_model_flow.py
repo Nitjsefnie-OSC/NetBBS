@@ -85,7 +85,7 @@ async def model_editor(session, lane, actor, chrome):
         text("month_money", "Monthly money budget", "Zero disables this extra limit. All money figures use your configured currency.", "Optional cost accounting"),
     ]
     return await edit_resource_draft(
-        session, lane, title="Model conversation", breadcrumb=("SysOp", "Content", "Chat bots"), fields=fields,
+        session, lane, title="Model conversation", fields=fields,
         draft=draft, save=save, error_type=BotError, save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
         preamble="Optional: run Ollama or llama.cpp locally first. Only explicitly addressed conversation is submitted after caller disclosure. No provider request happens on this screen. Install netbbs[bots] if HTTP support is missing. Changes take effect on the next request.",
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,

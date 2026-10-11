@@ -53,13 +53,16 @@ def test_catalogue_has_breadcrumb_and_menu_descriptions(db, lane, sysop, populat
     set_menu_description_level(db, sysop, "brief")
     set_breadcrumb_collapsed_enabled(db, sysop, collapsed)
     session = Screen(["b"])
+    session.node_display_name = "Reliable Link"
     asyncio.run(bot_flow.bot_menu(session, lane, sysop))
     assert "Chat bots" in session.plain
-    assert ("SysOp" in session.plain and "Content" in session.plain) is not collapsed
+    assert "SysOp" not in session.plain and "Content" not in session.plain
     heading = next(line for line in session.plain.splitlines() if line.strip())
     assert heading.endswith("Chat bots")
     if collapsed:
         assert heading == "Chat bots"
+    else:
+        assert heading == "Reliable Link \u203a Chat bots"
     assert session.plain.index("Chat bots") < session.plain.index("Bots read addressed")
     assert "Provider, privacy and budgets" in session.plain
     assert all(visible_width(line) <= 80 for line in session.plain.splitlines())
@@ -91,6 +94,18 @@ def test_collapsed_preference_reaches_bot_editor_and_resource_picker(db, lane, s
     assert "Allowed channels" in lines
     assert "SysOp" not in session.plain and "Content" not in session.plain
     assert session.plain.index("Allowed channels\r\n") < session.plain.index("Select rows to toggle")
+
+
+def test_bot_screens_keep_only_node_and_current_location_in_auto_mode(db, lane, sysop):
+    create_channel(db, "Lobby", creator=sysop)
+    set_breadcrumb_collapsed_enabled(db, sysop, False)
+    session = Screen(["c", "0", "3", "b", "b", "m", "b", "b"])
+    session.node_display_name = "Reliable Link"
+    asyncio.run(bot_flow.bot_menu(session, lane, sysop))
+    lines = session.plain.splitlines()
+    for title in ("Chat bots", "Create chat bot", "Allowed channels", "Model conversation"):
+        assert f"Reliable Link \u203a {title}" in lines
+    assert "SysOp" not in session.plain and "Content" not in session.plain
 
 
 @pytest.mark.parametrize("save", [False, True])
