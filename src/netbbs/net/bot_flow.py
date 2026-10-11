@@ -5,14 +5,19 @@ import json
 from netbbs.bots.registry import (
     BotError, TEMPERAMENTS, get_bot, list_bots, require_sysop, runtime_status, save_bot, stop_bots,
     deletable_bot, delete_bot,
+    local_channel,
 )
+from netbbs.bots.sources import public_sources
+from netbbs.chat.channels import list_channels
+from netbbs.link.channels import is_channel_linked
+from netbbs.net.menu_description_preference import menu_description_level
 from netbbs.net.notices import announce
 from netbbs.net.picker import pick_item
 from netbbs.net.confirm import prompt_yes_no
 from netbbs.net.resource_editor import (
     FieldSpec, bool_field, bool_step, choice_field, choice_step, edit_resource_draft, text_field,
 )
-from netbbs.rendering import MenuEntry, menu_key, sanitize_text
+from netbbs.rendering import MUTED_COLOR, MenuEntry, menu_key, sanitize_text
 
 
 async def bot_menu(session, lane, actor):
@@ -20,6 +25,7 @@ async def bot_menu(session, lane, actor):
     # Same chrome and description preferences as the rest of the console.
     from netbbs.net.admin_flow import _load_chrome
     chrome = await _load_chrome(lane, actor)
+    description_level = await lane.run(menu_description_level, actor)
     statuses = {}
 
     async def refresh():
@@ -68,11 +74,12 @@ async def bot_menu(session, lane, actor):
             live_nav=(MenuEntry(label=menu_key("K", "ill selected"), brief="Stop this bot persistently"),
                       MenuEntry(label=menu_key("D", "elete selected"), brief="Delete a stopped bot and its state"),
                       MenuEntry(label=menu_key("S", "top all"), brief="Stop every bot persistently"),
-                      MenuEntry(label=menu_key("M", "odel settings"), brief="Optional provider, privacy and budgets"),
-                      MenuEntry(label=menu_key("U", "sage"), brief="Model spending, callers and limits hit")),
+                      MenuEntry(label=menu_key("M", "odel settings"), brief="Provider, privacy and budgets"),
+                      MenuEntry(label=menu_key("U", "sage"), brief="Spending, callers and limits")),
             masthead="Bots read addressed messages by default. Broader access and Linked channels require explicit grants. Changes apply within a second.",
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
             collapsed=chrome.collapsed, header_color=chrome.header_color,
+            accent_color=chrome.accent_color, description_level=description_level,
         )
         if bot is None:
             return
@@ -95,22 +102,23 @@ async def _delete_bot(session, lane, actor, bot_id):
 
 
 async def bot_editor(session, lane, actor, chrome, *, bot=None):
+    description_level = await lane.run(menu_description_level, actor)
     status = ""
     if bot is not None:
         state, error = (await lane.run(runtime_status)).get(bot.id, ("stopped", ""))
         status = f"Last runtime status: {state}. " + (sanitize_text(error) + " " if error else "")
     draft = {
         "name": bot.name if bot else "Baud", "enabled": bot.enabled if bot else False,
-        "channels": ", ".join(bot.channels) if bot else "",
-        "defaults": ", ".join(bot.defaults) if bot else "",
-        "linked": ", ".join(bot.linked_channels) if bot else "",
+        "channels": list(bot.channels) if bot else [],
+        "defaults": list(bot.defaults) if bot else [],
+        "linked": list(bot.linked_channels) if bot else [],
         "stats": "stats" in bot.queries if bot else False,
         "seen": "seen" in bot.queries if bot else False,
-        "reading": ", ".join(bot.reading_channels) if bot else "",
-        "events": ", ".join(bot.event_channels) if bot else "",
+        "reading": list(bot.reading_channels) if bot else [],
+        "events": list(bot.event_channels) if bot else [],
         "greetings": bot.greetings if bot else False,
-        "boards": ", ".join(bot.board_sources) if bot else "",
-        "files": ", ".join(bot.file_sources) if bot else "",
+        "boards": list(bot.board_sources) if bot else [],
+        "files": list(bot.file_sources) if bot else [],
         "announcement_channel": (bot.announcement_channel or "") if bot else "",
         "announce_posts": bot.announce_posts if bot else False,
         "announce_files": bot.announce_files if bot else False,
@@ -126,8 +134,8 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             raise BotError('Command must be a JSON argument array, for example ["/usr/local/bin/mybot"].') from exc
         if not isinstance(command, list):
             raise BotError("Command must be a JSON array; [] selects bundled Baud.")
-        linked = [n.strip().lstrip("#") for n in values["linked"].split(",") if n.strip()]
-        reading = [n.strip().lstrip("#") for n in values["reading"].split(",") if n.strip()]
+        linked = values["linked"]
+        reading = values["reading"]
         added = set(linked) - set(bot.linked_channels if bot else ())
         added_reading = set(reading) - set(bot.reading_channels if bot else ())
         approvals = []
@@ -147,15 +155,15 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
         return await lane.run(
             save_bot, actor=actor, bot_id=bot.id if bot else None, name=values["name"],
             enabled=values["enabled"], command=command, temperament=values["temperament"],
-            channels=[n.strip() for n in values["channels"].split(",") if n.strip()],
-            defaults=[n.strip() for n in values["defaults"].split(",") if n.strip()], lines_per_hour=values["rate"],
+            channels=values["channels"],
+            defaults=values["defaults"], lines_per_hour=values["rate"],
             linked_channels=linked,
             queries=[key for key in ("stats", "seen") if values[key]],
             reading_channels=reading,
-            event_channels=[n.strip() for n in values["events"].split(",") if n.strip()],
+            event_channels=values["events"],
             greetings=values["greetings"],
-            board_sources=[n.strip() for n in values["boards"].split(",") if n.strip()],
-            file_sources=[n.strip() for n in values["files"].split(",") if n.strip()],
+            board_sources=values["boards"],
+            file_sources=values["files"],
             announcement_channel=values["announcement_channel"].strip() or None,
             announce_posts=values["announce_posts"], announce_files=values["announce_files"],
             model_conversation=values["model"],
@@ -164,20 +172,82 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
     def text_spec(key, label, help):
         return FieldSpec(key, label, lambda d: sanitize_text(d[key]) or "(none)", text_field(key), help=help)
 
+    def resource_spec(key, label, help, *, multiple=True):
+        async def prompt(session, lane, values):
+            eligible = await lane.run(_resource_names, key, values["channels"])
+            chrome_args = dict(
+                redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
+                collapsed=chrome.collapsed, header_color=chrome.header_color,
+                accent_color=chrome.accent_color, description_level=description_level,
+            )
+            breadcrumb = ("SysOp", "Content", "Chat bots", bot.label if bot else "New bot")
+            if not multiple:
+                # A real None entry clears the field; Back keeps its value.
+                options = [None, *eligible]
+                picked = await pick_item(
+                    session, list(enumerate(options)), name_of=lambda row: row[1] or "(none)",
+                    stable_id_of=lambda row: row[0], title=label, breadcrumb=breadcrumb,
+                    empty_message="No allowed channels.", **chrome_args,
+                )
+                if picked is not None:
+                    values[key] = picked[1] or ""
+                return
+
+            # Retain unavailable grants so the SysOp can see and remove them.
+            # Each toggle replaces the list: the editor's original draft must
+            # not share a mutable list with changes used for discard detection.
+            names = sorted(set(eligible) | set(values[key]), key=str.casefold)
+
+            async def toggle(name):
+                selected = list(values[key])
+                if name in selected:
+                    selected.remove(name)
+                elif name in eligible:
+                    selected.append(name)
+                else:
+                    announce(session, "This resource is no longer available for this grant.", tone="muted")
+                    return
+                values[key] = sorted(selected, key=str.casefold)
+                if key == "channels":
+                    for dependent in ("linked", "defaults", "reading", "events"):
+                        values[dependent] = [n for n in values[dependent] if n in selected]
+                    if values["announcement_channel"] not in selected:
+                        values["announcement_channel"] = ""
+
+            await pick_item(
+                session, names, name_of=lambda name: name,
+                stable_id_of=lambda name: names.index(name),
+                name_segments_of=lambda name: (
+                    ("[x] " if name in values[key] else "[ ] ", MUTED_COLOR),
+                    (name, chrome.accent_color),
+                ),
+                description_of=lambda name: "Unavailable; remove this grant" if name not in eligible else None,
+                title=label, breadcrumb=breadcrumb,
+                empty_message=("No public sources are available." if key in ("boards", "files") else
+                               "No eligible channels. Channel-specific grants require allowed channels first."),
+                masthead="Select rows to toggle; [B]ack returns to the draft. Save the bot to apply changes.",
+                live_label=lambda: f"{len(values[key])} selected", on_toggle=toggle, **chrome_args,
+            )
+
+        render = (lambda d: sanitize_text(", ".join(d[key])) or "(none)") if multiple else (
+            lambda d: sanitize_text(d[key]) or "(none)"
+        )
+        return FieldSpec(key, label, render, prompt, help=help)
+
     fields = [
         text_spec("name", "Name", "A 1-24 character name; .bot is added automatically."),
         FieldSpec("enabled", "Enabled", lambda d: "on" if d["enabled"] else "off", bool_field("enabled"),
                   step=bool_step("enabled"), help="Starts after Save. Kill selected or Stop all stops it without deleting state."),
-        text_spec("channels", "Allowed channels", "Comma-separated channel names. This grants addressed messages and replies there."),
-        text_spec("linked", "Linked approvals", "A subset of allowed channels. Explicit approval to publish across Link; confirmed on Save. MRC is never allowed."),
-        text_spec("defaults", "Default in channels", "A subset of allowed channels. !help and other !commands go only to the default bot."),
-        text_spec("reading", "Read whole channels", "WARNING: passes every live human message in these allowed channels to this program, including messages not addressed to it. Callers see this grant in the heading and /who. Leave empty for addressed-only access."),
-        text_spec("events", "Presence-event channels", "Allowed channels whose live joins and leaves this program may receive. Does not grant access to conversation; greetings require this grant."),
+        resource_spec("channels", "Allowed channels", "Select channels for addressed messages and replies. Removing a channel also clears its dependent grants and announcement destination in this draft."),
+        resource_spec("linked", "Linked approvals", "Linked allowed channels. Explicit approval to publish across Link; confirmed on Save. MRC is never allowed."),
+        resource_spec("defaults", "Default in channels", "A subset of allowed channels. !help and other !commands go only to the default bot."),
+        resource_spec("reading", "Read whole channels", "WARNING: passes every live human message in these allowed channels to this program, including messages not addressed to it. Callers see this grant in the heading and /who. Leave empty for addressed-only access."),
+        resource_spec("events", "Presence-event channels", "Allowed channels whose live joins and leaves this program may receive. Does not grant access to conversation; greetings require this grant."),
         FieldSpec("greetings", "Baud greetings", lambda d: "on" if d["greetings"] else "off", bool_field("greetings"),
                   step=bool_step("greetings"), help="Greet live joins in explicitly granted presence-event channels. Subject to the ordinary output limit and mutes."),
-        text_spec("boards", "Board-event sources", "Comma-separated public board names. Grants new approved post titles only; inherited Community restrictions are checked. No post bodies."),
-        text_spec("files", "File-event sources", "Comma-separated public file-area names. Grants newly approved uploads and carried file names. No file contents."),
-        text_spec("announcement_channel", "Announcement channel", "One allowed channel for these source events. Linked destinations need their existing approval. Sources must be readable by everyone."),
+        resource_spec("boards", "Board-event sources", "Select public boards. Grants new approved post titles only; inherited Community restrictions are checked. No post bodies."),
+        resource_spec("files", "File-event sources", "Select public file areas. Grants newly approved uploads and carried file names. No file contents."),
+        resource_spec("announcement_channel", "Announcement channel", "One allowed channel for these source events; choose (none) to clear. Linked destinations need their existing approval. Sources must be readable by everyone.", multiple=False),
         FieldSpec("announce_posts", "Baud post announcements", lambda d: "on" if d["announce_posts"] else "off", bool_field("announce_posts"),
                   step=bool_step("announce_posts"), help="Requires explicit board-event sources and an announcement channel. Existing posts are not replayed on startup."),
         FieldSpec("announce_files", "Baud file announcements", lambda d: "on" if d["announce_files"] else "off", bool_field("announce_files"),
@@ -203,4 +273,23 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
         "Node backups include API-managed bot state. Kill a bot before using Delete selected to remove it and its state.",
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
         collapsed=chrome.collapsed, header_color=chrome.header_color,
+        accent_color=chrome.accent_color, description_level=description_level,
     )
+
+
+def _resource_names(db, key, allowed):
+    """Load valid choices on the database lane; Save revalidates every grant."""
+    if key in ("boards", "files"):
+        return sorted((r.name for r in public_sources(db, kind=key)), key=str.casefold)
+    names = []
+    for channel in list_channels(db):
+        if key != "channels" and channel.name not in allowed:
+            continue
+        try:
+            local_channel(db, channel.name, allow_linked=True)
+        except BotError:
+            continue
+        if key == "linked" and not is_channel_linked(db, channel):
+            continue
+        names.append(channel.name)
+    return names

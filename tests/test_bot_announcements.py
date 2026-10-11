@@ -198,7 +198,7 @@ def test_editor_saves_explicit_source_grants_and_separate_baud_abilities(db, lan
     async def editor(session, lane, **kwargs):
         draft = kwargs["draft"]
         assert not draft["announce_posts"] and not draft["announce_files"]
-        draft.update(channels=channel.name, boards=board.name, files=area.name,
+        draft.update(channels=[channel.name], boards=[board.name], files=[area.name],
                      announcement_channel=channel.name, announce_posts=True, announce_files=True)
         return await kwargs["save"](draft)
     monkeypatch.setattr(bot_flow, "edit_resource_draft", editor)

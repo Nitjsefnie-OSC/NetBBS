@@ -316,10 +316,17 @@ async def pick_item(
     art_limit: float = 0,
     art_once: str = "",
     linked_of: Callable[[T], bool] | None = None,
+    on_toggle: Callable[[T], Awaitable[None]] | None = None,
 ) -> T | None:
     """
     Let the user browse/search/jump through `items` and pick one, or
     return `None` if they quit without selecting.
+
+    With `on_toggle`, numbers, Enter and Space toggle a highlighted row
+    through the callback instead of closing the picker. Paging and Find
+    retain their state; Find only filters, even for a single match. The
+    caller owns the draft selection and its row markers. Back closes the
+    list without persisting anything.
 
     `items` should already be filtered to whatever the user is actually
     allowed to see/select (e.g. by level — see design doc §13) — this
@@ -1021,9 +1028,15 @@ async def pick_item(
                 # return from a cancelled create were all appending
                 # below the editor instead of replacing it.
                 await session.write(clear_screen())
-            await session.write_line(colored(f"\r\n{empty_message}", fg_color=MUTED_COLOR))
-            dash = "—" if unicode_style else "-"
-            keys = []
+            heading = "\r\n" + screen_title(
+                title, breadcrumb=(session.node_display_name, *breadcrumb),
+                width=render_width, clear=False, unicode_style=unicode_style,
+                collapsed=collapsed, header_color=header_color,
+                node_name_gradient=session.node_name_gradient,
+            )
+            await session.write_line(heading)
+            await session.write_line(colored(empty_message, fg_color=MUTED_COLOR))
+            entries = []
             if working_set is not items and items:
                 # The list is empty because a search or a filter made it
                 # so, not because there is nothing here (Codex review).
@@ -1031,11 +1044,11 @@ async def pick_item(
                 # and Ctrl-H explains it -- and the handlers accept both,
                 # so hiding them made the way out undiscoverable rather
                 # than unavailable.
-                keys.append(menu_key("/", " Find"))
+                entries.append(MenuEntry(label=menu_key("/", " Find"), brief="Find by name"))
             if on_create is not None:
                 # The whole point of staying here (issue #530): an empty
                 # list with a way out of being empty.
-                keys.append(menu_key("C", "reate"))
+                entries.append(MenuEntry(label=menu_key("C", "reate"), brief="Make a new one"))
             # A caller's own keys belong here too (issue #537, Codex
             # review). A filter is exactly what can empty this list --
             # "disabled users only" on a node with none -- and the
@@ -1043,16 +1056,27 @@ async def pick_item(
             # that caused it and the key that undoes it. An empty list
             # is the moment a SysOp most needs to know which filter is
             # on.
-            keys.extend(entry.label for entry in live_nav)
-            keys.append(menu_key("B", "ack"))
-            trailer = f"{'  '.join(keys)} {dash} Ctrl-L: redraw"
+            entries.extend(live_nav)
+            entries.append(MenuEntry(label=menu_key("B", "ack"), brief="Return without picking"))
+            trailer = f"Ctrl-L: redraw, {help_key_label(session)}: help"
             if refresh is not None:
                 trailer += ", Ctrl-R: refresh"
-            if live_label is not None:
-                standing = sanitize_text(live_label())
-                if standing:
-                    await session.write_line(colored(f"\r\n{standing}", fg_color=MUTED_COLOR))
-            await session.write_line(f"\r\n{trailer}")
+            standing = sanitize_text(live_label()) if live_label is not None else ""
+            if standing:
+                trailer = f"{standing}; {trailer}"
+            nav = menu_grid(
+                [("", entries)], width=render_width, height=render_height,
+                description_level=description_level,
+                min_entries_per_column=_NAV_MIN_ENTRIES_PER_COLUMN,
+            )
+            # Empty catalogues still use the normal menu vocabulary. Keep
+            # the compact fallback when descriptions would hide the prompt.
+            drawn = (prefix, heading, empty_message, nav, trailer, *notice_lines)
+            rows = sum(wrap_terminal_text(line, render_width).count("\r\n") + 1 for line in drawn if line)
+            if description_level == "off" or rows + 2 > render_height:
+                nav = action_bar([entry.label for entry in entries], width=render_width, height=render_height)
+            await session.write_line("\r\n" + nav)
+            await session.write_line(colored(trailer, fg_color=MUTED_COLOR))
             await _write_notices()
             await session.write("Choice: ")
             return []
@@ -1449,6 +1473,7 @@ async def pick_item(
                 live_nav=live_nav, has_unpickable=any(not _pickable(item) for item in items),
                 has_linked=linked_of is not None and any(linked_of(item) for item in items),
                 linked_marker_only=getattr(session, "output_charset", None) == ASCII or _slot_active(),
+                multiple=on_toggle is not None,
             )
             page_items = await _render()
             continue
@@ -1509,7 +1534,9 @@ async def pick_item(
                 await session.write("\a")
             continue
 
-        if key.kind == EditorKeyKind.ENTER:
+        if key.kind == EditorKeyKind.ENTER or (
+            on_toggle is not None and key.kind == EditorKeyKind.CHAR and key.char == " "
+        ):
             if highlighted is None:
                 # Nothing highlighted -- Enter has no target. Never
                 # echoed, so just the bell, same as an unhandled
@@ -1518,6 +1545,10 @@ async def pick_item(
                 continue
             selected_item = page_items[highlighted]
             await end_choice_line(session)
+            if on_toggle is not None:
+                await on_toggle(selected_item)
+                page_items = await _render()
+                continue
             return selected_item
 
         if key.kind == EditorKeyKind.ESCAPE:
@@ -1622,7 +1653,7 @@ async def pick_item(
                 await session.write_line(colored("No matches.", fg_color=ERROR_COLOR))
                 await session.write("Choice: ")
                 continue
-            if len(matches) == 1 and _pickable(matches[0]):
+            if len(matches) == 1 and _pickable(matches[0]) and on_toggle is None:
                 return matches[0]
             # Recorded only now (Codex review). Setting it before the
             # match check meant a search that found nothing still became
@@ -1743,6 +1774,10 @@ async def pick_item(
                 chosen = _numbered(page_items, int(char))
                 if chosen is not None:
                     await end_choice_line(session)
+                    if on_toggle is not None:
+                        await on_toggle(chosen)
+                        page_items = await _render()
+                        continue
                     return chosen
                 await session.write(reject_keystroke(1))
                 continue
@@ -1769,6 +1804,10 @@ async def pick_item(
                 # directly after the echoed "02" with no separation at
                 # all, on the same line.
                 await end_choice_line(session)
+                if on_toggle is not None:
+                    await on_toggle(chosen)
+                    page_items = await _render()
+                    continue
                 return chosen
             await session.write(reject_keystroke(2))
             continue
@@ -1824,6 +1863,7 @@ async def _show_picker_help(
     has_unpickable: bool = False,
     has_linked: bool = False,
     linked_marker_only: bool = False,
+    multiple: bool = False,
 ) -> None:
     """Ctrl-H's own content for this screen (dogfood feature request --
     the shared picker had no on-demand help at all, only the terse
@@ -1843,12 +1883,15 @@ async def _show_picker_help(
         "  Back. Esc first clears a highlighted row, if there is one.",
         "",
         colored("Up / Down / Enter", fg_color=header_color, bold=True),
-        "  Move a highlight up or down one row, then Enter selects it -- a lighter-weight "
-        "alternative to typing the number below. Purely optional: nothing is "
-        "highlighted until the first press.",
+        ("  Move a highlight up or down; Enter or Space toggles that row in the draft."
+         if multiple else
+         "  Move a highlight up or down one row, then Enter selects it -- a lighter-weight "
+         "alternative to typing the number below. Purely optional: nothing is "
+         "highlighted until the first press."),
         "",
         colored("A number", fg_color=header_color, bold=True),
-        "  Selects that item on the current page directly: two digits ('05') at once, "
+        ("  Toggles that item in the draft: " if multiple else "  Selects that item on the current page directly: ")
+        + "two digits ('05') at once, "
         "or one digit and Enter ('5' Enter).",
         *(
             # Issue #920: only said on a list that has such rows.
@@ -1868,8 +1911,9 @@ async def _show_picker_help(
         ),
         "",
         colored("[/] Find", fg_color=header_color, bold=True),
-        "  Filters the list to items whose name contains the text you type. A single "
-        "match jumps straight to it. A blank answer clears back to the full list.",
+        "  Filters the list to items whose name contains the text you type. "
+        + ("Finding a row does not select it. " if multiple else "A single match jumps straight to it. ")
+        + "A blank answer clears back to the full list.",
     ]
     if has_create is not None and has_create:
         # Listed before Order and Refresh, and worth describing even
@@ -1898,7 +1942,8 @@ async def _show_picker_help(
             f"  {entry.brief}." if entry.brief else "",
         ]
     lines += [
-        "", colored("Back", fg_color=header_color, bold=True), "  Returns without picking anything.",
+        "", colored("Back", fg_color=header_color, bold=True),
+        "  Returns to the draft. Save the editor to apply selections." if multiple else "  Returns without picking anything.",
         "", colored("Ctrl-L", fg_color=header_color, bold=True), "  Redraws the current page in place.",
     ]
     if has_refresh:
@@ -2029,6 +2074,7 @@ def _tallest_nav(
     session: Session, on_sort: Callable | None, description_level: str,
     *, width: int, height: int, on_create: Callable | None,
     shapes: Sequence[tuple[bool, bool]] = _SHAPES_MANY_PAGES,
+    live_nav: Sequence[MenuEntry] = (),
 ) -> str:
     """The tallest nav block any page of this list could render.
 
@@ -2044,7 +2090,7 @@ def _tallest_nav(
             menu_grid(
                 [("", _nav_entries(
                     on_sort, include_next=next_here, include_prev=prev_here,
-                    on_create=on_create,
+                    on_create=on_create, live_nav=live_nav,
                 ))],
                 width=width, height=height, description_level=description_level,
                 min_entries_per_column=_NAV_MIN_ENTRIES_PER_COLUMN,
@@ -2121,6 +2167,7 @@ def _render_nav(
         tallest = _tallest_nav(
             session, on_sort, description_level,
             width=width, height=height, on_create=on_create, shapes=shapes,
+            live_nav=live_nav,
         )
         descriptive_lines = tallest.count("\r\n") + 1
         # The same arithmetic `_page_size` will do, including the
@@ -2157,7 +2204,7 @@ def _render_nav(
             (
                 _nav_entries(
                     on_sort, include_next=next_here, include_prev=prev_here,
-                    on_create=on_create,
+                    on_create=on_create, live_nav=live_nav,
                 )
                 for next_here, prev_here in shapes
             ),

@@ -236,8 +236,8 @@ def test_editor_requires_explicit_link_approval_before_persisting(tmp_path, monk
             return next(answers)
 
         async def editor(session, lane, **kwargs):
-            draft = {**kwargs["draft"], "channels": channel.name, "linked": channel.name,
-                     "reading": channel.name, "enabled": True}
+            draft = {**kwargs["draft"], "channels": [channel.name], "linked": [channel.name],
+                     "reading": [channel.name], "enabled": True}
             with pytest.raises(BotError, match="draft has been kept"):
                 await kwargs["save"](draft)
             assert list_bots(origin.db) == []

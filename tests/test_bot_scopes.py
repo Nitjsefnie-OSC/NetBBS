@@ -227,9 +227,9 @@ def test_editor_warns_and_persists_explicit_scopes(db, lane, sysop, channel, mon
         return next(answers)
     async def editor(session, lane, **kwargs):
         draft = kwargs["draft"]
-        assert draft["reading"] == draft["events"] == "" and not draft["greetings"]
+        assert draft["reading"] == draft["events"] == [] and not draft["greetings"]
         assert "other callers' conversation" in kwargs["preamble"]
-        draft.update(channels=channel.name, reading=channel.name, events=channel.name, greetings=True)
+        draft.update(channels=[channel.name], reading=[channel.name], events=[channel.name], greetings=True)
         with pytest.raises(BotError, match="draft has been kept"):
             await kwargs["save"](draft)
         assert not list_bots(db)
