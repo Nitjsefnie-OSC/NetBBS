@@ -140,13 +140,23 @@ Do not substitute the base system's differently versioned OpenSSL library.
 
 ## First account and configuration
 
-**MANUAL — on the host:** save this as `/etc/netbbs/netbbs.toml`, readable by
-the service account. This starts with SSH; browser access is covered below.
-Telnet and the web listener are off here, and both listen on loopback
-(`127.0.0.1`), which only this host can reach. To offer Telnet, set
-`enabled = true` **and** `host = "0.0.0.0"`, as `[ssh]` has; with
-`enabled = true` alone, outside callers cannot connect. The web
-listener stays on loopback behind an HTTPS proxy, as described below.
+| At a glance | |
+| --- | --- |
+| **Config file** | `/etc/netbbs/netbbs.toml`, readable by the service account |
+| **From the shell** | `python -m netbbs.admin` (first SysOp, onboarding), `python -m netbbs --help` (all switches) |
+| **Decide first** | Which listeners to open, and whether to join NetBBS Link and take a managed subdomain |
+
+In this chapter: [Write the configuration](#write-the-configuration) ·
+[Create the first SysOp](#create-the-first-sysop) ·
+[Where settings live](#where-settings-live)
+
+### Write the configuration
+
+> [!IMPORTANT]
+> **Manual, on the host.** Save this as `/etc/netbbs/netbbs.toml`, readable
+> by the service account.
+
+This starts with SSH; browser access is covered below.
 
 ```toml
 [node]
@@ -172,6 +182,19 @@ host = "127.0.0.1"
 port = 8080
 ```
 
+Telnet and the web listener are off here, and both listen on loopback
+(`127.0.0.1`), which only this host can reach.
+
+- **To offer Telnet,** set `enabled = true` **and** `host = "0.0.0.0"`, as
+  `[ssh]` has.
+- **The web listener** stays on loopback behind an HTTPS proxy, as described
+  in [Caller connections and file transfers](#caller-connections-and-file-transfers).
+
+> [!WARNING]
+> With `enabled = true` alone, outside callers cannot connect.
+
+### Create the first SysOp
+
 Create your first SysOp before starting a public listener:
 
 ```sh
@@ -182,53 +205,86 @@ The interactive admin console asks for the first account and its password
 and/or public key. Use this supported bootstrap tool; `create_test_user.py`
 is a development helper. SysOp accounts have level **255**.
 
+> [!IMPORTANT]
+> Run `netbbs.admin` as the account the node runs as, as shown above. It
+> writes owner-only files beside the database (the managed-DNS credential
+> among them), and a copy written as root is one the node cannot read; if you
+> had to use root, `chown` the state directory back afterwards.
+
+#### First-run onboarding
+
 First-run onboarding offers two independent choices:
 
-- **Join NetBBS Link through the reliable nodes:** outgoing-only participation,
-  using the project's bootstrap and relay nodes. A distinct node name is required.
-- **Managed `<name>.netbbs.org` subdomain:** a public hostname managed through
-  the project's DNS service. This does not configure your router, TLS, or ports.
+| Choice | What it does |
+| --- | --- |
+| **Join NetBBS Link through the reliable nodes** | Outgoing-only participation, using the project's bootstrap and relay nodes. A distinct node name is required. |
+| **Managed `<name>.netbbs.org` subdomain** | A public hostname managed through the project's DNS service. This does not configure your router, TLS, or ports. |
 
-Read the choices before pressing Enter: the first-run choices default to yes.
+> [!CAUTION]
+> Read the choices before pressing <kbd>Enter</kbd>: the first-run choices
+> default to yes.
+
 If not completed here, onboarding is offered at the first SysOp login.
 
-On a node that has never been started, accepting the managed subdomain records
-your answer but cannot pick the name yet: the service knows a node by an
-identity it creates on its first start. Start the node, then sign in as SysOp or
-run `netbbs.admin` again, and the name editor opens by itself, once. After that
-it is **[R]egister** on the DNS screen.
+<details>
+<summary>The managed subdomain on a node that has never been started</summary>
 
-Run `netbbs.admin` as the account the node runs as, as shown above. It writes
-owner-only files beside the database (the managed-DNS credential among them),
-and a copy written as root is one the node cannot read; if you had to use root,
-`chown` the state directory back afterwards.
+On a node that has never been started, accepting the managed subdomain
+records your answer but cannot pick the name yet: the service knows a node by
+an identity it creates on its first start. Start the node, then sign in as
+SysOp or run `netbbs.admin` again, and the name editor opens by itself, once.
+After that it is <kbd>R</kbd> **Register** on the console's
+<kbd>D</kbd> **DNS** screen.
 
-Transport and path settings come from the TOML file and command-line options;
-accounts, content, and many live settings are stored in the database. Command-line
-options override TOML settings.
+</details>
 
-Link limits, the login throttle and the shutdown delays can be set either way.
-**Settings → Operating limits** holds the carry caps, peering, Link limits,
-real-time relay bounds, login throttle and shutdown delays, grouped. A value there
-applies the next time the node starts. A key your TOML file or a command-line
-option sets still wins: the screen shows it as *set in config* and does not let
-you change it there. Remove it from the TOML file to manage it from the console.
+### Where settings live
 
-The listeners, `public_url`, Link addresses, paths and managed-DNS service stay
-in TOML and on the command line only, because a wrong value set from inside
-NetBBS could lock you out of the session you would need to fix it. You can still
-see them: **Settings → Operating limits → Node configuration** lists each
-one as the node resolved it at its last start, with its TOML key and whether the
-value came from the config file, the command line or the default. It works in
-`python -m netbbs.admin` too, and never shows the managed-DNS admin token. Run `python -m netbbs --help` using the installed
-interpreter for all supported switches. A TOML file is read only when supplied
-with `--config`; placing `netbbs.toml` in the working directory is not enough.
+| Kind of setting | Where it lives |
+| --- | --- |
+| Transport and path settings | The TOML file and command-line options |
+| Accounts, content, and many live settings | The database |
+| Link limits, the login throttle and the shutdown delays | Either: TOML/command line, or **Settings ▸ Operating limits** |
+| Listeners, `public_url`, Link addresses, paths and the managed-DNS service | TOML and the command line only |
 
-Leave `[link] enabled` unset if you want the onboarding/Settings choice to decide
-participation. An explicit `enabled = false` or `true` overrides that choice.
-The TOML `[node] name` labels the cryptographic key files; it does not set the
-public display name. Set that through onboarding or **Settings → Node name**.
-Changing a label does not change a node's cryptographic identity.
+Command-line options override TOML settings. Run `python -m netbbs --help`
+using the installed interpreter for all supported switches.
+
+> [!IMPORTANT]
+> A TOML file is read only when supplied with `--config`; placing
+> `netbbs.toml` in the working directory is not enough.
+
+#### Operating limits from the console
+
+**Settings ▸ Operating limits** holds the carry caps, peering, Link limits,
+real-time relay bounds, login throttle and shutdown delays, grouped.
+
+- A value there applies the next time the node starts.
+- A key your TOML file or a command-line option sets still wins: the screen
+  shows it as *set in config* and does not let you change it there. Remove it
+  from the TOML file to manage it from the console.
+
+#### Settings kept out of the console
+
+The listeners, `public_url`, Link addresses, paths and managed-DNS service
+stay in TOML and on the command line only, because a wrong value set from
+inside NetBBS could lock you out of the session you would need to fix it.
+
+You can still see them: **Settings ▸ Operating limits ▸ Node configuration**
+lists each one as the node resolved it at its last start, with its TOML key
+and whether the value came from the config file, the command line or the
+default. It works in `python -m netbbs.admin` too, and never shows the
+managed-DNS admin token.
+
+#### Link participation and the node name
+
+- Leave `[link] enabled` unset if you want the onboarding/Settings choice to
+  decide participation. An explicit `enabled = false` or `true` overrides
+  that choice.
+- The TOML `[node] name` labels the cryptographic key files; it does not set
+  the public display name. Set that through onboarding or
+  **Settings ▸ Node name**. Changing a label does not change a node's
+  cryptographic identity.
 
 ## Running a service
 
