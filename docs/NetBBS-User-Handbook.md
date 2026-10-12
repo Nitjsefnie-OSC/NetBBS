@@ -605,19 +605,31 @@ later or tell your SysOp.
 
 ## Play a door game
 
-Choose **Games** on the main menu, or a Community's games. Availability
-depends on what your SysOp has registered.
+| At a glance | |
+| --- | --- |
+| **Where** | <kbd>G</kbd> **Games** on the main menu, or <kbd>G</kbd> **Games** in a Community under <kbd>T</kbd> **Topics** |
+| **Try first** | Retro Trivia, if your SysOp offers it: one short round |
+| **Leave** | Through the game's own menu |
 
-- **Retro Trivia:** answer a short round of multiple-choice questions.
-- **Voidrunner:** build a persistent space-trading and exploration career.
-- **War Dialer:** develop a crew in a shared world of fictional BBS networks.
+Availability depends on what your SysOp has registered. The bundled games:
+
+| Game | What you do |
+| --- | --- |
+| **Retro Trivia** | Answer a short round of multiple-choice questions. |
+| **Voidrunner** | Build a persistent space-trading and exploration career. |
+| **War Dialer** | Develop a crew in a shared world of fictional BBS networks. |
 
 Each game opens with a short animated title screen. Any key skips it; once it
-has finished, it stays up until you press a key.
-Voidrunner and War Dialer leave it out when their display settings turn motion
-off. Each game has its own controls and help. Quit through the game's own menu
-to return to NetBBS. A busy game may have a session limit; try again later.
-Your SysOp controls the time allowed and can help with a missing or locked save.
+has finished, it stays up until you press a key. Voidrunner and War Dialer
+leave it out when their display settings turn motion off.
+
+- Each game has its own controls and help.
+- Quit through the game's own menu to return to NetBBS.
+- A busy game may have a session limit; try again later.
+
+> [!TIP]
+> Your SysOp controls the time allowed and can help with a missing or locked
+> save.
 
 ## Preferences and help
 
