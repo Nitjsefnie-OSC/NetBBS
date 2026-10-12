@@ -871,6 +871,17 @@ action hints. These primitives return styled terminal strings and never absorb
 domain behavior. A screen should make location, content, and available actions
 clear at a glance.
 
+A screen's breadcrumb is the way the caller came: the node's name, then each
+screen that led here, then the title. No screen spells its own path. A screen
+that leads to further screens names itself on the session's trail while it
+runs (`netbbs.net.location`), and every title is drawn from that trail, so a
+screen reached from two places is right from both, and a SysOp console
+shortcut shows the shorter path it took (issue #1246). The main menu is the
+root and is never a segment. The breadcrumb names a screen by its title, or
+by its menu entry's word where the title is a sentence ("SysOp" for the
+operations console). A path too wide for the terminal still collapses to the
+title alone.
+
 Layouts target 80x24 as the classic baseline, use additional width when
 available, and collapse to one column at the 40x24 minimum. ASCII structure is
 the universal baseline because Telnet terminal encodings vary; Unicode box

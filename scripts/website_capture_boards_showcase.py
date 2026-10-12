@@ -318,8 +318,9 @@ async def shot_board(node: Node) -> str:
     from netbbs.net.board_flow import _show_board
 
     session = Walker()
+    session.location = ("Message boards", "Hobbies")  # where the walk came from
     return await snapshot(session, _show_board(session, node.db, node.boards["Retro Computing"],
-                                               node.people["alice"], breadcrumb=("Message boards", "Hobbies")),
+                                               node.people["alice"]),
                           "Show us your desk")
 
 
@@ -328,8 +329,9 @@ async def shot_post(node: Node) -> str:
     from netbbs.net.board_flow import _show_board
 
     session = Walker(["0", "2"])
+    session.location = ("Message boards", "Hobbies")  # where the walk came from
     return await snapshot(session, _show_board(session, node.db, node.boards["Retro Computing"],
-                                               node.people["alice"], breadcrumb=("Message boards", "Hobbies")),
+                                               node.people["alice"]),
                           "ail author")
 
 
@@ -358,6 +360,7 @@ async def shot_linked(node: Node) -> str:
     from netbbs.net.board_flow import _show_board
 
     session = Walker()
+    session.location = ("Message boards",)  # where the walk came from
     return await snapshot(session, _show_board(session, node.db, node.boards["NetBBS Users"],
                                                node.people["alice"]), "Masthead")
 
@@ -367,6 +370,7 @@ async def shot_queue(node: Node) -> str:
     from netbbs.net.board_flow import _show_board
 
     session = Walker(["q"])
+    session.location = ("Message boards",)  # where the walk came from
     return await snapshot(session, _show_board(session, node.db, node.boards["Classifieds"],
                                                node.people["keeper"]), "Hayes")
 
@@ -376,8 +380,9 @@ async def shot_history(node: Node) -> str:
     from netbbs.net.board_flow import _show_board
 
     session = Walker(["0", "4", "h"])
+    session.location = ("Message boards", "Hobbies")  # where the walk came from
     return await snapshot(session, _show_board(session, node.db, node.boards["Retro Computing"],
-                                               node.people["keeper"], breadcrumb=("Message boards", "Hobbies")),
+                                               node.people["keeper"]),
                           "Teac")
 
 
@@ -406,8 +411,9 @@ async def shot_editor(node: Node) -> str:
 
     typed = "Mine is the same Teac. Check the HD jumper: 720K needs it open."
     session = Walker(["0", "4", "r", "", *typed])
+    session.location = ("Message boards", "Hobbies")  # where the walk came from
     return await snapshot(session, _show_board(session, node.db, node.boards["Retro Computing"],
-                                               node.people["alice"], breadcrumb=("Message boards", "Hobbies")),
+                                               node.people["alice"]),
                           "wrote")
 
 

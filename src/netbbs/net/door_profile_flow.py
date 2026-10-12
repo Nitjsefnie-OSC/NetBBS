@@ -13,6 +13,7 @@ from netbbs.doors.profiles import (ADAPTERS, DoorProfile, ProfileError, prefligh
 from netbbs.doors.registry import DoorError, update_door
 from netbbs.doors.runtime import run_door, war_dialer_world_path, war_dialer_path_problem
 from netbbs.net.confirm import prompt_yes_no
+from netbbs.net.location import located
 from netbbs.net.picker import pick_item
 from netbbs.net.char_input import InputCancelled
 from netbbs.net.redraw_preference import redraw_in_place_enabled
@@ -91,6 +92,7 @@ def _draft(door):
     return value
 
 
+@located("Door compatibility")
 async def edit_door_profile(session, lane, actor, door, *, door_services=None):
     draft = _draft(door)
 
@@ -298,7 +300,7 @@ async def edit_door_profile(session, lane, actor, door, *, door_services=None):
     # Typed fields edit in place, as on every other editor; this one had
     # never been told the caller's redraw preference, so none of them could.
     redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    return await edit_resource_draft(session, lane, title="Door compatibility", fields=fields,
+    return await edit_resource_draft(session, lane, title="Door compatibility", own=True, fields=fields,
                                      redraw_in_place=redraw_in_place,
                                      preamble=colored(
                                          "External installs are manual. See docs/NetBBS-door-guide.md. "

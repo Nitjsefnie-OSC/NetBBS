@@ -123,6 +123,7 @@ from netbbs.net.help_overlay import show_help, show_menu_help
 from netbbs.net.mail_flow import (
     caller_mail_refusal, mail_blocked_notice, mail_someone, post_reply_key, split_link_address,
 )
+from netbbs.net.location import crumbs, entered
 from netbbs.net.menu_description_preference import menu_description_level
 from netbbs.net.node_theme import (
     effective_accent_color,
@@ -203,18 +204,19 @@ async def _browse_boards(
     *,
     community_id: int | None = None,
     community_scoped: bool = False,
-    title_prefix: str | None = None,
     link_context: LinkContext | None = None,
     transfers: TransferGrants | None = None,
 ) -> None:
     """Entry point: browse from the top level (no category selected yet).
     `transfers` is the node's browser-transfer grants, for downloading a
-    file a post points at (issue #842)."""
-    await _browse_boards_in_category(
-        session, db, user, category_id=None,
-        community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
-        link_context=link_context, transfers=transfers,
-    )
+    file a post points at (issue #842). Everything under it is under
+    "Message boards" (`netbbs.net.location`)."""
+    with entered(session, "Message boards"):
+        await _browse_boards_in_category(
+            session, db, user, category_id=None,
+            community_id=community_id, community_scoped=community_scoped,
+            link_context=link_context, transfers=transfers,
+        )
 
 
 def visible_boards(db: Database, user: User, *, community_id: int | None, community_scoped: bool) -> list[Board]:
@@ -238,7 +240,6 @@ async def _browse_boards_in_category(
     category_id: int | None,
     community_id: int | None = None,
     community_scoped: bool = False,
-    title_prefix: str | None = None,
     link_context: LinkContext | None = None,
     transfers: TransferGrants | None = None,
 ) -> None:
@@ -272,14 +273,11 @@ async def _browse_boards_in_category(
     `board.community_id == None` filters identically to the
     real-Community case, no special-casing needed), or no filter at all
     (`community_scoped=False`, the default, and what the main menu's
-    `[M]essage boards` uses -- issue #838). `title_prefix`, threaded
-    alongside, is `None` for the unfiltered case (keeping the "Available
-    message boards" title) or a Community's own
-    name that's passed to `pick_item` as an ancestor `breadcrumb`
-    segment otherwise, so it renders muted with only "Message boards"
-    itself in the current-location color -- not folded into the title
-    text as a fake, uniformly-colored breadcrumb (dogfood-reported bug,
-    see `pick_item`'s own `breadcrumb` docstring).
+    `[M]essage boards` uses -- issue #838). The unfiltered list is
+    titled "Available message boards", a Community's "Message boards",
+    and a category's list its name; each is the frame of the screen that
+    named itself (`netbbs.net.location`, issue #1246), so the Community
+    and the category show in the breadcrumb as the path walked.
     Category leak prevention ("only show/offer categories
     currently used by ≥1 resource in this Community") only applies when
     `community_scoped` -- the unfiltered path shows every category
@@ -348,15 +346,6 @@ async def _browse_boards_in_category(
         db, user, "board", community_id=effective_community_id, category_id=category_id
     )
     category_name = get_board_category_by_id(db, category_id).name if category_id is not None else None
-    # Where the caller came from, carried onto the board's own screens
-    # (issue #679): the Community, if any, and the category.
-    # Continues the path this picker shows: the Community (or
-    # none) is above "Message boards", a category below it.
-    board_breadcrumb = (
-        *((sanitize_text(title_prefix),) if title_prefix else ()),
-        "Message boards",
-        *((sanitize_text(category_name),) if category_name else ()),
-    )
     community = get_community(db, effective_community_id)
     community_name = community.name if community is not None else None
     mode_box = {"mode": current_mode}
@@ -379,8 +368,10 @@ async def _browse_boards_in_category(
     redraw_in_place = redraw_in_place_enabled(db, user)
     accent_color = effective_accent_color(session, db)
     header_color = effective_header_color(session, db)
-    title = "Message boards" if title_prefix is not None else "Available message boards"
-    picker_breadcrumb = (title_prefix,) if title_prefix is not None else ()
+    if category_name is not None:
+        title = sanitize_text(category_name)
+    else:
+        title = "Message boards" if community_scoped else "Available message boards"
     description_level = menu_description_level(db, user)
     about_separator = " · " if unicode_style else " - "
 
@@ -468,7 +459,7 @@ async def _browse_boards_in_category(
                 column_values_of=_columns_of,
                 description_level=description_level,
                 title=title,
-                breadcrumb=picker_breadcrumb,
+                own=True,
                 empty_message="No message boards are available to you yet.",
                 on_sort=on_sort_flat,
                 sort_label=_sort_label,
@@ -490,10 +481,7 @@ async def _browse_boards_in_category(
             if board is None:
                 return
             reopen_at = board.id
-            await _show_board(
-                session, db, board, user, link_context=link_context, breadcrumb=board_breadcrumb,
-                transfers=transfers,
-            )
+            await _show_board(session, db, board, user, link_context=link_context, transfers=transfers)
             continue
 
         mixed: list[Category | Board] = [*categories_here, *boards_here]
@@ -524,7 +512,7 @@ async def _browse_boards_in_category(
             column_values_of=_columns_of,
             description_level=description_level,
             title=title,
-            breadcrumb=picker_breadcrumb,
+            own=True,
             empty_message="No message boards are available to you yet.",
             redraw_in_place=redraw_in_place,
             unicode_style=unicode_style,
@@ -546,16 +534,14 @@ async def _browse_boards_in_category(
         reopen_at = stable_id(selected)
 
         if isinstance(selected, Category):
-            await _browse_boards_in_category(
-                session, db, user, category_id=selected.id,
-                community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
-                link_context=link_context, transfers=transfers,
-            )
+            with entered(session, sanitize_text(selected.name)):
+                await _browse_boards_in_category(
+                    session, db, user, category_id=selected.id,
+                    community_id=community_id, community_scoped=community_scoped,
+                    link_context=link_context, transfers=transfers,
+                )
         else:
-            await _show_board(
-                session, db, selected, user, link_context=link_context, breadcrumb=board_breadcrumb,
-                transfers=transfers,
-            )
+            await _show_board(session, db, selected, user, link_context=link_context, transfers=transfers)
 
 
 def _can_edit_post(db: Database, post: Post, user: User) -> bool:
@@ -956,7 +942,25 @@ async def _show_board(
     *,
     link_context: LinkContext | None = None,
     initial_cursor: tuple[str, str] | None = None,
-    breadcrumb: tuple[str, ...] = ("Message boards",),
+    transfers: TransferGrants | None = None,
+) -> None:
+    """`board`'s screen, named after the board, so a post, a reply and a
+    review are under it in the breadcrumb (`netbbs.net.location`)."""
+    with entered(session, sanitize_text(board.name)):
+        await _board_screen(
+            session, db, board, user,
+            link_context=link_context, initial_cursor=initial_cursor, transfers=transfers,
+        )
+
+
+async def _board_screen(
+    session: Session,
+    db: Database,
+    board: Board,
+    user: User,
+    *,
+    link_context: LinkContext | None = None,
+    initial_cursor: tuple[str, str] | None = None,
     transfers: TransferGrants | None = None,
 ) -> None:
     """
@@ -965,9 +969,9 @@ async def _show_board(
 
     The page is a list, one row per post, as many rows as the terminal
     holds (issue #679); a post is read one at a time in `_read_post`,
-    which is also where the post's own actions are. `breadcrumb` is the
-    path between the node's name and the board's: the Community and
-    category the caller came through, around "Message boards".
+    which is also where the post's own actions are. The board's own
+    frame draws with `own=True`; a post, a composition and a review draw
+    as its children.
 
     Opens on the *newest* page, confirmed with Thiesi over keeping the
     old oldest-first default: an active board's most recent activity is
@@ -1110,7 +1114,7 @@ async def _show_board(
             subtitle.append(linked_note)
         header = screen_title(
             board_name,
-            breadcrumb=(session.node_display_name, *breadcrumb),
+            breadcrumb=crumbs(session, own=True),
             subtitle=separator.join(subtitle),
             width=session.terminal_width,
             clear=redraw_in_place,
@@ -1308,7 +1312,7 @@ async def _show_board(
             width = session.terminal_width
             title = screen_title(
                 sanitize_text(post.subject),
-                breadcrumb=(session.node_display_name, *breadcrumb, board_name),
+                breadcrumb=crumbs(session),
                 width=width,
                 clear=False,
                 unicode_style=unicode_style, collapsed=collapsed,
@@ -1410,7 +1414,7 @@ async def _show_board(
                 try:
                     await get_referenced_file(
                         session, file_lane, user, refs, noun="post",
-                        breadcrumb=(*breadcrumb, board_name), style=_picker_style(session, db, user),
+                        style=_picker_style(session, db, user),
                         transfers=transfers,
                     )
                 finally:
@@ -1418,7 +1422,7 @@ async def _show_board(
                 continue
             if key == "h" and can_see_history:
                 await _show_history(
-                    session, db, board, post, user, breadcrumb=(session.node_display_name, *breadcrumb, board_name),
+                    session, db, board, post, user,
                     name_requirement=name_requirement, body_mode=body_mode, truecolor=truecolor,
                     redraw_in_place=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
                     separator=separator,
@@ -1469,10 +1473,7 @@ async def _show_board(
             if (key == "e" and can_edit) or (key == "t" and can_tombstone) or (key in ("o", "k") and can_pin):
                 root = post.root_post_id
                 if key == "e":
-                    await _edit_existing_post(
-                        session, db, board, post, user, link_context=link_context,
-                        breadcrumb=(*breadcrumb, board_name),
-                    )
+                    await _edit_existing_post(session, db, board, post, user, link_context=link_context)
                 elif key == "t":
                     await _tombstone_existing_post(session, db, board, post, user, link_context=link_context)
                 else:
@@ -1519,7 +1520,7 @@ async def _show_board(
 
     async def _compose_screen(title: str) -> None:
         await show_compose_screen(
-            session, title=title, breadcrumb=(*breadcrumb, board_name),
+            session, title=title,
             redraw_in_place=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
             header_color=effective_header_color(session, db), accent_color=effective_accent_color(session, db),
         )
@@ -1610,7 +1611,7 @@ async def _show_board(
         await _review_and_commit(
             session, db, user, board, subject=subject, body=body, draft_path=draft_path, files=[],
             commit_key="p", commit_label="ost", commit_brief="Publish this reply" if reply_to else "Publish this post",
-            title=compose_title, breadcrumb=(*breadcrumb, board_name),
+            title=compose_title,
             cancelled_notice=cancelled_notice,
             draft_saved_notice=draft_saved_notice,
             commit=_commit,
@@ -1654,7 +1655,7 @@ async def _show_board(
         await _review_and_commit(
             session, db, user, board, subject=subject, body=body, draft_path=draft_path, files=[],
             commit_key="p", commit_label="ost", commit_brief="Publish this post",
-            title="New art post", breadcrumb=(*breadcrumb, board_name),
+            title="New art post",
             cancelled_notice="Post cancelled.",
             draft_saved_notice="Draft saved -- the art editor offers it the next time you draw here.",
             commit=lambda subject, body, files: _publish(subject, body, layout="art", files=files),
@@ -1844,7 +1845,7 @@ async def _show_board(
         async def _draw_empty_board() -> bool:
             has_draft = _has_saved_draft()
             await session.write_line(
-                f"\r\n{screen_title(board_name, breadcrumb=(session.node_display_name, *breadcrumb), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient)}"
+                f"\r\n{screen_title(board_name, breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient)}"
             )
             gates_note = _gates_note()
             if gates_note:
@@ -2085,7 +2086,6 @@ async def _edit_existing_post(
     user: User,
     *,
     link_context: LinkContext | None = None,
-    breadcrumb: tuple[str, ...] = ("Message boards",),
 ) -> None:
     """
     Edit `post`, the one the reader is showing (issue #679: actions live
@@ -2130,9 +2130,9 @@ async def _edit_existing_post(
         if _art_canvas(session, split_signature(initial_body)[0]) is None:
             return  # said why; the draft stays
 
-    # Its own screen (issue #813); `breadcrumb` ends at the board.
+    # Its own screen (issue #813), under the board.
     await show_compose_screen(
-        session, title="Edit post", breadcrumb=breadcrumb,
+        session, title="Edit post",
         redraw_in_place=redraw_in_place_enabled(db, user), unicode_style=unicode_style_enabled(db, user),
         collapsed=breadcrumb_collapsed_enabled(db, user),
         header_color=effective_header_color(session, db), accent_color=effective_accent_color(session, db),
@@ -2198,7 +2198,7 @@ async def _edit_existing_post(
         session, db, user, board, subject=subject, body=body, draft_path=edit_draft_path, layout=post.layout,
         files=current_files,
         commit_key="s", commit_label="ave", commit_brief="Save this edit",
-        title="Edit post", breadcrumb=breadcrumb,
+        title="Edit post",
         cancelled_notice="Edit cancelled.",
         draft_saved_notice=draft_saved_notice,
         commit=_save,
@@ -2222,7 +2222,6 @@ async def _review_and_commit(
     commit: Callable[[str, str, list[FileRef] | None], Awaitable[bool]],
     layout: str = "prose",
     title: str = "New post",
-    breadcrumb: tuple[str, ...] = ("Message boards",),
     files: list[FileRef] | None = None,
 ) -> None:
     """The review screen a new post and an edit both pass through
@@ -2238,14 +2237,43 @@ async def _review_and_commit(
     The draft is previewed as `board`'s readers will see it: in color
     where the board allows it and the caller wants it (issue #711).
 
-    `title` names the composition ("New post", "Reply", "Edit post") and
-    `breadcrumb` is the path to the board: the review screen is under
-    both, and the fullscreen editor's header shows the title (issue #813).
+    `title` names the composition ("New post", "Reply", "Edit post"): the
+    review screen is under it and the board (`netbbs.net.location`), and
+    the fullscreen editor's header shows it (issue #813).
 
     `files` are the files the post points at so far (issue #842), changed
     here with `[A]ttach file` and `[R]emove file` and handed to `commit`
     with the subject and body. `None` -- a moderator editing someone else's
     post -- offers no file keys and hands `commit` `None`: the files stay."""
+    with entered(session, title):
+        await _review_loop(
+            session, db, user, board, subject=subject, body=body, draft_path=draft_path,
+            commit_key=commit_key, commit_label=commit_label, commit_brief=commit_brief,
+            cancelled_notice=cancelled_notice, draft_saved_notice=draft_saved_notice,
+            commit=commit, layout=layout, title=title, files=files,
+        )
+
+
+async def _review_loop(
+    session: Session,
+    db: Database,
+    user: User,
+    board: Board,
+    *,
+    subject: str,
+    body: str,
+    draft_path: Path,
+    commit_key: str,
+    commit_label: str,
+    commit_brief: str,
+    cancelled_notice: str,
+    draft_saved_notice: str,
+    commit: Callable[[str, str, list[FileRef] | None], Awaitable[bool]],
+    layout: str,
+    title: str,
+    files: list[FileRef] | None,
+) -> None:
+    """`_review_and_commit`'s loop, under the composition's name."""
     body_mode = post_body_mode(
         board_allows_color=board.allow_color, reader_wants_color=post_colors_enabled(db, user)
     )
@@ -2280,7 +2308,6 @@ async def _review_and_commit(
             truecolor=effective_truecolor(session, db, user),
             body_mode=body_mode,
             body_layout=layout,
-            breadcrumb=(*breadcrumb, title),
             extra_rows=(
                 _file_rows(db, board, files, accent=effective_accent_color(session, db), linked=linked)
                 if files is not None else ()
@@ -2294,7 +2321,7 @@ async def _review_and_commit(
             try:
                 files = await change_attached_files(
                     session, file_lane, user, files, action, noun="post",
-                    breadcrumb=(*breadcrumb, title), style=_picker_style(session, db, user),
+                    style=_picker_style(session, db, user),
                 )
             finally:
                 file_lane.close()
@@ -2726,7 +2753,6 @@ async def _show_history(
     post: Post,
     user: User,
     *,
-    breadcrumb: tuple[str, ...],
     name_requirement: str | None,
     body_mode: str,
     truecolor: bool,
@@ -2782,15 +2808,16 @@ async def _show_history(
                 badge(labels[id(chosen)]),
             ])
         ]
-        title = screen_title(
-            sanitize_text(version.subject),
-            breadcrumb=(*breadcrumb, "Versions"),
-            width=session.terminal_width,
-            clear=False,
-            unicode_style=unicode_style, collapsed=collapsed,
-            header_color=effective_header_color(session, db),
-            node_name_gradient=session.node_name_gradient,
-        )
+        with entered(session, "Versions"):
+            title = screen_title(
+                sanitize_text(version.subject),
+                breadcrumb=crumbs(session),
+                width=session.terminal_width,
+                clear=False,
+                unicode_style=unicode_style, collapsed=collapsed,
+                header_color=effective_header_color(session, db),
+                node_name_gradient=session.node_name_gradient,
+            )
         page = 0
         while True:
             key, page = await show_detail(

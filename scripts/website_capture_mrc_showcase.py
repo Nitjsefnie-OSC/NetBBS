@@ -215,6 +215,7 @@ async def shot_rooms(node: Node) -> str:
     await node.bridge.local_join(mapping.channel, "bob")
     await asyncio.sleep(1.0)
     session = WaitingSession()
+    session.location = ("Chat",)  # where the walk came from
     return await snapshot_task(session, chat_flow._pick_mrc_room(
         session, node.lane, node.hub, node.alice, node.bridge), "Open a room by name")
 
@@ -236,6 +237,7 @@ async def shot_who(node: Node) -> str:
     """Joining the bridged lobby, a little traffic, then `/who`."""
     await node.seat_local("bob", 900)
     session = CaptureSession()
+    session.location = ("Chat",)  # where the walk came from
     task = asyncio.create_task(chat_flow._chat_loop(
         session, node.lane, node.hub, PresenceRegistry(), MessageMailbox(), InputHistory(),
         node.lobby, node.alice, mrc_bridge=node.bridge))

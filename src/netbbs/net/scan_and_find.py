@@ -53,6 +53,7 @@ from netbbs.net.mail_flow import browse_mail, caller_mail_refusal, open_letter
 from netbbs.net.mail_arrivals import NOTICE_COLOR as NEW_MAIL_COLOR, new_scan_mail_line, waiting_mail_counts
 from netbbs.net.notices import announce, announce_styled
 from netbbs.net.node_theme import effective_accent_color, effective_header_color, effective_header_color_256
+from netbbs.net.location import crumbs, located
 from netbbs.net.picker import pick_item
 from netbbs.rendering import GATE_COLOR, MenuEntry, SegmentColor, menu_key
 from netbbs.net.redraw_preference import redraw_in_place_enabled
@@ -130,6 +131,7 @@ def _next_with_something(rows: list[_ScanItem], after: tuple[str, int]) -> _Scan
     return None
 
 
+@located("New scan")
 async def _new_scan_screen(
     session: Session,
     db: Database,
@@ -449,7 +451,6 @@ async def _new_scan_screen(
             stable_id_of=lambda entry: entry[0],
             description_of=_where,
             title="Replies to you",
-            breadcrumb=("New scan",),
             empty_message="No replies to you are waiting.",
             redraw_in_place=redraw_in_place_enabled(db, user),
             unicode_style=unicode_style_enabled(db, user),
@@ -481,6 +482,7 @@ async def _new_scan_screen(
             name_segments_of=_name_segments,
             description_of=_description,
             title="New scan",
+            own=True,
             empty_message="Nothing accessible yet.",
             item_keys={"m": _mark_read, "f": _toggle_follow},
             live_keys={"v": _toggle_followed_only, "r": _read_replies, "e": _read_mail},
@@ -604,6 +606,7 @@ def _chat_hit_author(author_label: str) -> str:
     return author_label
 
 
+@located("Find")
 async def _find_screen(
     session: Session,
     db: Database,
@@ -654,7 +657,7 @@ async def _find_screen(
     await session.write_line(
         "\r\n" + screen_title(
             "Search",
-            breadcrumb=(session.node_display_name,),
+            breadcrumb=crumbs(session, own=True),
             subtitle=(
                 "Find your own mail, posts, files, and retained chat on this node." if mail_open
                 else "Find posts, files, and retained chat on this node."

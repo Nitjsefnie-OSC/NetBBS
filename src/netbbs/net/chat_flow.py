@@ -196,6 +196,7 @@ from netbbs.net.list_art import CHAT_CHANNEL_PICKER, list_slot_fields
 from netbbs.net.color_depth_preference import effective_truecolor
 from netbbs.net.node_theme import effective_accent_color_256, effective_header_color_256
 from netbbs.net.notices import announce
+from netbbs.net.location import crumbs, entered, located
 from netbbs.net.picker import pick_item
 from netbbs.net.redraw_preference import redraw_in_place_enabled
 from netbbs.net.breadcrumb_preference import breadcrumb_collapsed_enabled
@@ -270,6 +271,7 @@ if TYPE_CHECKING:
 
 
 @records_activity("Chat")
+@located("Chat")
 async def browse_channels(
     session: Session,
     lane: DatabaseLane,
@@ -282,7 +284,6 @@ async def browse_channels(
     session_registry: ActiveSessionRegistry | None = None,
     community_id: int | None = None,
     community_scoped: bool = False,
-    title_prefix: str | None = None,
     initial_channel: Channel | None = None,
     link_context: LinkContext | None = None,
     direct_invites: DirectChatInvites | None = None,
@@ -342,7 +343,7 @@ async def browse_channels(
     ever returning that action, so this just re-confirms "yes, still a
     member" for free.
 
-    `community_id`/`community_scoped`/`title_prefix` (design doc §16)
+    `community_id`/`community_scoped` (design doc §16)
     narrow every picker re-entry in this loop -- not just the
     initial pick -- to the same Community/Uncategorized/unfiltered
     scope the caller entered with; see
@@ -362,7 +363,7 @@ async def browse_channels(
     mrc_session_state: dict = {}
     channel = initial_channel or await _pick_channel(
         session, lane, hub, user, category_id=None,
-        community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix, mrc_bridge=mrc_bridge,
+        community_id=community_id, community_scoped=community_scoped, mrc_bridge=mrc_bridge,
     )
     while channel is not None:
         allowed, denial_message = await lane.run(_authorize_channel_entry, channel, user)
@@ -372,7 +373,7 @@ async def browse_channels(
             announce(session, denial_message, tone="muted")
             channel = await _pick_channel(
                 session, lane, hub, user, category_id=None,
-                community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix, mrc_bridge=mrc_bridge,
+                community_id=community_id, community_scoped=community_scoped, mrc_bridge=mrc_bridge,
             )
             continue
 
@@ -387,7 +388,7 @@ async def browse_channels(
         if isinstance(action, _ToPicker):
             channel = await _pick_channel(
                 session, lane, hub, user, category_id=None,
-                community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix, mrc_bridge=mrc_bridge,
+                community_id=community_id, community_scoped=community_scoped, mrc_bridge=mrc_bridge,
             )
             continue
         if isinstance(action, _EnterDirectChat):
@@ -499,7 +500,6 @@ async def _pick_channel(
     category_id: int | None,
     community_id: int | None = None,
     community_scoped: bool = False,
-    title_prefix: str | None = None,
     mrc_bridge: MrcBridge | None = None,
 ) -> Channel | None:
     """
@@ -508,8 +508,8 @@ async def _pick_channel(
     `netbbs.net.board_flow._browse_boards_in_category` exactly — same
     reasoning, same two-level cap, same category/item ID-namespace
     disambiguation trick (negated category IDs), and the same
-    `community_id`/`community_scoped`/`title_prefix` Community-filter
-    threading (design doc §16). See that function's docstring
+    `community_id`/`community_scoped` Community-filter threading (design
+    doc §16), and the same titles and breadcrumbs. See that function's docstring
     for the full rationale; not repeated here to avoid the two copies
     drifting out of sync in what they claim rather than just in what
     they say.
@@ -660,8 +660,10 @@ async def _pick_channel(
         if item.id in needs_name:
             return NAME_GATE_NOTE
         return f"{hub.participant_count(item.name)} online"
-    title = "Chat channels" if title_prefix is not None else "Available chat channels"
-    picker_breadcrumb = (title_prefix,) if title_prefix is not None else ()
+    if category_name is not None:
+        title = sanitize_text(category_name)
+    else:
+        title = "Chat channels" if community_scoped else "Available chat channels"
     # Issue #300: at the top level, with MRC on and open rooms allowed,
     # the network is one more place to browse -- an entry that opens its
     # own picker, the way a category does.
@@ -699,7 +701,7 @@ async def _pick_channel(
                 c, needs_name, name_color=flat_accent,
             ),
             title=title,
-            breadcrumb=picker_breadcrumb,
+            own=True,
             empty_message="No chat channels are available to you yet.",
             on_sort=on_sort_flat,
             sort_label=_sort_label,
@@ -770,7 +772,7 @@ async def _pick_channel(
             description_of=render_description,
             name_segments_of=_name_segments,
             title=title,
-            breadcrumb=picker_breadcrumb,
+            own=True,
             empty_message="No chat channels are available to you yet.",
             redraw_in_place=redraw_in_place,
             unicode_style=unicode_style,
@@ -804,11 +806,12 @@ async def _pick_channel(
         mixed = [*leading, *categories_here, *new_channels]
 
     if isinstance(selected, Category):
-        return await _pick_channel(
-            session, lane, hub, user, category_id=selected.id,
-            community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
-            mrc_bridge=mrc_bridge,
-        )
+        with entered(session, sanitize_text(selected.name)):
+            return await _pick_channel(
+                session, lane, hub, user, category_id=selected.id,
+                community_id=community_id, community_scoped=community_scoped,
+                mrc_bridge=mrc_bridge,
+            )
     return selected
 
 
@@ -1076,7 +1079,6 @@ async def _pick_mrc_room(
             stable_id_of=_stable_id,
             description_of=_description,
             title=f"Multi Relay Chat{subtitle_state}",
-            breadcrumb=("Chat",),
             empty_message="No MRC rooms are open here yet.",
             refresh=_items,
             redraw_in_place=redraw_in_place,
@@ -5394,7 +5396,7 @@ async def _chat_loop(
         collapsed = await lane.run(breadcrumb_collapsed_enabled, user)
         heading = screen_title(
             f"#{safe_channel_name}",
-            breadcrumb=(session.node_display_name, "Chat"),
+            breadcrumb=crumbs(session),
             subtitle=sanitize_text(channel.topic or channel.description or "Live conversation"),
             width=session.terminal_width,
             clear=await lane.run(redraw_in_place_enabled, user),
@@ -6510,15 +6512,16 @@ async def run_direct_chat_loop(
             await session.write(clear_screen() + set_scroll_region(1, initial_height - _PINNED_ROWS))
 
         close_hint = menu_key("/close", " to leave")
-        heading = screen_title(
-            sanitize_text(other_user.username),
-            breadcrumb=(session.node_display_name, "Direct chat"),
-            subtitle="Private, ephemeral conversation",
-            width=session.terminal_width,
-            clear=redraw_in_place,
-            unicode_style=unicode_style, collapsed=collapsed,
-            header_color=header_color,
-        node_name_gradient=session.node_name_gradient)
+        with entered(session, "Direct chat"):
+            heading = screen_title(
+                sanitize_text(other_user.username),
+                breadcrumb=crumbs(session),
+                subtitle="Private, ephemeral conversation",
+                width=session.terminal_width,
+                clear=redraw_in_place,
+                unicode_style=unicode_style, collapsed=collapsed,
+                header_color=header_color,
+            node_name_gradient=session.node_name_gradient)
         await session.write_line(f"\r\n{heading}")
         await session.write_line(f"Type {close_hint}.")
         if pinned_ui_enabled:
@@ -6748,16 +6751,17 @@ async def run_direct_chat_invite_flow(
 
     future_to_session = {invite.outcome: target_session for target_session, invite in invites.items()}
 
-    heading = screen_title(
-        "Invitation sent",
-        breadcrumb=(session.node_display_name, "Direct chat"),
-        subtitle=f"Waiting for {sanitize_text(target.username)} to respond",
-        width=session.terminal_width,
-        clear=await lane.run(redraw_in_place_enabled, user),
-        unicode_style=await lane.run(unicode_style_enabled, user),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, user),
-        header_color=await lane.run(effective_header_color_256),
-    node_name_gradient=session.node_name_gradient)
+    with entered(session, "Direct chat"):
+        heading = screen_title(
+            "Invitation sent",
+            breadcrumb=crumbs(session),
+            subtitle=f"Waiting for {sanitize_text(target.username)} to respond",
+            width=session.terminal_width,
+            clear=await lane.run(redraw_in_place_enabled, user),
+            unicode_style=await lane.run(unicode_style_enabled, user),
+            collapsed=await lane.run(breadcrumb_collapsed_enabled, user),
+            header_color=await lane.run(effective_header_color_256),
+        node_name_gradient=session.node_name_gradient)
     await session.write_line(f"\r\n{heading}")
     if len(away) == len(invites):
         # Every one of the target's sessions is away from its main menu.

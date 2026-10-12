@@ -706,6 +706,16 @@ raise the editor's designated error so the draft stays open. See design
 [section 3.5](NetBBS-design-doc.md#35-interaction-model-for-screens-issue-282)
 for confirmation and draft behavior.
 
+A screen never spells its breadcrumb (issue #1246). A screen that leads to
+further screens names itself with `@located("Outbox")`, or with
+`with entered(session, name):` for a name known only at run time (a board, a
+user). It draws its own frame with `own=True`: `crumbs(session, own=True)` for
+`screen_title`, or `own=True` on `pick_item`, `edit_resource_draft` and
+`_detail_title`. Everything it opens draws as its child by default. A screen
+that opens nothing names nothing. `tests/test_location.py` refuses a typed
+`breadcrumb=` anywhere in `netbbs.net`, and it walks every SysOp gallery screen
+to check that each sits beside or under the screen that opened it.
+
 A few keys mean the same on every hotkey screen (issue #1158, §3.5 "Keys that
 work everywhere"): `B` and Esc go back, `<` `>` turn a page, `/` finds, and
 `?`, F1 and Ctrl-H show help. A new screen:

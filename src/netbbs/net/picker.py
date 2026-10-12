@@ -52,6 +52,7 @@ from netbbs.net.char_input import (
     help_key_label,
     page_step,
 )
+from netbbs.net.location import crumbs
 from netbbs.net.help_overlay import show_help
 from netbbs.rendering.ansi import move_cursor, strip_ansi
 from netbbs.rendering.art_slots import ListSlotRow, SlotArt, list_slot_fits, render_list_slot_art
@@ -290,7 +291,7 @@ async def pick_item(
     columns: Sequence[ListColumn] | None = None,
     column_values_of: Callable[[T], Sequence[str | tuple[str, SegmentColor]]] | None = None,
     title: str,
-    breadcrumb: Sequence[str] = (),
+    own: bool = False,
     empty_message: str,
     refresh: Callable[[], Awaitable[Sequence[T]]] | None = None,
     on_sort: Callable[[], Awaitable[Sequence[T] | None]] | None = None,
@@ -407,17 +408,9 @@ async def pick_item(
     is made per render against the live terminal width, so a caller
     that resizes mid-session gets whichever form actually fits.
 
-    `breadcrumb` supplies ancestor location segments (e.g. a category
-    or Community name) between the node name and `title` — a real
-    dogfood-reported bug: callers used to fold that context into
-    `title` itself (`f"{category_name} › message boards"`), which
-    visually mimicked `screen_title`'s own ancestor/current-location
-    color split (muted ancestors, only the last segment in
-    `HEADER_COLOR`) without actually being one — the whole hand-built
-    string rendered in one flat color as if it were all "current
-    location." Passing the category/Community name here instead gets
-    the real thing for free. Empty by default, matching every existing
-    caller's byte-for-byte output.
+    The breadcrumb comes from where the session is (`netbbs.net.
+    location`); `own` marks the picker as the frame of the screen that
+    last named itself, so its name is not shown twice.
 
     The page/nav block, and the `"Choice: "` prompt itself, are drawn
     once on entry and again only after an actual state change (paging
@@ -1040,7 +1033,7 @@ async def pick_item(
             # After a clear, the breadcrumb belongs on the first row.
             # Keep the separator when appending or following a masthead.
             heading = ("\r\n" if prefix or not redraw_in_place else "") + screen_title(
-                title, breadcrumb=(session.node_display_name, *breadcrumb),
+                title, breadcrumb=crumbs(session, own=own),
                 width=render_width, clear=False, unicode_style=unicode_style,
                 collapsed=collapsed, header_color=header_color,
                 node_name_gradient=session.node_name_gradient,
@@ -1207,7 +1200,7 @@ async def pick_item(
         await session.write_line(
             "\r\n" + screen_title(
                 title,
-                breadcrumb=(session.node_display_name, *breadcrumb),
+                breadcrumb=crumbs(session, own=own),
                 subtitle=f"page {page_index + 1}/{total_pages}, {len(working_set)} total",
                 width=render_width,
                 clear=False if masthead_text else redraw_in_place,

@@ -249,6 +249,11 @@ class Session(ABC):
     #: `run_authenticated_session`) still sees.
     node_display_name: str = "NetBBS"
 
+    #: The screens that led to the one on screen, outermost first, without
+    #: the node's name (issue #1246). Only `netbbs.net.location` changes
+    #: it, by replacing the tuple, so the class default is never mutated.
+    location: tuple[str, ...] = ()
+
     #: Preset gradient name (`netbbs.rendering.gradient.GRADIENTS`) to
     #: recolor `node_display_name` with wherever it's shown as a
     #: breadcrumb segment, or `None` for a flat `header_color` (GitHub

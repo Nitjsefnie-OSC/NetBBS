@@ -401,7 +401,7 @@ async def choose_recipient(
         stable_id_of=lambda choice: positions[id(choice)],
         description_of=describe,
         selectable_of=lambda choice: choice.refusal is None,
-        title=title, breadcrumb=("Mail",), empty_message=empty,
+        title=title, empty_message=empty,
         **picker_style,
     )
     if picked is None:

@@ -52,6 +52,7 @@ from netbbs.ftn.nodelist import MAX_NODELIST_BYTES, NodelistError, import_nodeli
 from netbbs.ftn.queue import FtnQueueFullError, count_pending_outbound, delete_held, list_held
 from netbbs.ftn.tosser import release_held
 from netbbs.moderation.log import record_action
+from netbbs.net.location import located
 from netbbs.net.resource_editor import read_field_line
 from netbbs.net.session import Session
 from netbbs.rendering import MUTED_COLOR, colored
@@ -76,6 +77,7 @@ def _af():
 # --- Settings → Echomail & netmail (FTN) -------------------------------------------------
 
 
+@located("FTN networks")
 async def ftn_networks_screen(session: Session, lane: DatabaseLane, actor: User, *, node_controls=None) -> None:
     """The networks: picking one edits it, [C]reate adds one, [D]elete removes
     the highlighted one."""
@@ -114,7 +116,7 @@ async def ftn_networks_screen(session: Session, lane: DatabaseLane, actor: User,
             description_of=lambda n: (f"{n.our_address.four_d} via {n.uplink_address.four_d}, "
                                       + ("on" if n.enabled else "off")
                                       + (", answers calls" if n.answers_calls else "")),
-            title="FTN networks",
+            title="FTN networks", own=True,
             empty_message="No FTN networks. [C]reate one: it starts as fsxNet's hub.",
             refresh=_load, on_create=_create, item_keys={"d": _delete},
             live_nav=[MenuEntry(label=menu_key("D", "elete"), brief="Remove a network")],
@@ -329,6 +331,7 @@ def _status_sections(db: Database, mailer, listener, *, unicode_style: bool) -> 
     return sections
 
 
+@located("Echomail & netmail (FTN)")
 async def ftn_status_screen(session: Session, lane: DatabaseLane, actor: User, node_controls) -> None:
     """What the FTN gateway last did, and the work on it."""
     af = _af()
@@ -340,7 +343,7 @@ async def ftn_status_screen(session: Session, lane: DatabaseLane, actor: User, n
         chrome = await af._load_chrome(lane, actor)
         sections = await lane.run(lambda db: _status_sections(db, mailer, listener, unicode_style=chrome.unicode_style))
         choice, page = await af.show_detail(
-            session, title=af._detail_title(session, chrome, "Echomail & netmail (FTN)", breadcrumb=("Node",)),
+            session, title=af._detail_title(session, chrome, "Echomail & netmail (FTN)", own=True),
             sections=sections, page=page, message=message,
             actions=[("p", menu_key("P", "oll now")), ("a", menu_key("A", "reaFix")),
                      ("n", menu_key("N", "odelist import")), ("h", menu_key("H", "eld packets")), af._BACK_ACTION],

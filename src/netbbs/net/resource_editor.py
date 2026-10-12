@@ -45,6 +45,7 @@ from netbbs.net.char_input import (
     reject_unhandled_key,
 )
 from netbbs.net.confirm import prompt_yes_no
+from netbbs.net.location import crumbs
 from netbbs.net.help_overlay import show_help
 from netbbs.net.notices import take_notices
 from netbbs.net.row_numbers import ROW_NUMBER_WIDTH, read_row_number, row_number_label, row_range_label
@@ -528,7 +529,7 @@ async def edit_resource_draft(
     *,
     title: str,
     subtitle: str | None = None,
-    breadcrumb: Sequence[str] = (),
+    own: bool = False,
     fields: list[FieldSpec],
     draft: Draft,
     save: Callable[[Draft], Awaitable[Any]] | None = None,
@@ -633,9 +634,9 @@ async def edit_resource_draft(
 
     `subtitle`, if given, is passed straight through to `screen_title`'s
     own `subtitle` parameter -- one line under the title, above the
-    underline. `breadcrumb` is the path between the node's name and the
-    title, for a screen reached from another (a member's Profile, from the
-    user editor).
+    underline. The breadcrumb comes from where the session is (`netbbs.
+    net.location`); `own` marks the editor as the frame of the screen
+    that last named itself.
 
     `unicode_style` (issue #160's own breadcrumb-arrow rollout, Stage 2)
     is passed straight through to `screen_title` too -- fetched once by
@@ -711,7 +712,7 @@ async def edit_resource_draft(
         width, height = session.terminal_width, session.terminal_height
         title_text = screen_title(
             detail_state.title if detail_state is not None and detail_state.title is not None else title,
-            breadcrumb=(session.node_display_name, *breadcrumb), subtitle=subtitle, width=width,
+            breadcrumb=crumbs(session, own=own), subtitle=subtitle, width=width,
             unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient,
         )

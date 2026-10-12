@@ -26,6 +26,7 @@ from netbbs.net.char_input import (
 )
 from netbbs.net.confirm import prompt_yes_no
 from netbbs.net.draft_storage import delete_draft, load_draft, offer_draft_recovery, save_draft
+from netbbs.net.location import crumbs
 from netbbs.net.help_overlay import show_help
 from netbbs.net.notices import announce, take_notices, write_notices
 from netbbs.net.resource_editor import editing_in_place, read_field_line, write_field_prompt
@@ -102,7 +103,6 @@ async def show_compose_screen(
     session: Session,
     *,
     title: str,
-    breadcrumb: Sequence[str],
     fields: Sequence[tuple[str, str]] = (),
     hint: str | None = None,
     redraw_in_place: bool = False,
@@ -117,12 +117,12 @@ async def show_compose_screen(
     The To and Subject prompts used to appear under the menu they were
     chosen from, with nothing saying what was being written.
 
-    `breadcrumb` is the path after the node's name. `fields` are plain
+    The breadcrumb is where the session is (`netbbs.net.location`). `fields` are plain
     `(label, value)` pairs, sanitized here. Pending outcomes are written
     last, directly above the prompt the caller asks next."""
     heading = screen_title(
         title,
-        breadcrumb=(session.node_display_name, *breadcrumb),
+        breadcrumb=crumbs(session),
         width=session.terminal_width,
         clear=redraw_in_place,
         unicode_style=unicode_style, collapsed=collapsed,
@@ -750,7 +750,6 @@ async def review_composition(
     truecolor: bool = False,
     body_mode: str | None = None,
     body_layout: str = "prose",
-    breadcrumb: Sequence[str] = ("Compose",),
     extra_rows: Sequence[str] = (),
     extra_actions: Sequence[tuple[str, str, str | None]] = (),
     places: dict[str, ReviewPlace] | None = None,
@@ -806,7 +805,7 @@ async def review_composition(
     over turns with `PgUp`/`PgDn` and `[N]ext`/`[P]rev page` -- `[>]`/`[<]`
     where the commit key already is `P` (a board's `[P]ost`). Printed whole,
     a long letter scrolled its own To and Subject off the screen before the
-    menu appeared. `breadcrumb` is the path after the node's name."""
+    menu appeared. The breadcrumb is where the session is (`netbbs.net.location`)."""
     # `B` is Back on every screen (issue #1158), so the body is `[E]dit body`.
     field_order = (("t",) if recipient is not None else ()) + ("u", "e")
     actions = {
@@ -870,7 +869,7 @@ async def review_composition(
     def _head() -> list[str]:
         heading = screen_title(
             "Review composition",
-            breadcrumb=(session.node_display_name, *breadcrumb),
+            breadcrumb=crumbs(session),
             subtitle="Check the draft before continuing",
             width=width,
             clear=False,

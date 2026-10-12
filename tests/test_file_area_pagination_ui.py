@@ -34,6 +34,7 @@ from netbbs.auth.users import create_user
 from netbbs.files import entries as entries_module
 from netbbs.files.areas import create_file_area
 from netbbs.files.entries import list_files_page, upload_file
+from netbbs.net.location import entered
 from netbbs.net.file_flow import _show_area
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
@@ -115,7 +116,8 @@ def test_opening_a_multi_page_area_shows_only_the_newest_page(tmp_path, monkeypa
     session = FakeSession(keys=["b"])  # view the newest page, then back out
     lane = DatabaseLane(db_path)
 
-    asyncio.run(_show_area(session, lane, area, user))
+    with entered(session, "Files"):
+        asyncio.run(_show_area(session, lane, area, user))
 
     assert "NetBBS › Files › docs" in session.visible_output
     assert f"{_PAGE_SIZE} files on this page" in session.output
@@ -192,7 +194,8 @@ def test_empty_area_has_a_guided_empty_state(tmp_path):
     session = FakeSession(keys=["b"])
     lane = DatabaseLane(db_path)
 
-    asyncio.run(_show_area(session, lane, area, user))
+    with entered(session, "Files"):
+        asyncio.run(_show_area(session, lane, area, user))
 
     assert "NetBBS › Files › docs" in session.visible_output
     assert "This file area has no files yet" in session.output

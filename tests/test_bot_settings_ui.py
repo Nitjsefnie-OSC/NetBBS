@@ -114,15 +114,20 @@ def test_collapsed_preference_reaches_bot_editor_and_resource_picker(db, lane, s
     assert session.plain.index("Allowed channels\r\n") < session.plain.index("Select rows to toggle")
 
 
-def test_bot_screens_keep_only_node_and_current_location_in_auto_mode(db, lane, sysop):
+def test_bot_screens_show_the_path_from_the_bot_menu(db, lane, sysop):
+    # Issue #1246: the path is the screens that led here. Opened directly,
+    # the bot menu is the first; its editor and pickers sit under it.
     create_channel(db, "Lobby", creator=sysop)
     set_breadcrumb_collapsed_enabled(db, sysop, False)
     session = Screen(["c", "0", "3", "b", "b", "m", "b", "b"])
     session.node_display_name = "Reliable Link"
     asyncio.run(bot_flow.bot_menu(session, lane, sysop))
     lines = session.plain.splitlines()
-    for title in ("Chat bots", "Create chat bot", "Allowed channels", "Model conversation"):
-        assert f"Reliable Link \u203a {title}" in lines
+    for path in (
+        "Chat bots", "Chat bots \u203a Create chat bot", "Chat bots \u203a Create chat bot \u203a Allowed channels",
+        "Chat bots \u203a Model conversation",
+    ):
+        assert f"Reliable Link \u203a {path}" in lines
     assert "SysOp" not in session.plain and "Content" not in session.plain
 
 

@@ -238,6 +238,7 @@ async def capture_files(tmp: Path) -> str:
         from netbbs.net.char_input import EditorKey, EditorKeyKind
 
         session = CaptureSession(keys=(EditorKey(EditorKeyKind.DOWN),), width=88)
+        session.location = ("Files",)  # where the walk came from
         await _show_area(session, lane, area, people["alice"])
         return session.take()
     finally:
@@ -278,6 +279,7 @@ async def capture_boards(tmp: Path) -> str:
             posts_module.utc_now_iso = original
 
         session = CaptureSession(width=88)
+        session.location = ("Message boards",)  # where the walk came from
         await _show_board(session, db, board, people["alice"])
         return session.take()
     finally:
@@ -311,6 +313,7 @@ async def capture_directory(tmp: Path) -> str:
         set_bio_visible(db, keeper, True)
 
         session = CaptureSession(width=80)
+        session.location = ("Directory",)  # where the walk came from
         await _show_vcard(session, db, keeper, people["alice"])
         return session.take()
     finally:
@@ -418,6 +421,7 @@ async def capture_chat(tmp: Path) -> str:
         hub = ChatHub()
         session = CaptureSession(width=80, height=24)
         session.inputs = asyncio.Queue()
+        session.location = ("Chat",)  # where the walk came from
         task = asyncio.create_task(chat_flow._chat_loop(
             session, lane, hub, presence, MessageMailbox(), InputHistory(),
             channel, people["keeper"],
@@ -528,6 +532,7 @@ async def capture_colors(tmp: Path) -> str:
         # of the draft editor.
         set_accent_color_override(db, (255, 140, 60))
         session = CaptureSession(width=80)
+        session.location = ("SysOp", "Settings")  # where the walk came from
         await _theme_colors_menu(session, lane, people["keeper"])
         return session.take()
     finally:
@@ -624,6 +629,7 @@ async def capture_users(tmp: Path) -> str:
         set_user_disabled(db, get_user_by_username(db, "rask"), True, changed_by=people["keeper"])
 
         session = CaptureSession(width=80, height=30)
+        session.location = ("SysOp",)  # where the walk came from
         await _users_menu(session, lane, people["keeper"], node_controls=_controls())
         return session.take()
     finally:

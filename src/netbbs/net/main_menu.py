@@ -69,6 +69,7 @@ from netbbs.net.node_theme import (
     effective_header_color,
     effective_header_color_256,
 )
+from netbbs.net.location import crumbs, entered, located
 from netbbs.net.picker import pick_item
 from netbbs.net.profile_flow import (
     _edit_profile,
@@ -482,7 +483,7 @@ async def _draw_main_menu(
     redraw = redraw_in_place_enabled(db, user)
     title = screen_title(
         "Main menu",
-        breadcrumb=(session.node_display_name,),
+        breadcrumb=crumbs(session),
         subtitle=field_row(header_fields, unicode_style=unicode_style),
         width=session.terminal_width,
         # `clear` stays False here whenever a masthead is shown -- it
@@ -1164,7 +1165,7 @@ async def _main_menu_loop(
                     session, db, hub, presence, mailbox, history, user, choice,
                     node_controls=node_controls, lane=lane, link_context=link_context,
                     direct_invites=direct_invites,
-                    community_id=None, community_scoped=False, title_prefix=None,
+                    community_id=None, community_scoped=False,
                 )
                 redraw = True
             elif choice == "t" and _has_visible_communities(db, user):
@@ -1519,7 +1520,6 @@ async def _browse_kind(
     direct_invites: DirectChatInvites | None,
     community_id: int | None,
     community_scoped: bool,
-    title_prefix: str | None,
 ) -> None:
     """One kind of resource -- `kind` is its key, `m`/`c`/`f`/`g` --
     either the whole node's list (the main menu's own entries,
@@ -1529,7 +1529,7 @@ async def _browse_kind(
     if kind == "m":
         await _browse_boards(
             session, db, user,
-            community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
+            community_id=community_id, community_scoped=community_scoped,
             link_context=link_context,
             transfers=node_controls.transfers if node_controls is not None else None,
         )
@@ -1542,7 +1542,7 @@ async def _browse_kind(
             session_registry = node_controls.session_registry if node_controls is not None else None
             await browse_channels(
                 session, lane, hub, presence, mailbox, history, user, session_registry=session_registry,
-                community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
+                community_id=community_id, community_scoped=community_scoped,
                 link_context=link_context, direct_invites=direct_invites,
                 mrc_bridge=node_controls.mrc_bridge if node_controls is not None else None,
             )
@@ -1553,7 +1553,7 @@ async def _browse_kind(
         if lane is not None:
             await browse_file_areas(
                 session, lane, user,
-                community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
+                community_id=community_id, community_scoped=community_scoped,
                 link_context=link_context,
                 # Issue #475: the node's transfer-grant table, so a
                 # caller whose terminal has no Zmodem can be handed
@@ -1572,7 +1572,7 @@ async def _browse_kind(
         if lane is not None:
             await browse_doors(
                 session, lane, user,
-                community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
+                community_id=community_id, community_scoped=community_scoped,
                 door_services=node_controls.door_services if node_controls is not None else None,
                 presence=presence,
                 link_context=link_context,
@@ -1638,7 +1638,7 @@ async def _community_page(
         option_list.append(MenuEntry(label=menu_key("B", "ack"), brief="Return to Communities"))
         heading = screen_title(
             sanitize_text(community.name),
-            breadcrumb=(session.node_display_name, "Communities"),
+            breadcrumb=crumbs(session, own=True),
             subtitle=sanitize_text(community.description) if community.description else "Choose what to explore",
             width=session.terminal_width,
             clear=redraw_in_place,
@@ -1666,7 +1666,7 @@ async def _community_page(
                 session, db, hub, presence, mailbox, history, user, choice,
                 node_controls=node_controls, lane=lane, link_context=link_context,
                 direct_invites=direct_invites,
-                title_prefix=community.name, **scope,
+                **scope,
             )
         elif choice == HELP_KEY:
             # The loop draws the page again.
@@ -1682,6 +1682,7 @@ async def _community_page(
             await session.write(reject_unhandled_key(choice))
 
 
+@located("Communities")
 async def _enter_communities(
     session: Session,
     db: Database,
@@ -1709,6 +1710,7 @@ async def _enter_communities(
             stable_id_of=lambda c: c.id,
             description_of=lambda c: c.description,
             title="Communities",
+            own=True,
             empty_message="No Communities exist yet.",
             start_stable_id=last_id,
             redraw_in_place=redraw_in_place_enabled(db, user),
@@ -1720,8 +1722,9 @@ async def _enter_communities(
         if selected is None:
             return
         last_id = selected.id
-        await _community_page(
-            session, db, hub, presence, mailbox, history, user, selected,
-            node_controls=node_controls, lane=lane, link_context=link_context,
-            direct_invites=direct_invites,
-        )
+        with entered(session, sanitize_text(selected.name)):
+            await _community_page(
+                session, db, hub, presence, mailbox, history, user, selected,
+                node_controls=node_controls, lane=lane, link_context=link_context,
+                direct_invites=direct_invites,
+            )

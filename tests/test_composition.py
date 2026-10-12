@@ -5,6 +5,7 @@ import re
 
 from netbbs.net.char_input import CANCEL_KEY, EditorKey, EditorKeyKind
 from netbbs.net.composition import ReviewAction, edit_line_body, review_composition
+from netbbs.net.location import entered
 
 
 class FakeSession:
@@ -203,7 +204,7 @@ def test_review_renders_all_fields_and_returns_explicit_actions():
     )
     text = _text(session)
     assert action is ReviewAction.EDIT_RECIPIENT
-    assert "NetBBS / Compose / Review composition" in text
+    assert "NetBBS / Review composition" in text
     assert "Check the draft before continuing" in text
     assert "To: " in text and "bob" in text
     assert "Subject: " in text and "Hello" in text
@@ -620,12 +621,12 @@ def test_a_carried_error_is_wrapped_and_kept_above_the_prompt():
 
 def test_review_breadcrumb_says_what_is_being_reviewed():
     session = FakeSession(keys=("b",), lines=("y",))
-    asyncio.run(
-        review_composition(
-            session, recipient="bob", subject="Hi", body="Body", commit_key="s", commit_label="end",
-            breadcrumb=("Mail", "New message"),
+    with entered(session, "Mail"), entered(session, "New message"):
+        asyncio.run(
+            review_composition(
+                session, recipient="bob", subject="Hi", body="Body", commit_key="s", commit_label="end",
+            )
         )
-    )
     assert re.search(r"NetBBS \W Mail \W New message \W Review composition", _visible(session))
 
 

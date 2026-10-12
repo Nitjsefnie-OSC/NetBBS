@@ -624,6 +624,7 @@ from netbbs.sysop_uploads import (
 )
 from netbbs.net.draft_storage import DraftPruneReport, prune_stale_drafts
 from netbbs.net.help_overlay import show_help, show_menu_help
+from netbbs.net.location import crumbs, entered, located
 from netbbs.net.picker import ListColumn, pick_item as _pick_item
 from netbbs.net.resource_editor import (
     editing_in_place,
@@ -1460,13 +1461,15 @@ async def _load_chrome(lane: DatabaseLane, actor: User) -> _Chrome:
 
 
 def _detail_title(
-    session: Session, chrome: _Chrome, title: str, *, breadcrumb: Sequence[str], subtitle: str | None = None
+    session: Session, chrome: _Chrome, title: str, *, own: bool = False, subtitle: str | None = None
 ) -> str:
     """A `screen_title` block for `show_detail`, which owns the clear itself
-    (so that turning a page redraws in place too)."""
+    (so that turning a page redraws in place too). The breadcrumb is where
+    the session is; `own` for the frame of a screen that named itself
+    (`netbbs.net.location`)."""
     return screen_title(
         title,
-        breadcrumb=(session.node_display_name, *breadcrumb),
+        breadcrumb=crumbs(session, own=own),
         subtitle=subtitle,
         width=session.terminal_width,
         clear=False,
@@ -1481,18 +1484,19 @@ _BACK_ACTION = ("b", menu_key("B", "ack"))
 
 async def _show_report(
     session: Session, lane: DatabaseLane, actor: User, title: str, *,
-    breadcrumb: Sequence[str], sections: Sequence[Section], subtitle: str | None = None,
+    sections: Sequence[Section], subtitle: str | None = None, own: bool = False,
     message: str | None = None, help_title: str, help_about: str,
 ) -> None:
     """Hold a finished action's result on screen until the SysOp leaves it.
 
     A result that was printed and returned from was wiped by the parent
     menu's clear-and-redraw before it could be read; this is the one way a
-    SysOp screen reports an outcome it has nothing further to offer on."""
+    SysOp screen reports an outcome it has nothing further to offer on.
+    `own` as for `_detail_title`."""
     chrome = await _load_chrome(lane, actor)
     await show_detail(
         session,
-        title=_detail_title(session, chrome, title, breadcrumb=breadcrumb, subtitle=subtitle),
+        title=_detail_title(session, chrome, title, own=own, subtitle=subtitle),
         sections=sections, actions=[_BACK_ACTION], message=message,
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
         help_title=help_title, help_about=help_about,
@@ -1784,6 +1788,7 @@ def _degrade_description_level(
     return effective_desc_level, available_menu_height, degraded
 
 
+@located("SysOp")
 async def admin_menu(
     session: Session,
     lane: DatabaseLane,
@@ -1931,6 +1936,7 @@ async def admin_menu(
             await session.write(reject_unhandled_key(choice))
 
 
+@located("Staff")
 async def staff_menu(
     session: Session,
     lane: DatabaseLane,
@@ -2018,7 +2024,7 @@ async def _draw_staff_menu(session: Session, lane: DatabaseLane, user: User) -> 
     await session.write_line(
         "\r\n" + screen_title(
             "Staff console",
-            breadcrumb=(session.node_display_name,),
+            breadcrumb=crumbs(session, own=True),
             subtitle=f"Your staff permissions: {describe_staff_permissions(user.staff_permissions)}.",
             width=session.terminal_width,
             clear=state["redraw_in_place"],
@@ -2235,7 +2241,7 @@ async def staff_list_screen(session: Session, lane: DatabaseLane, user: User) ->
                 color=WARNING_COLOR,
             ))
     await _show_report(
-        session, lane, user, "Staff", breadcrumb=(),
+        session, lane, user, "Staff",
         subtitle="Who runs this node, and when they were last on.", sections=[Section(None, body)],
         help_title="Staff help",
         help_about=(
@@ -2331,7 +2337,7 @@ async def _draw_admin_menu(
     await session.write_line(
         "\r\n" + screen_title(
             "SysOp operations console",
-            breadcrumb=(session.node_display_name,),
+            breadcrumb=crumbs(session, own=True),
             subtitle="Live health, attention queues, and administrative controls.",
             width=session.terminal_width,
             clear=state["redraw_in_place"],
@@ -2647,6 +2653,7 @@ def _compact_dashboard_panel(
 # -- users submenu ---------------------------------------------------------
 
 
+@located("Users")
 async def _users_menu(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None,
     link_context: LinkContext | None = None,
@@ -2883,43 +2890,45 @@ async def _level_detail_screen(
 
     chrome = await _load_chrome(lane, actor)
     names = await lane.run(get_level_names)
-    users = await lane.run(
-        lambda db: db.connection.execute(
-            "SELECT COUNT(*) FROM users WHERE user_level = ? AND disabled_at IS NULL AND pending_approval = 0",
-            (level,),
-        ).fetchone()[0]
-    )
-    while True:
-        picked = await _pick_item(
-            session, await _load(),
-            name_of=lambda gate: gate.name + (" (hidden)" if gate.hidden else ""),
-            stable_id_of=_gate_stable_id,
-            columns=_GATE_COLUMNS,
-            column_values_of=_gate_columns,
-            description_of=_gate_description,
-            title=f"Level {level_label(level, names)}",
-            empty_message=f"Nothing in this view of level {level}.",
-            refresh=_load,
-            live_keys={"v": _next_view},
-            live_nav=[MenuEntry(label=menu_key("V", "iew"), brief="New, open, closed, other gates")],
-            live_label=lambda: f"Showing: {_LEVEL_VIEWS[view]}, {users} account{'s' if users != 1 else ''} at {level}",
-            selectable_of=lambda gate: gate.object_id is not None,
-            start_stable_id=start,
-            description_level=await lane.run(menu_description_level, actor),
-            redraw_in_place=chrome.redraw_in_place,
-            unicode_style=chrome.unicode_style,
-            collapsed=chrome.collapsed,
-            accent_color=chrome.accent_color,
-            header_color=chrome.header_color,
+    with entered(session, f"Level {level_label(level, names)}"):
+        users = await lane.run(
+            lambda db: db.connection.execute(
+                "SELECT COUNT(*) FROM users WHERE user_level = ? AND disabled_at IS NULL AND pending_approval = 0",
+                (level,),
+            ).fetchone()[0]
         )
-        if picked is None:
-            return
-        start = _gate_stable_id(picked)
-        await _open_gate_resource(
-            session, lane, actor, picked, node_controls=node_controls, link_context=link_context
-        )
+        while True:
+            picked = await _pick_item(
+                session, await _load(),
+                name_of=lambda gate: gate.name + (" (hidden)" if gate.hidden else ""),
+                stable_id_of=_gate_stable_id,
+                columns=_GATE_COLUMNS,
+                column_values_of=_gate_columns,
+                description_of=_gate_description,
+                title=f"Level {level_label(level, names)}", own=True,
+                empty_message=f"Nothing in this view of level {level}.",
+                refresh=_load,
+                live_keys={"v": _next_view},
+                live_nav=[MenuEntry(label=menu_key("V", "iew"), brief="New, open, closed, other gates")],
+                live_label=lambda: f"Showing: {_LEVEL_VIEWS[view]}, {users} account{'s' if users != 1 else ''} at {level}",
+                selectable_of=lambda gate: gate.object_id is not None,
+                start_stable_id=start,
+                description_level=await lane.run(menu_description_level, actor),
+                redraw_in_place=chrome.redraw_in_place,
+                unicode_style=chrome.unicode_style,
+                collapsed=chrome.collapsed,
+                accent_color=chrome.accent_color,
+                header_color=chrome.header_color,
+            )
+            if picked is None:
+                return
+            start = _gate_stable_id(picked)
+            await _open_gate_resource(
+                session, lane, actor, picked, node_controls=node_controls, link_context=link_context
+            )
 
 
+@located("Levels")
 async def _levels_screen(
     session: Session, lane: DatabaseLane, actor: User, *,
     node_controls: NodeControls | None, link_context: LinkContext | None,
@@ -2994,7 +3003,7 @@ async def _levels_screen(
             description_of=lambda step: (
                 f"{step.users} user{'s' if step.users != 1 else ''}; opens {ladder_summary(step)}"
             ),
-            title="Level Admin SysOp Tool (LAST)",
+            title="Level Admin SysOp Tool (LAST)", own=True,
             empty_message="No levels in use.",
             refresh=_load,
             live_keys={"g": _other_level},
@@ -3128,6 +3137,7 @@ async def _edit_promotion_rule(
     return rule
 
 
+@located("Promotion rules")
 async def _promotion_rules_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Design doc §4.3, issue #992: the node's promotion rules. Each row says
     what an account needs, how many accounts would be promoted at their next
@@ -3179,7 +3189,7 @@ async def _promotion_rules_screen(session: Session, lane: DatabaseLane, actor: U
             description_of=lambda row: (
                 f"needs {row.rule.describe()}; {row.qualifying} ready; opens {row.opens}"
             ),
-            title="Promotion rules",
+            title="Promotion rules", own=True,
             empty_message="No promotion rules. [C]reate one: levels then change by hand only.",
             refresh=_load,
             on_create=_create,
@@ -3216,7 +3226,7 @@ async def _draw_users_menu(session: Session, *, stats: dict[str, Any]) -> None:
         "\r\n"
         + screen_title(
             "Users",
-            breadcrumb=(session.node_display_name, "SysOp"),
+            breadcrumb=crumbs(session, own=True),
             subtitle="Account administration, registration policy, and access levels.",
             width=session.terminal_width,
             clear=redraw_in_place,
@@ -3332,6 +3342,7 @@ def _diagnostics_available(node_controls: NodeControls | None, link_context: Lin
     return link_context is not None or node_controls is not None
 
 
+@located("Operations")
 async def _operations_menu(
     session: Session,
     lane: DatabaseLane,
@@ -3379,7 +3390,7 @@ async def _operations_menu(
         await session.write_line(
             "\r\n" + screen_title(
                 "Operations",
-                breadcrumb=(session.node_display_name, "SysOp"),
+                breadcrumb=crumbs(session, own=True),
                 subtitle="Observe the running node, investigate trouble, and recover work.",
                 width=session.terminal_width,
                 clear=redraw_in_place,
@@ -3612,6 +3623,7 @@ def _operations_menu_entries(
     return options
 
 
+@located("Settings")
 async def _system_menu(
     session: Session,
     lane: DatabaseLane,
@@ -3771,7 +3783,7 @@ async def _draw_system_menu(
     header_color = stats["header_color"]
 
     await session.write_line("\r\n" + screen_title("Settings",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
 
     panel: list[str] = []
     if session.terminal_height >= 18:
@@ -3939,7 +3951,7 @@ async def _draw_node_name_screen(
     await session.write_line(
         "\r\n" + screen_title(
             "Node name",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place,
             unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient,
         )
@@ -4003,7 +4015,7 @@ async def _link_participation_screen(session: Session, lane: DatabaseLane, actor
         choice, page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Join NetBBS Link", breadcrumb=("Settings",),
+                session, chrome, "Join NetBBS Link",
                 subtitle="Whether this node uses the project's reliable nodes as seeds and relays.",
             ),
             sections=sections, actions=actions, page=page, message=message,
@@ -4088,6 +4100,7 @@ async def _link_participation_sections(lane: DatabaseLane) -> tuple[list[Section
     ], participation
 
 
+@located("Node name")
 async def _node_name_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Settings home for everything about the node's own display name:
     the text itself (`netbbs.config.set_node_display_name`, wired up as
@@ -4417,6 +4430,7 @@ _TRUST_MENU = (
 )
 
 
+@located("Policy trust")
 async def _trust_menu(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None
 ) -> None:
@@ -4433,7 +4447,7 @@ async def _trust_menu(
             "\r\n"
             + screen_title(
                 "Policy trust",
-                breadcrumb=(session.node_display_name, "Settings"),
+                breadcrumb=crumbs(session, own=True),
                 subtitle="Inspect policy, explain restrictions, and manage trusted authorities.",
                 width=session.terminal_width,
                 clear=redraw_in_place,
@@ -4693,7 +4707,6 @@ async def _vouch_screen(
             session,
             title=_detail_title(
                 session, chrome, f"Vouch for {sanitize_text(name)}",
-                breadcrumb=("Settings", "Policy trust", "Subjects"),
             ),
             sections=[
                 Section("Where it stands", standing),
@@ -4753,6 +4766,7 @@ async def _vouch_screen(
         )
 
 
+@located("Vouches")
 async def _published_vouches_screen(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None
 ) -> None:
@@ -4834,6 +4848,7 @@ async def _published_vouches_screen(
         )
 
 
+@located("Trust subjects")
 async def _trust_subjects_screen(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None
 ) -> None:
@@ -4853,7 +4868,7 @@ async def _trust_subjects_screen(
         name_of=lambda subject: _trust_subject_name(subject, labels.get(subject.node_fingerprint)),
         stable_id_of=_trust_subject_stable_id,
         description_of=lambda subject: subject.kind,
-        title="Trust subjects",
+        title="Trust subjects", own=True,
         empty_message="No remote trust subjects have been registered.",
         # Dogfood report: without `refresh`, an empty list hit `pick_item`'s
         # silent early return (no held prompt at all) -- under
@@ -4878,7 +4893,6 @@ async def _trust_subjects_screen(
 async def _trust_subject_screen(
     session: Session, lane: DatabaseLane, actor: User, selected: TrustSubject, *,
     link_context: LinkContext | None,
-    breadcrumb: Sequence[str] = ("Settings", "Policy trust", "Subjects"),
 ) -> None:
     """One trust subject: its state per dimension, and every action on it.
 
@@ -4888,131 +4902,132 @@ async def _trust_subject_screen(
     twice."""
     label = (await lane.run(identity_for_fingerprint, selected.node_fingerprint)).label
     subject_name = _trust_subject_name(selected, label)
-    listing = _Listing()
-    while True:
-        chrome = await _load_chrome(lane, actor)
-        states = [
-            await lane.run(get_effective_trust_state, selected, dimension)
-            for dimension in TrustDimension
-        ]
-        identity: list[Field | Note | Table] = [
-            Field("Subject", subject_name, bold=True),
-            Field("Kind", selected.kind),
-            Field("Technical identity", selected.node_fingerprint, color=METADATA_COLOR),
-        ]
-        identity_notice = await lane.run(latest_identity_observation, selected.node_fingerprint)
-        if identity_notice is not None and identity_notice.severity == "security":
-            identity.append(Note(
-                "Caution: this familiar node name now has a different cryptographic identity.",
-                color=ALERT_COLOR,
-            ))
-        carrier = (
-            await lane.run(introduced_by, selected.node_fingerprint) if selected.kind == "node" else None
-        )
-        if carrier is not None:
-            carrier_label = (await lane.run(identity_for_fingerprint, carrier)).label
-            identity.append(Note(
-                f"This node has never exchanged a hello with that one. Its identity was learned "
-                f"from {carrier_label}, and verifies on its own. It stays on "
-                "probation, and its content is withheld, until you set both its identity "
-                "integrity and its resource behavior to established with [O]verride."
-            ))
-        sections = [Section("Identity", identity)]
-
-        # One row per dimension: the state as its badge, the reason code beside
-        # it, and the stored explanation as readable pairs beneath -- it used
-        # to be the raw JSON on a line of its own under each.
-        sections.append(Section("Trust state, by dimension", [
-            Field(
-                state.dimension.value,
-                status_badge(state.state.value, tone=_TRUST_STATE_TONE[state.state], unicode_style=chrome.unicode_style)
-                + colored(f"  ({sanitize_text(state.reason_code)})", fg_color=METADATA_COLOR),
-                styled=True, note=_trust_state_note(state.explanation),
+    with entered(session, sanitize_text(subject_name)):
+        listing = _Listing()
+        while True:
+            chrome = await _load_chrome(lane, actor)
+            states = [
+                await lane.run(get_effective_trust_state, selected, dimension)
+                for dimension in TrustDimension
+            ]
+            identity: list[Field | Note | Table] = [
+                Field("Subject", subject_name, bold=True),
+                Field("Kind", selected.kind),
+                Field("Technical identity", selected.node_fingerprint, color=METADATA_COLOR),
+            ]
+            identity_notice = await lane.run(latest_identity_observation, selected.node_fingerprint)
+            if identity_notice is not None and identity_notice.severity == "security":
+                identity.append(Note(
+                    "Caution: this familiar node name now has a different cryptographic identity.",
+                    color=ALERT_COLOR,
+                ))
+            carrier = (
+                await lane.run(introduced_by, selected.node_fingerprint) if selected.kind == "node" else None
             )
-            for state in states
-        ]))
+            if carrier is not None:
+                carrier_label = (await lane.run(identity_for_fingerprint, carrier)).label
+                identity.append(Note(
+                    f"This node has never exchanged a hello with that one. Its identity was learned "
+                    f"from {carrier_label}, and verifies on its own. It stays on "
+                    "probation, and its content is withheld, until you set both its identity "
+                    "integrity and its resource behavior to established with [O]verride."
+                ))
+            sections = [Section("Identity", identity)]
 
-        observations = await lane.run(list_local_observations, selected)
-        if observations:
-            sections.append(Section("Observed here", [
+            # One row per dimension: the state as its badge, the reason code beside
+            # it, and the stored explanation as readable pairs beneath -- it used
+            # to be the raw JSON on a line of its own under each.
+            sections.append(Section("Trust state, by dimension", [
                 Field(
-                    f"{observation.category} ({observation.dimension})",
-                    _observation_status(observation),
-                    note=(sanitize_text(observation.explanation) if observation.explanation else None),
+                    state.dimension.value,
+                    status_badge(state.state.value, tone=_TRUST_STATE_TONE[state.state], unicode_style=chrome.unicode_style)
+                    + colored(f"  ({sanitize_text(state.reason_code)})", fg_color=METADATA_COLOR),
+                    styled=True, note=_trust_state_note(state.explanation),
                 )
-                for observation in observations
+                for state in states
             ]))
 
-        own_fingerprint = await lane.run(_own_fingerprint, link_context)
-        vouch_intent = await lane.run(get_vouch_intent, selected, home_node_fingerprint=own_fingerprint)
-        if vouch_intent is not None:
-            sections.append(Section("This node's vouch", [Field(
-                "Vouches for it",
-                status_badge(
-                    vouch_intent.status, tone=_VOUCH_STATUS_TONE[vouch_intent.status],
-                    unicode_style=chrome.unicode_style,
-                ),
-                styled=True, note=_vouch_status_detail(vouch_intent),
-            )]))
-        if selected.kind == "user":
-            attestations = []
-            for attribute in ("age", "name"):
-                attestation_state = await lane.run(get_remote_attestation_state, selected, attribute)
-                accepted_badge = (
-                    status_badge("accepted", tone="success", unicode_style=chrome.unicode_style)
-                    if attestation_state.accepted
-                    else status_badge("not accepted", tone="error", unicode_style=chrome.unicode_style)
-                )
-                attestations.append(Field(
-                    f"Remote {attribute}",
-                    accepted_badge + colored(f"  ({sanitize_text(attestation_state.reason_code)})", fg_color=METADATA_COLOR),
-                    styled=True, note=_audit_details_text(attestation_state.explanation) or None,
-                ))
-            sections.append(Section("Remote identity attestations", attestations))
+            observations = await lane.run(list_local_observations, selected)
+            if observations:
+                sections.append(Section("Observed here", [
+                    Field(
+                        f"{observation.category} ({observation.dimension})",
+                        _observation_status(observation),
+                        note=(sanitize_text(observation.explanation) if observation.explanation else None),
+                    )
+                    for observation in observations
+                ]))
 
-        actions = [
-            *_TRUST_QUICK_ACTIONS,
-            ("o", menu_key("O", "verride")),
-            ("c", menu_key("C", "lear override")),
-        ]
-        if selected.kind == "user":
-            actions.append(("i", menu_key("I", "dentity attestation override")))
-        if observations:
-            actions.append(("r", menu_key("R", "emove evidence")))
-        actions.extend([("v", menu_key("V", "ouch")), ("h", menu_key("H", "istory")), _BACK_ACTION])
-        choice, listing.page = await show_detail(
-            session,
-            title=_detail_title(
-                session, chrome, sanitize_text(subject_name), breadcrumb=breadcrumb,
-            ),
-            sections=sections, actions=actions, page=listing.page, message=listing.take_message(),
-            redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
-            help_title="Trust subject help",
-            help_about=(
-                "One node or remote user, and how far this node trusts it in each area. Establish and Deny "
-                "open the override editor already filled in; nothing changes before you save."
-            ),
-        )
-        if choice == "b":
-            return
-        if await _trust_quick_action(
-            session, lane, actor, selected, choice, name=subject_name, listing=listing, link_context=link_context,
-        ):
-            continue
-        if choice == "o":
-            await _set_trust_override_screen(session, lane, actor, selected, listing)
-            _retry_deferred_events(link_context, selected)
-        elif choice == "c":
-            await _clear_trust_override_screen(session, lane, actor, selected, listing)
-            _retry_deferred_events(link_context, selected)
-        elif choice == "h":
-            await _trust_decision_history_screen(session, lane, actor, selected)
-        elif choice == "v":
-            await _vouch_screen(session, lane, actor, selected, subject_name, link_context=link_context)
-        elif choice == "i":
-            await _remote_attestation_override_screen(session, lane, actor, selected, listing)
-        elif choice == "r" and observations:
-            await _clear_observation(session, lane, actor, selected, observations, listing, link_context)
+            own_fingerprint = await lane.run(_own_fingerprint, link_context)
+            vouch_intent = await lane.run(get_vouch_intent, selected, home_node_fingerprint=own_fingerprint)
+            if vouch_intent is not None:
+                sections.append(Section("This node's vouch", [Field(
+                    "Vouches for it",
+                    status_badge(
+                        vouch_intent.status, tone=_VOUCH_STATUS_TONE[vouch_intent.status],
+                        unicode_style=chrome.unicode_style,
+                    ),
+                    styled=True, note=_vouch_status_detail(vouch_intent),
+                )]))
+            if selected.kind == "user":
+                attestations = []
+                for attribute in ("age", "name"):
+                    attestation_state = await lane.run(get_remote_attestation_state, selected, attribute)
+                    accepted_badge = (
+                        status_badge("accepted", tone="success", unicode_style=chrome.unicode_style)
+                        if attestation_state.accepted
+                        else status_badge("not accepted", tone="error", unicode_style=chrome.unicode_style)
+                    )
+                    attestations.append(Field(
+                        f"Remote {attribute}",
+                        accepted_badge + colored(f"  ({sanitize_text(attestation_state.reason_code)})", fg_color=METADATA_COLOR),
+                        styled=True, note=_audit_details_text(attestation_state.explanation) or None,
+                    ))
+                sections.append(Section("Remote identity attestations", attestations))
+
+            actions = [
+                *_TRUST_QUICK_ACTIONS,
+                ("o", menu_key("O", "verride")),
+                ("c", menu_key("C", "lear override")),
+            ]
+            if selected.kind == "user":
+                actions.append(("i", menu_key("I", "dentity attestation override")))
+            if observations:
+                actions.append(("r", menu_key("R", "emove evidence")))
+            actions.extend([("v", menu_key("V", "ouch")), ("h", menu_key("H", "istory")), _BACK_ACTION])
+            choice, listing.page = await show_detail(
+                session,
+                title=_detail_title(
+                    session, chrome, sanitize_text(subject_name), own=True,
+                ),
+                sections=sections, actions=actions, page=listing.page, message=listing.take_message(),
+                redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
+                help_title="Trust subject help",
+                help_about=(
+                    "One node or remote user, and how far this node trusts it in each area. Establish and Deny "
+                    "open the override editor already filled in; nothing changes before you save."
+                ),
+            )
+            if choice == "b":
+                return
+            if await _trust_quick_action(
+                session, lane, actor, selected, choice, name=subject_name, listing=listing, link_context=link_context,
+            ):
+                continue
+            if choice == "o":
+                await _set_trust_override_screen(session, lane, actor, selected, listing)
+                _retry_deferred_events(link_context, selected)
+            elif choice == "c":
+                await _clear_trust_override_screen(session, lane, actor, selected, listing)
+                _retry_deferred_events(link_context, selected)
+            elif choice == "h":
+                await _trust_decision_history_screen(session, lane, actor, selected)
+            elif choice == "v":
+                await _vouch_screen(session, lane, actor, selected, subject_name, link_context=link_context)
+            elif choice == "i":
+                await _remote_attestation_override_screen(session, lane, actor, selected, listing)
+            elif choice == "r" and observations:
+                await _clear_observation(session, lane, actor, selected, observations, listing, link_context)
 
 
 def _observation_status(observation) -> str:
@@ -5070,6 +5085,7 @@ async def _clear_observation(
     listing.say("Evidence cleared. A signal about it is revoked on the next Link sync pass.", color=SUCCESS_COLOR)
 
 
+@located("Signals")
 async def _issued_signals_screen(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None
 ) -> None:
@@ -5439,7 +5455,7 @@ async def _trust_list_choice(
     actions.append(_BACK_ACTION)
     choice, listing.page = await show_detail(
         session,
-        title=_detail_title(session, chrome, title, breadcrumb=("Settings", "Policy trust"), subtitle=subtitle),
+        title=_detail_title(session, chrome, title, own=True, subtitle=subtitle),
         sections=[Section(None, rows)], actions=actions, page=listing.page, message=listing.take_message(),
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
         help_title=help_title, help_about=help_about,
@@ -5728,13 +5744,14 @@ async def _trust_decision_history_screen(
         flex=3,
     )] if entries else [Note("No decision history.")]
     await _show_report(
-        session, lane, actor, "Trust decision history", breadcrumb=("Settings", "Policy trust", "Subjects"),
+        session, lane, actor, "Trust decision history",
         sections=[Section(None, body)],
         help_title="Trust history help",
         help_about="Every trust decision this node made about this subject, newest first.",
     )
 
 
+@located("Trust domains")
 async def _trust_domains_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Listing plus `[A]dd/update` (issue #282: a draft editor -- Domain
     ID, display name, weight -- instead of three prompts in a row where
@@ -5888,6 +5905,7 @@ async def _resolve_admin_node_reference(
     return None
 
 
+@located("Trust anchors")
 async def _trust_anchors_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Listing plus `[A]dd/update` (a draft editor: node, reason),
     `[R]emove` (a picker over the anchors that actually exist, then one
@@ -6004,6 +6022,7 @@ def _parse_reporter_scopes(value: str) -> list[tuple[TrustDimension, str]]:
     return result
 
 
+@located("Trusted reporters")
 async def _trust_reporters_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Listing plus `[A]dd/update` (a draft editor: node, domain,
     scopes, the two vouch switches), `[R]emove` (picker + confirm),
@@ -6173,6 +6192,7 @@ async def _trust_reporters_screen(session: Session, lane: DatabaseLane, actor: U
         )
 
 
+@located("Identity authorities")
 async def _attestation_authorities_screen(
     session: Session, lane: DatabaseLane, actor: User
 ) -> None:
@@ -6296,6 +6316,7 @@ async def _attestation_authorities_screen(
         )
 
 
+@located("Attestation recipients")
 async def _attestation_recipients_screen(
     session: Session, lane: DatabaseLane, actor: User
 ) -> None:
@@ -6481,6 +6502,7 @@ def _issued_subject(record) -> str:
     return "(account removed)"
 
 
+@located("Published identity")
 async def _published_identity_screen(
     session: Session,
     lane: DatabaseLane,
@@ -6587,7 +6609,7 @@ async def _published_identity_screen(
         choice, listing.page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Published identity", breadcrumb=("Settings", "Policy trust"),
+                session, chrome, "Published identity", own=True,
                 subtitle="What this node asserts over Link about its own users.",
             ),
             sections=[
@@ -6696,6 +6718,7 @@ async def _withdraw_published_attestation(
     listing.say("Sharing withdrawn and the revocation signed. Recipients get it with the next Link sync pass.")
 
 
+@located("Remote attestation overrides")
 async def _remote_attestation_override_screen(
     session: Session,
     lane: DatabaseLane,
@@ -6745,7 +6768,7 @@ async def _remote_attestation_override_screen(
             name_of=lambda item: f"{item.attribute}: {'accept' if item.accepted else 'reject'}",
             stable_id_of=lambda item: item.override_id,
             description_of=lambda item: item.reason,
-            title="Remote attestation overrides",
+            title="Remote attestation overrides", own=True,
             empty_message="No active remote attestation overrides.",
             redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
             unicode_style=await lane.run(unicode_style_enabled, actor),
@@ -6830,6 +6853,7 @@ async def _remote_attestation_override_screen(
     )
 
 
+@located("Sole-authority exceptions")
 async def _trust_exceptions_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Listing plus `[A]dd/update` (a draft editor: reporter node,
     dimension, category, justification; the DANGER confirmation stays
@@ -7014,7 +7038,7 @@ async def _trust_config_history_screen(session: Session, lane: DatabaseLane, act
         flex=3,
     )] if entries else [Note("No configuration history.")]
     await _show_report(
-        session, lane, actor, "Trust configuration history", breadcrumb=("Settings", "Policy trust"),
+        session, lane, actor, "Trust configuration history",
         subtitle="Every change to this node's trust policy, newest first.",
         sections=[Section(None, body)],
         help_title="Trust configuration history help",
@@ -7025,6 +7049,7 @@ async def _trust_config_history_screen(session: Session, lane: DatabaseLane, act
 # -- create ------------------------------------------------------------
 
 
+@located("Held names")
 async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Usernames held for deleted accounts, and the one way to free one (issue #594).
 
@@ -7064,7 +7089,7 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
         choice, page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Held names", breadcrumb=("SysOp", "Users"),
+                session, chrome, "Held names", own=True,
                 subtitle="Names held for deleted accounts so nobody inherits their Link identity.",
             ),
             sections=[Section("Why names are held", [why]), Section("Held usernames", held)],
@@ -7620,7 +7645,7 @@ async def _draw_user_detail(
     and `fits` says whether the screen fitted the terminal, without which
     rows counted from the top are not where anything is."""
     title = screen_title(sanitize_text(target.username),
-        breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
+        breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
         header_color=await lane.run(effective_header_color_256), node_name_gradient=session.node_name_gradient)
     await session.write_line("\r\n" + title)
     accent = await lane.run(effective_accent_color_256)
@@ -7904,7 +7929,7 @@ async def _user_history_screen(session: Session, lane: DatabaseLane, actor: User
         else [Note("No recorded admin actions.")]
     )
     await _show_report(
-        session, lane, actor, "Admin actions", breadcrumb=(sanitize_text(target.username),),
+        session, lane, actor, "Admin actions",
         sections=[Section(None, body)],
         help_title="Admin actions help",
         help_about="Every administrative action taken on this account, newest first.",
@@ -8194,7 +8219,6 @@ async def _preview_level_change(
         title=_detail_title(
             session, chrome,
             f"Level {level_label(change.old_level, names)} → {level_label(change.new_level, names)}",
-            breadcrumb=("SysOp", "Users", target.username),
             subtitle=f"What changes for {target.username} by level. Grants and other gates are counted.",
         ),
         sections=_level_change_sections(change),
@@ -8259,281 +8283,282 @@ async def _user_detail_screen(
     arrow-selectable, the same "always hotkey-only" treatment
     `edit_resource_draft` already gives its own Save/Back.
     """
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    selected: str | None = None
-    target_is_guest = await lane.run(is_guest_account, target)
+    with entered(session, sanitize_text(target.username)):
+        description_level = await lane.run(menu_description_level, actor)
+        unicode_style = await lane.run(unicode_style_enabled, actor)
+        collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
+        redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
+        selected: str | None = None
+        target_is_guest = await lane.run(is_guest_account, target)
 
-    async def _redraw(layout: dict[str, Any] | None = None) -> bool:
-        # Recomputed on every draw: an approval or a level change can move
-        # the account in or out of a staff member's reach.
-        nonlocal allowed, field_order
-        allowed = _user_detail_keys(actor, target, guest=target_is_guest)
-        field_order = tuple(key for key in _USER_DETAIL_FIELD_ORDER if key in allowed)
-        return await _draw_user_detail(
-            session, lane, target, description_level, redraw_in_place, unicode_style, collapsed,
-            selected=selected, allowed=allowed if allowed != _ALL_USER_DETAIL_KEYS else None, layout=layout,
-        )
+        async def _redraw(layout: dict[str, Any] | None = None) -> bool:
+            # Recomputed on every draw: an approval or a level change can move
+            # the account in or out of a staff member's reach.
+            nonlocal allowed, field_order
+            allowed = _user_detail_keys(actor, target, guest=target_is_guest)
+            field_order = tuple(key for key in _USER_DETAIL_FIELD_ORDER if key in allowed)
+            return await _draw_user_detail(
+                session, lane, target, description_level, redraw_in_place, unicode_style, collapsed,
+                selected=selected, allowed=allowed if allowed != _ALL_USER_DETAIL_KEYS else None, layout=layout,
+            )
 
-    def _edit_in_place(hotkey: str) -> Callable[[Callable[[], Awaitable[str]]], Awaitable[str]]:
-        """A typed field's prompt and read, on its value where the screen draws
-        it: redrawn with the field highlighted, the hint on the `Choice:` row
-        and the cursor in the value, as on every Create/Edit screen. A screen
-        that scrolls, or does not fit, reads below its prompt as before."""
+        def _edit_in_place(hotkey: str) -> Callable[[Callable[[], Awaitable[str]]], Awaitable[str]]:
+            """A typed field's prompt and read, on its value where the screen draws
+            it: redrawn with the field highlighted, the hint on the `Choice:` row
+            and the cursor in the value, as on every Create/Edit screen. A screen
+            that scrolls, or does not fit, reads below its prompt as before."""
 
-        async def run(read: Callable[[], Awaitable[str]]) -> str:
-            nonlocal blocked, selected
-            if redraw_in_place:
-                if hotkey in field_order:
-                    selected = hotkey
-                layout: dict[str, Any] = {}
-                blocked = await _redraw(layout)
-                place = layout["fields"].get(hotkey) if layout.get("fits") else None
-                if place is not None:
-                    row, column, rows = place
-                    with editing_in_place(
-                        session, row=row, column=column, rows=rows, prompt_row=layout["prompt_row"],
-                    ) as position:
-                        try:
-                            return await read()
-                        finally:
-                            # A resize cancels the edit and says so on the next draw.
-                            if position.message:
-                                _announce_line(session, colored(position.message, fg_color=MUTED_COLOR))
-            await session.write_line("")
-            return await read()
+            async def run(read: Callable[[], Awaitable[str]]) -> str:
+                nonlocal blocked, selected
+                if redraw_in_place:
+                    if hotkey in field_order:
+                        selected = hotkey
+                    layout: dict[str, Any] = {}
+                    blocked = await _redraw(layout)
+                    place = layout["fields"].get(hotkey) if layout.get("fits") else None
+                    if place is not None:
+                        row, column, rows = place
+                        with editing_in_place(
+                            session, row=row, column=column, rows=rows, prompt_row=layout["prompt_row"],
+                        ) as position:
+                            try:
+                                return await read()
+                            finally:
+                                # A resize cancels the edit and says so on the next draw.
+                                if position.message:
+                                    _announce_line(session, colored(position.message, fg_color=MUTED_COLOR))
+                await session.write_line("")
+                return await read()
 
-        return run
+            return run
 
-    allowed: frozenset[str] = _ALL_USER_DETAIL_KEYS
-    field_order: tuple[str, ...] = _USER_DETAIL_FIELD_ORDER
-    blocked = await _redraw()
-    while True:
-        key, echoed = await _read_user_detail_key(session)
+        allowed: frozenset[str] = _ALL_USER_DETAIL_KEYS
+        field_order: tuple[str, ...] = _USER_DETAIL_FIELD_ORDER
+        blocked = await _redraw()
+        while True:
+            key, echoed = await _read_user_detail_key(session)
 
-        if key.kind == EditorKeyKind.UP:
-            if not field_order:
-                continue
-            index = field_order.index(selected) if selected in field_order else 0
-            selected = field_order[(index - 1) % len(field_order)]
-            blocked = await _redraw()
-            continue
-        if key.kind == EditorKeyKind.DOWN:
-            if not field_order:
-                continue
-            index = field_order.index(selected) if selected in field_order else -1
-            selected = field_order[(index + 1) % len(field_order)]
-            blocked = await _redraw()
-            continue
-        if key.kind == EditorKeyKind.ESCAPE:
-            if selected is not None:
-                selected = None
+            if key.kind == EditorKeyKind.UP:
+                if not field_order:
+                    continue
+                index = field_order.index(selected) if selected in field_order else 0
+                selected = field_order[(index - 1) % len(field_order)]
                 blocked = await _redraw()
                 continue
-            await session.write("\a")
-            continue
-        if key.kind == EditorKeyKind.CTRL and key.char == "h":
-            await _show_user_detail_help(session, lane, selected=selected, unicode_style=unicode_style)
-            blocked = await _redraw()
-            continue
-        if key.kind == EditorKeyKind.ENTER or (key.kind == EditorKeyKind.CHAR and key.char == " "):
-            if selected is None:
+            if key.kind == EditorKeyKind.DOWN:
+                if not field_order:
+                    continue
+                index = field_order.index(selected) if selected in field_order else -1
+                selected = field_order[(index + 1) % len(field_order)]
+                blocked = await _redraw()
+                continue
+            if key.kind == EditorKeyKind.ESCAPE:
+                if selected is not None:
+                    selected = None
+                    blocked = await _redraw()
+                    continue
                 await session.write("\a")
                 continue
-            choice = selected
-        elif key.kind == EditorKeyKind.CHAR and key.char is not None:
-            choice = key.char.lower()
-            if choice == HELP_KEY:
-                # A session with no real `read_editor_key` (falls back
-                # to plain `read_key()`) delivers Ctrl-H as an ordinary
-                # character, never as `EditorKeyKind.CTRL` -- same dual
-                # path `edit_resource_draft` itself handles.
+            if key.kind == EditorKeyKind.CTRL and key.char == "h":
                 await _show_user_detail_help(session, lane, selected=selected, unicode_style=unicode_style)
                 blocked = await _redraw()
                 continue
-            if choice in field_order:
-                selected = choice
-        else:
-            # Left/Right/Backspace/Tab/Home/End/Page Up/Page Down --
-            # nothing on this screen defines a step, same silent no-op
-            # `edit_resource_draft` gives Left/Right on a step-less field.
-            continue
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice not in allowed:
-            # Design doc §5.6: a staff member sees the account, but only the
-            # actions their permissions cover, and none on a SysOp or
-            # another staff member.
-            await session.write(reject_unhandled_key(choice) if echoed else "\a")
-        elif choice == "a" and target.pending_approval:
-            await session.write_line("")
-            if await prompt_yes_no(session, "Approve this account so it can log in?", default=False):
-                try:
-                    target = await lane.run(approve_pending_user, target, approved_by=actor)
-                except UserManagementError as exc:
-                    _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
-                else:
-                    _announce_line(session, f"{target.username!r} approved.")
-            blocked = await _redraw()
-        elif choice == "l":
-            # One style for a number (issue #845, F136): the value opens in
-            # the line to edit, as on every Create/Edit screen, instead of a
-            # `[current]` default beside an empty line -- and, with the screen
-            # redrawn in place, on the level itself.
-            async def _read_level() -> str:
-                await write_field_prompt(
-                    session,
-                    colored(f"New level for {target.username!r} ({_EDIT_HINT}):", fg_color=MUTED_COLOR),
-                    hint=_EDIT_HINT,
-                )
-                return (await _read_seeded_line(session, initial=str(target.user_level))).strip()
-
-            try:
-                raw = await _edit_in_place("l")(_read_level)
-            except InputCancelled:
-                raw = ""
-            if raw and raw != str(target.user_level):
-                # A level's name works as well as its number (issue #1009).
-                new_level = parse_level(raw, await lane.run(get_level_names))
-                if new_level is None:
-                    _announce_line(session, colored("Not a level or a level's name -- cancelled.", fg_color=MUTED_COLOR))
-                elif new_level != target.user_level:
-                    target = await _change_user_level(session, lane, actor, target, new_level, node_controls)
-            blocked = await _redraw()
-        elif choice == "u":
-            # A toggle toggles (design doc §3.5): nothing to confirm.
-            try:
-                target = await lane.run(
-                    set_automatic_promotion, target, target.level_set_by_hand, changed_by=actor
-                )
-            except UserManagementError as exc:
-                _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
+            if key.kind == EditorKeyKind.ENTER or (key.kind == EditorKeyKind.CHAR and key.char == " "):
+                if selected is None:
+                    await session.write("\a")
+                    continue
+                choice = selected
+            elif key.kind == EditorKeyKind.CHAR and key.char is not None:
+                choice = key.char.lower()
+                if choice == HELP_KEY:
+                    # A session with no real `read_editor_key` (falls back
+                    # to plain `read_key()`) delivers Ctrl-H as an ordinary
+                    # character, never as `EditorKeyKind.CTRL` -- same dual
+                    # path `edit_resource_draft` itself handles.
+                    await _show_user_detail_help(session, lane, selected=selected, unicode_style=unicode_style)
+                    blocked = await _redraw()
+                    continue
+                if choice in field_order:
+                    selected = choice
             else:
-                _announce_line(
-                    session,
-                    f"Promotion rules {'no longer apply' if target.level_set_by_hand else 'apply again'} "
-                    f"to {target.username!r}.",
-                )
-            blocked = await _redraw()
-        elif choice == "t":
-            await session.write_line("")
-            currently_disabled = target.disabled_at is not None
-            action_word = "Enable" if currently_disabled else "Disable"
-            if await prompt_yes_no(session, f"{action_word} {target.username!r}?", default=False):
+                # Left/Right/Backspace/Tab/Home/End/Page Up/Page Down --
+                # nothing on this screen defines a step, same silent no-op
+                # `edit_resource_draft` gives Left/Right on a step-less field.
+                continue
+
+            if choice == "b":
+                await session.write_line("")
+                return
+            elif choice not in allowed:
+                # Design doc §5.6: a staff member sees the account, but only the
+                # actions their permissions cover, and none on a SysOp or
+                # another staff member.
+                await session.write(reject_unhandled_key(choice) if echoed else "\a")
+            elif choice == "a" and target.pending_approval:
+                await session.write_line("")
+                if await prompt_yes_no(session, "Approve this account so it can log in?", default=False):
+                    try:
+                        target = await lane.run(approve_pending_user, target, approved_by=actor)
+                    except UserManagementError as exc:
+                        _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
+                    else:
+                        _announce_line(session, f"{target.username!r} approved.")
+                blocked = await _redraw()
+            elif choice == "l":
+                # One style for a number (issue #845, F136): the value opens in
+                # the line to edit, as on every Create/Edit screen, instead of a
+                # `[current]` default beside an empty line -- and, with the screen
+                # redrawn in place, on the level itself.
+                async def _read_level() -> str:
+                    await write_field_prompt(
+                        session,
+                        colored(f"New level for {target.username!r} ({_EDIT_HINT}):", fg_color=MUTED_COLOR),
+                        hint=_EDIT_HINT,
+                    )
+                    return (await _read_seeded_line(session, initial=str(target.user_level))).strip()
+
                 try:
-                    target = await lane.run(set_user_disabled, target, not currently_disabled, changed_by=actor)
+                    raw = await _edit_in_place("l")(_read_level)
+                except InputCancelled:
+                    raw = ""
+                if raw and raw != str(target.user_level):
+                    # A level's name works as well as its number (issue #1009).
+                    new_level = parse_level(raw, await lane.run(get_level_names))
+                    if new_level is None:
+                        _announce_line(session, colored("Not a level or a level's name -- cancelled.", fg_color=MUTED_COLOR))
+                    elif new_level != target.user_level:
+                        target = await _change_user_level(session, lane, actor, target, new_level, node_controls)
+                blocked = await _redraw()
+            elif choice == "u":
+                # A toggle toggles (design doc §3.5): nothing to confirm.
+                try:
+                    target = await lane.run(
+                        set_automatic_promotion, target, target.level_set_by_hand, changed_by=actor
+                    )
                 except UserManagementError as exc:
                     _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
                 else:
                     _announce_line(
                         session,
-                        f"{target.username!r} is now {'disabled' if target.disabled_at is not None else 'active'}.",
+                        f"Promotion rules {'no longer apply' if target.level_set_by_hand else 'apply again'} "
+                        f"to {target.username!r}.",
                     )
-                    if target.disabled_at is not None:
-                        await _revoke_live_sessions(session, node_controls, target, actor)
-            blocked = await _redraw()
-        elif choice in ("n", "w"):
-            await _edit_account_detail(session, lane, actor, target, choice, run_read=_edit_in_place(choice))
-            blocked = await _redraw()
-        elif choice == "v":
-            await session.write_line("")
-            await _revoke_verification(session, lane, actor, target)
-            blocked = await _redraw()
-        elif choice == "i":
-            await session.write_line("")
-            new_state = "revoke" if target.can_verify_identity else "grant"
-            if await prompt_yes_no(
-                session, f"{new_state.capitalize()} identity-verification permission?", default=False
-            ):
-                try:
-                    target = await lane.run(
-                        set_can_verify_identity, target, not target.can_verify_identity, changed_by=actor
-                    )
-                except UserManagementError as exc:
-                    _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
-                else:
-                    _announce_line(session,
-                        f"{target.username!r} can now verify identity: "
-                        f"{'yes' if target.can_verify_identity else 'no'}."
-                    )
-                    _request_live_access_recheck(node_controls, target)
-            blocked = await _redraw()
-        elif choice == "e":
-            # The member's own Profile, acting on their account (design doc
-            # §5.6): its writes check this actor again and are recorded.
-            await _edit_profile(session, lane, target, actor=actor)
-            target = await lane.run(get_user_by_id, target.id) or target
-            blocked = await _redraw()
-        elif choice == "s":
-            target = await _staff_permissions_screen(
-                session, lane, actor, target, node_controls, description_level=description_level,
-                redraw_in_place=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
-            )
-            blocked = await _redraw()
-        elif choice == "k":
-            # SysOp-assisted counterpart to the self-service Profile
-            # `[K]` field (`netbbs.net.login_flow`'s own `_edit_profile`)
-            # -- both now open the same shared `manage_ssh_keys_screen`.
-            target = await manage_ssh_keys_screen(session, lane, target, changed_by=actor)
-            blocked = await _redraw()
-        elif choice == "p":
-            # Issue #611: the SysOp-assisted counterpart to the Profile
-            # `[A]ccount password` field -- the same shared
-            # `manage_password_screen`. `changed_by=actor` is what makes
-            # it skip the current-password proof for someone else's
-            # account, and what the audit row names.
-            target = await manage_password_screen(session, lane, target, changed_by=actor)
-            blocked = await _redraw()
-        elif choice == "r":
-            await session.write_line("")
-            action_word = "Unrestrict" if blocked else "Restrict"
-            prompt = (
-                f"{action_word} {target.username!r} from logging in?"
-                if not blocked
-                else f"{action_word} {target.username!r} (allow login again)?"
-            )
-            if await prompt_yes_no(session, prompt, default=False):
-                if blocked:
-                    await lane.run(unblock_user, target)
-                    _announce_line(session, f"{target.username!r} can log in again.")
-                else:
+                blocked = await _redraw()
+            elif choice == "t":
+                await session.write_line("")
+                currently_disabled = target.disabled_at is not None
+                action_word = "Enable" if currently_disabled else "Disable"
+                if await prompt_yes_no(session, f"{action_word} {target.username!r}?", default=False):
                     try:
-                        await lane.run(block_user, target, blocked_by=actor)
-                    except BlocklistError as exc:
+                        target = await lane.run(set_user_disabled, target, not currently_disabled, changed_by=actor)
+                    except UserManagementError as exc:
                         _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
                     else:
-                        _announce_line(session, f"{target.username!r} is now blocked from logging in.")
-                        await _revoke_live_sessions(session, node_controls, target, actor)
-            blocked = await _redraw()
-        elif choice == "h":
-            await _user_history_screen(session, lane, actor, target)
-            blocked = await _redraw()
-        elif choice == "d" and target.pending_approval:
-            await session.write_line("")
-            if await prompt_yes_no(
-                session, f"Decline {target.username!r}'s signup and remove the account?", default=False
-            ):
-                try:
-                    await lane.run(decline_pending_user, target, declined_by=actor)
-                except UserManagementError as exc:
-                    _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
-                    target = await lane.run(get_user_by_id, target.id) or target
-                else:
-                    _announce_line(session, f"{target.username!r}'s signup declined.")
+                        _announce_line(
+                            session,
+                            f"{target.username!r} is now {'disabled' if target.disabled_at is not None else 'active'}.",
+                        )
+                        if target.disabled_at is not None:
+                            await _revoke_live_sessions(session, node_controls, target, actor)
+                blocked = await _redraw()
+            elif choice in ("n", "w"):
+                await _edit_account_detail(session, lane, actor, target, choice, run_read=_edit_in_place(choice))
+                blocked = await _redraw()
+            elif choice == "v":
+                await session.write_line("")
+                await _revoke_verification(session, lane, actor, target)
+                blocked = await _redraw()
+            elif choice == "i":
+                await session.write_line("")
+                new_state = "revoke" if target.can_verify_identity else "grant"
+                if await prompt_yes_no(
+                    session, f"{new_state.capitalize()} identity-verification permission?", default=False
+                ):
+                    try:
+                        target = await lane.run(
+                            set_can_verify_identity, target, not target.can_verify_identity, changed_by=actor
+                        )
+                    except UserManagementError as exc:
+                        _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
+                    else:
+                        _announce_line(session,
+                            f"{target.username!r} can now verify identity: "
+                            f"{'yes' if target.can_verify_identity else 'no'}."
+                        )
+                        _request_live_access_recheck(node_controls, target)
+                blocked = await _redraw()
+            elif choice == "e":
+                # The member's own Profile, acting on their account (design doc
+                # §5.6): its writes check this actor again and are recorded.
+                await _edit_profile(session, lane, target, actor=actor)
+                target = await lane.run(get_user_by_id, target.id) or target
+                blocked = await _redraw()
+            elif choice == "s":
+                target = await _staff_permissions_screen(
+                    session, lane, actor, target, node_controls, description_level=description_level,
+                    redraw_in_place=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
+                )
+                blocked = await _redraw()
+            elif choice == "k":
+                # SysOp-assisted counterpart to the self-service Profile
+                # `[K]` field (`netbbs.net.login_flow`'s own `_edit_profile`)
+                # -- both now open the same shared `manage_ssh_keys_screen`.
+                target = await manage_ssh_keys_screen(session, lane, target, changed_by=actor)
+                blocked = await _redraw()
+            elif choice == "p":
+                # Issue #611: the SysOp-assisted counterpart to the Profile
+                # `[A]ccount password` field -- the same shared
+                # `manage_password_screen`. `changed_by=actor` is what makes
+                # it skip the current-password proof for someone else's
+                # account, and what the audit row names.
+                target = await manage_password_screen(session, lane, target, changed_by=actor)
+                blocked = await _redraw()
+            elif choice == "r":
+                await session.write_line("")
+                action_word = "Unrestrict" if blocked else "Restrict"
+                prompt = (
+                    f"{action_word} {target.username!r} from logging in?"
+                    if not blocked
+                    else f"{action_word} {target.username!r} (allow login again)?"
+                )
+                if await prompt_yes_no(session, prompt, default=False):
+                    if blocked:
+                        await lane.run(unblock_user, target)
+                        _announce_line(session, f"{target.username!r} can log in again.")
+                    else:
+                        try:
+                            await lane.run(block_user, target, blocked_by=actor)
+                        except BlocklistError as exc:
+                            _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
+                        else:
+                            _announce_line(session, f"{target.username!r} is now blocked from logging in.")
+                            await _revoke_live_sessions(session, node_controls, target, actor)
+                blocked = await _redraw()
+            elif choice == "h":
+                await _user_history_screen(session, lane, actor, target)
+                blocked = await _redraw()
+            elif choice == "d" and target.pending_approval:
+                await session.write_line("")
+                if await prompt_yes_no(
+                    session, f"Decline {target.username!r}'s signup and remove the account?", default=False
+                ):
+                    try:
+                        await lane.run(decline_pending_user, target, declined_by=actor)
+                    except UserManagementError as exc:
+                        _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
+                        target = await lane.run(get_user_by_id, target.id) or target
+                    else:
+                        _announce_line(session, f"{target.username!r}'s signup declined.")
+                        return
+                blocked = await _redraw()
+            elif choice == "d":
+                await session.write_line("")
+                deleted = await _delete_user_confirm(session, lane, actor, target, node_controls)
+                if deleted:
                     return
-            blocked = await _redraw()
-        elif choice == "d":
-            await session.write_line("")
-            deleted = await _delete_user_confirm(session, lane, actor, target, node_controls)
-            if deleted:
-                return
-            blocked = await _redraw()
-        else:
-            await session.write(reject_unhandled_key(choice) if echoed else "\a")
+                blocked = await _redraw()
+            else:
+                await session.write(reject_unhandled_key(choice) if echoed else "\a")
 
 
 _STAFF_TOGGLE_KEYS: dict[str, StaffPermission] = {
@@ -8565,7 +8590,7 @@ async def _staff_permissions_screen(
             ("" if redraw_in_place else "\r\n")
             + screen_title(
                 "Staff permissions",
-                breadcrumb=(session.node_display_name, sanitize_text(target.username)),
+                breadcrumb=crumbs(session),
                 width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style,
                 collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient,
             )
@@ -8782,7 +8807,7 @@ async def _registration_settings_screen(session: Session, lane: DatabaseLane, ac
         choice, _page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Registration", breadcrumb=("SysOp", "Users"),
+                session, chrome, "Registration",
                 subtitle="Who may create an account on this node by themselves.",
             ),
             sections=[Section("Self-service registration", rows)],
@@ -8900,7 +8925,7 @@ async def _draw_update_status(
         "\r\n"
         + screen_title(
             "Self-update",
-            breadcrumb=(session.node_display_name, "Settings"),
+            breadcrumb=crumbs(session, own=True),
             subtitle="Check for releases and install a newer one.",
             width=session.terminal_width,
             clear=redraw_in_place,
@@ -9063,6 +9088,7 @@ async def _github_token_prompt(
 
 
 
+@located("Self-update")
 async def _update_settings_screen(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None = None
 ) -> None:
@@ -9233,8 +9259,7 @@ async def _install_release_screen(
         except (BackupScheduleError, OSError) as exc:
             refusal = f"The pre-upgrade backup has nowhere usable to go: {exc}"
 
-    breadcrumb = ("SysOp", "Settings", "Update")
-    title = _detail_title(session, chrome, f"Install {release.tag_name}", breadcrumb=breadcrumb)
+    title = _detail_title(session, chrome, f"Install {release.tag_name}")
     if refusal is not None:
         await show_detail(
             session, title=title,
@@ -9296,7 +9321,7 @@ async def _install_release_screen(
         await _run_install(
             session, lane, actor, node_controls, release,
             environment=environment, db_path=db_path, identity_dir=identity_dir, backup_root=backup_root,
-            restarting=restarting, current_version=current_version, breadcrumb=breadcrumb, delay=delay,
+            restarting=restarting, current_version=current_version, delay=delay,
         )
 
 
@@ -9309,7 +9334,7 @@ _INSTALL_IN_PROGRESS = asyncio.Lock()
 async def _run_install(
     session: Session, lane: DatabaseLane, actor: User, node_controls: NodeControls, release: ReleaseInfo, *,
     environment: InstallEnvironment, db_path: Path, identity_dir: Path, backup_root: Path, restarting: bool,
-    current_version: str, breadcrumb: tuple[str, ...], delay: int,
+    current_version: str, delay: int,
 ) -> None:
     """Steps 1-4 of `_install_release_screen`, holding `_INSTALL_IN_PROGRESS`."""
 
@@ -9325,7 +9350,7 @@ async def _run_install(
         if log:
             sections.append(Section("pip output (last lines)", [Note(line, color=VALUE_COLOR) for line in log.splitlines()[-40:]]))
         await _show_report(
-            session, lane, actor, f"Install {release.tag_name}", breadcrumb=breadcrumb, sections=sections,
+            session, lane, actor, f"Install {release.tag_name}", sections=sections,
             help_title="Install help",
             help_about="Why the install stopped, and at which step. The running version is unchanged.",
         )
@@ -9569,6 +9594,7 @@ def _backup_door_sections(voidrunner_dir: Path, installs_on: bool) -> list[Secti
     ]
 
 
+@located("Backup")
 async def _backup_status_screen(
     session: Session,
     lane: DatabaseLane,
@@ -9667,7 +9693,7 @@ async def _backup_status_screen(
         choice, page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Backup", breadcrumb=("SysOp", "Operations"),
+                session, chrome, "Backup", own=True,
                 subtitle="Create and review complete local node backups.",
             ),
             sections=sections, actions=actions, page=page,
@@ -9951,7 +9977,7 @@ async def _draw_managed_dns_status(
         "\r\n"
         + screen_title(
             "Managed DNS",
-            breadcrumb=(session.node_display_name, "Settings"),
+            breadcrumb=crumbs(session, own=True),
             subtitle="This node's netbbs.org subdomain registration, if any.",
             width=session.terminal_width,
             clear=redraw_in_place,
@@ -10232,6 +10258,7 @@ def _managed_dns_state_guidance(
     return []
 
 
+@located("Managed DNS")
 async def _managed_dns_status_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """
     Design doc §16, issue #201: status plus, once release/reclaim exist
@@ -10342,6 +10369,7 @@ async def _managed_dns_status_screen(session: Session, lane: DatabaseLane, actor
 # -- node-wide display format/timezone -------------------------------------
 
 
+@located("Timestamp display")
 async def _timestamp_settings_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """
     Node-wide display format/timezone (`netbbs.timeutil.set_display_
@@ -10424,7 +10452,6 @@ async def _timestamp_settings_screen(session: Session, lane: DatabaseLane, actor
             name_of=lambda tz: tz,
             stable_id_of=lambda tz: zone_ids[tz],
             title="Timezone",
-            breadcrumb=("Settings", "Timestamp display"),
             empty_message="No timezones available.",
             redraw_in_place=redraw_in_place,
             unicode_style=unicode_style,
@@ -10469,7 +10496,7 @@ async def _timestamp_settings_screen(session: Session, lane: DatabaseLane, actor
     ]
     await edit_resource_draft(
         session, lane,
-        title="Timestamp display",
+        title="Timestamp display", own=True,
         fields=fields,
         draft=draft, save=None,
         back_menu_text=menu_key("B", "ack"),
@@ -10738,6 +10765,7 @@ def _policy_running_note(view: PolicyView, next_value: Any) -> str | None:
     return f"running with {format_policy_value(view.setting, view.running)} until the next start"
 
 
+@located("Operating limits")
 async def _policy_settings_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Issue #730: operating policy that used to live only in `netbbs.toml`
     -- the Link carry caps, peering and limits, the live relay's bounds, the
@@ -10777,7 +10805,7 @@ async def _policy_settings_screen(session: Session, lane: DatabaseLane, actor: U
             ))
         choice, page = await show_detail(
             session,
-            title=_detail_title(session, chrome, "Operating limits", breadcrumb=("SysOp", "Settings")),
+            title=_detail_title(session, chrome, "Operating limits", own=True),
             sections=[Section(None, rows), Section(None, notes)],
             actions=[
                 *((key, menu_key(group[0], group[1:])) for group, key in _POLICY_GROUP_KEYS.items()),
@@ -10842,7 +10870,6 @@ async def _node_configuration_screen(session: Session, lane: DatabaseLane, actor
         choice, page = await show_detail(
             session,
             title=_detail_title(session, chrome, "Node configuration",
-                                breadcrumb=("SysOp", "Settings", "Operating limits"),
                                 subtitle="As the node resolved it at its last start"),
             sections=sections, actions=[_BACK_ACTION], page=page,
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
@@ -11033,6 +11060,7 @@ def _optional_text_field(key: str) -> Callable[[Session, DatabaseLane, dict], Aw
     return prompt
 
 
+@located("Inter-BBS chat (MRC)")
 async def _mrc_settings_screen(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None
 ) -> None:
@@ -11267,7 +11295,7 @@ async def _mrc_settings_screen(
 
     saved = await edit_resource_draft(
         session, lane,
-        title="Inter-BBS chat (MRC)",
+        title="Inter-BBS chat (MRC)", own=True,
         fields=fields, draft=draft, save=save, error_type=MrcSettingsError,
         save_menu_text=menu_key("S", "ave & apply"),
         back_menu_text=menu_key("B", "ack"),
@@ -11498,6 +11526,7 @@ async def _mrc_status_sections(
     return sections
 
 
+@located("MRC status")
 async def _mrc_status_screen(session: Session, lane: DatabaseLane, actor: User, node_controls: NodeControls) -> None:
     """Issue #275: the "what is the bridge doing right now" screen §16
     left open -- read-only apart from `[R]econnect now` (a settings
@@ -11511,7 +11540,7 @@ async def _mrc_status_screen(session: Session, lane: DatabaseLane, actor: User, 
     while True:
         chrome = await _load_chrome(lane, actor)
         title = _detail_title(
-            session, chrome, "Inter-BBS chat (MRC)", breadcrumb=("Node",),
+            session, chrome, "Inter-BBS chat (MRC)", own=True,
             subtitle="This node's link to the Multi Relay Chat network, live.",
         )
         mrc_bridge = node_controls.mrc_bridge
@@ -11995,6 +12024,7 @@ async def _probation_summary(lane: DatabaseLane, link_context: LinkContext) -> l
     return rows
 
 
+@located("Node map")
 async def _node_map_sysop_screen(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext
 ) -> None:
@@ -12039,8 +12069,7 @@ async def _node_map_sysop_screen(
             description_of=lambda entry: node_map_row_description(entry, now=now),
             columns=NODE_MAP_COLUMNS,
             column_values_of=_cells,
-            title=title,
-            breadcrumb=("SysOp", "Operations", "Link status"),
+            title=title, own=True,
             empty_message="No other nodes are known here yet.",
             start_stable_id=reopen_at,
             redraw_in_place=chrome.redraw_in_place,
@@ -12081,7 +12110,6 @@ async def _node_map_sysop_screen(
                 session,
                 title=_detail_title(
                     session, chrome, selected.friendly_name,
-                    breadcrumb=("SysOp", "Operations", "Link status", title),
                 ),
                 sections=node_map_sections(
                     selected, carried=carried, now=now, sysop=True, first_named=first_named,
@@ -12113,7 +12141,6 @@ async def _node_map_sysop_screen(
             elif choice == "t":
                 await _trust_subject_screen(
                     session, lane, actor, subject, link_context=link_context,
-                    breadcrumb=("SysOp", "Operations", "Link status", title),
                 )
             # Drawn again from the database: the trust rows are what changed.
             refreshed = next(
@@ -12204,142 +12231,143 @@ async def _carry_decisions_screen(
     screen, with `[A]ccept` and `[E]xclude` for an offer (issue #683)."""
     node = link_context.link_node
     title = "Offered to this node" if state == OFFERED else "Excluded from this node"
-    message = None
-    while True:
-        # A resource's name and description come from a remote node's genesis:
-        # sanitized once here, before anything below styles them.
-        decisions = [
-            dataclasses.replace(
-                d, name=sanitize_text(d.name),
-                description=sanitize_text(d.description) if d.description else None,
-            )
-            for d in await lane.run(list_carry_decisions, state)
-        ]
-        total = await lane.run(count_carry_decisions, state)
-        display_format, display_timezone = await lane.run(resolve_display_preferences)
-        chrome = await _load_chrome(lane, actor)
-
-        def _origin_label(fingerprint: str) -> str:
-            peer = node.peers.get(fingerprint)
-            label = identity_for_peer(peer).label if peer is not None else (fingerprint or "unknown")
-            return sanitize_text(label)
-
-        selected = await pick_item(
-            session, decisions,
-            name_of=lambda d: d.name,
-            stable_id_of=lambda d: d.ref,
-            description_of=lambda d: f"{KIND_LABELS[d.kind]} from {_origin_label(d.origin_fingerprint)}",
-            title=title if total <= len(decisions) else f"{title} (newest {len(decisions)} of {total})",
-            empty_message="Nothing here.",
-            redraw_in_place=chrome.redraw_in_place,
-            unicode_style=chrome.unicode_style,
-            collapsed=chrome.collapsed,
-            accent_color=chrome.accent_color,
-            header_color=chrome.header_color,
-        )
-        if selected is None:
-            return
-        decided = format_for_display(
-            selected.decided_at, override_format=display_format, override_timezone=display_timezone
-        )
-        actions = []
-        if state == OFFERED:
-            actions += [("a", menu_key("A", "ccept")), ("e", menu_key("E", "xclude"))]
-        else:
-            actions.append(("r", menu_key("R", "estore")))
-            if selected.hidden:
-                actions.append(("p", menu_key("P", "urge")))
-        actions.append(_BACK_ACTION)
-        choice, _page = await show_detail(
-            session,
-            title=_detail_title(
-                session, chrome, selected.name, breadcrumb=("SysOp", "Operations", "Link status", title),
-            ),
-            sections=_carry_decision_sections(
-                selected, origin_label=_origin_label(selected.origin_fingerprint), decided=decided
-            ),
-            actions=actions, message=message,
-            redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
-            help_title="Carry help",
-            help_about=(
-                "A board, file area or channel another node offers to share with this one. Accepting starts "
-                "carrying it here; excluding turns the offer away."
-            ),
-        )
+    with entered(session, title):
         message = None
-        if choice == "a":
-            try:
-                await lane.run(
-                    accept_offer, selected.kind, selected.resource_id, actor=actor,
-                    max_remote_files_per_area=(
-                        link_context.link_config.max_remote_files_per_area
-                        if link_context.link_config is not None else None
-                    ),
+        while True:
+            # A resource's name and description come from a remote node's genesis:
+            # sanitized once here, before anything below styles them.
+            decisions = [
+                dataclasses.replace(
+                    d, name=sanitize_text(d.name),
+                    description=sanitize_text(d.description) if d.description else None,
                 )
-            except CarryDecisionError as exc:
-                _announce_line(session, colored(f"Could not accept {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
-            else:
-                _announce_line(
-                    session,
-                    f"{selected.name!r} is carried now; its content arrives with the next sync passes.",
-                )
-                if selected.kind == "channels" and mrc_bridge is not None:
-                    # A channel coming back (or gone for good) changes which
-                    # MRC rooms the running bridge maps, as hiding it did.
-                    await mrc_bridge.refresh_channel_mappings()
-                if not await lane.run(list_carry_decisions, state):
-                    return
-        elif choice == "r":
-            try:
-                await lane.run(
-                    restore_excluded, selected.kind, selected.resource_id, actor=actor,
-                    max_remote_files_per_area=(
-                        link_context.link_config.max_remote_files_per_area
-                        if link_context.link_config is not None else None
-                    ),
-                )
-            except CarryDecisionError as exc:
-                _announce_line(session, colored(f"Could not restore {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
-            else:
-                _announce_line(session, f"{selected.name!r} restored; anything new arrives with the next sync passes.")
-                if selected.kind == "channels" and mrc_bridge is not None:
-                    # A channel coming back (or gone for good) changes which
-                    # MRC rooms the running bridge maps, as hiding it did.
-                    await mrc_bridge.refresh_channel_mappings()
-                if not await lane.run(list_carry_decisions, state):
-                    return
-        elif choice == "p":
-            await session.write_line(
-                colored(
-                    "\r\nThis permanently deletes everything this node kept for it. It stays excluded; "
-                    "Restore can still take it on again from its origin, without what was kept.",
-                    fg_color=MUTED_COLOR,
-                )
+                for d in await lane.run(list_carry_decisions, state)
+            ]
+            total = await lane.run(count_carry_decisions, state)
+            display_format, display_timezone = await lane.run(resolve_display_preferences)
+            chrome = await _load_chrome(lane, actor)
+
+            def _origin_label(fingerprint: str) -> str:
+                peer = node.peers.get(fingerprint)
+                label = identity_for_peer(peer).label if peer is not None else (fingerprint or "unknown")
+                return sanitize_text(label)
+
+            selected = await pick_item(
+                session, decisions,
+                name_of=lambda d: d.name,
+                stable_id_of=lambda d: d.ref,
+                description_of=lambda d: f"{KIND_LABELS[d.kind]} from {_origin_label(d.origin_fingerprint)}",
+                title=title if total <= len(decisions) else f"{title} (newest {len(decisions)} of {total})", own=True,
+                empty_message="Nothing here.",
+                redraw_in_place=chrome.redraw_in_place,
+                unicode_style=chrome.unicode_style,
+                collapsed=chrome.collapsed,
+                accent_color=chrome.accent_color,
+                header_color=chrome.header_color,
             )
-            await write_prompt(session, f"Type the name {selected.name!r} to confirm, or anything else to cancel: ")
-            typed = (await session.read_line()).strip()
-            if typed != selected.name:
-                _confirmation_refused(session, typed, selected.name, kept="Nothing was purged.")
-                continue
-            try:
-                await lane.run(purge_excluded, selected.kind, selected.resource_id, actor=actor)
-            except CarryDecisionError as exc:
-                _announce_line(session, colored(f"Could not purge {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
+            if selected is None:
+                return
+            decided = format_for_display(
+                selected.decided_at, override_format=display_format, override_timezone=display_timezone
+            )
+            actions = []
+            if state == OFFERED:
+                actions += [("a", menu_key("A", "ccept")), ("e", menu_key("E", "xclude"))]
             else:
-                _announce_line(session, f"{selected.name!r} purged; it stays excluded.")
-                if selected.kind == "channels" and mrc_bridge is not None:
-                    # A channel coming back (or gone for good) changes which
-                    # MRC rooms the running bridge maps, as hiding it did.
-                    await mrc_bridge.refresh_channel_mappings()
-        elif choice == "e":
-            try:
-                await lane.run(exclude_offer, selected.kind, selected.resource_id, actor=actor)
-            except CarryDecisionError as exc:
-                _announce_line(session, colored(f"Could not exclude {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
-            else:
-                _announce_line(session, f"{selected.name!r} excluded; it is not carried on this node.")
-                if not await lane.run(list_carry_decisions, state):
-                    return
+                actions.append(("r", menu_key("R", "estore")))
+                if selected.hidden:
+                    actions.append(("p", menu_key("P", "urge")))
+            actions.append(_BACK_ACTION)
+            choice, _page = await show_detail(
+                session,
+                title=_detail_title(
+                    session, chrome, selected.name,
+                ),
+                sections=_carry_decision_sections(
+                    selected, origin_label=_origin_label(selected.origin_fingerprint), decided=decided
+                ),
+                actions=actions, message=message,
+                redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
+                help_title="Carry help",
+                help_about=(
+                    "A board, file area or channel another node offers to share with this one. Accepting starts "
+                    "carrying it here; excluding turns the offer away."
+                ),
+            )
+            message = None
+            if choice == "a":
+                try:
+                    await lane.run(
+                        accept_offer, selected.kind, selected.resource_id, actor=actor,
+                        max_remote_files_per_area=(
+                            link_context.link_config.max_remote_files_per_area
+                            if link_context.link_config is not None else None
+                        ),
+                    )
+                except CarryDecisionError as exc:
+                    _announce_line(session, colored(f"Could not accept {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
+                else:
+                    _announce_line(
+                        session,
+                        f"{selected.name!r} is carried now; its content arrives with the next sync passes.",
+                    )
+                    if selected.kind == "channels" and mrc_bridge is not None:
+                        # A channel coming back (or gone for good) changes which
+                        # MRC rooms the running bridge maps, as hiding it did.
+                        await mrc_bridge.refresh_channel_mappings()
+                    if not await lane.run(list_carry_decisions, state):
+                        return
+            elif choice == "r":
+                try:
+                    await lane.run(
+                        restore_excluded, selected.kind, selected.resource_id, actor=actor,
+                        max_remote_files_per_area=(
+                            link_context.link_config.max_remote_files_per_area
+                            if link_context.link_config is not None else None
+                        ),
+                    )
+                except CarryDecisionError as exc:
+                    _announce_line(session, colored(f"Could not restore {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
+                else:
+                    _announce_line(session, f"{selected.name!r} restored; anything new arrives with the next sync passes.")
+                    if selected.kind == "channels" and mrc_bridge is not None:
+                        # A channel coming back (or gone for good) changes which
+                        # MRC rooms the running bridge maps, as hiding it did.
+                        await mrc_bridge.refresh_channel_mappings()
+                    if not await lane.run(list_carry_decisions, state):
+                        return
+            elif choice == "p":
+                await session.write_line(
+                    colored(
+                        "\r\nThis permanently deletes everything this node kept for it. It stays excluded; "
+                        "Restore can still take it on again from its origin, without what was kept.",
+                        fg_color=MUTED_COLOR,
+                    )
+                )
+                await write_prompt(session, f"Type the name {selected.name!r} to confirm, or anything else to cancel: ")
+                typed = (await session.read_line()).strip()
+                if typed != selected.name:
+                    _confirmation_refused(session, typed, selected.name, kept="Nothing was purged.")
+                    continue
+                try:
+                    await lane.run(purge_excluded, selected.kind, selected.resource_id, actor=actor)
+                except CarryDecisionError as exc:
+                    _announce_line(session, colored(f"Could not purge {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
+                else:
+                    _announce_line(session, f"{selected.name!r} purged; it stays excluded.")
+                    if selected.kind == "channels" and mrc_bridge is not None:
+                        # A channel coming back (or gone for good) changes which
+                        # MRC rooms the running bridge maps, as hiding it did.
+                        await mrc_bridge.refresh_channel_mappings()
+            elif choice == "e":
+                try:
+                    await lane.run(exclude_offer, selected.kind, selected.resource_id, actor=actor)
+                except CarryDecisionError as exc:
+                    _announce_line(session, colored(f"Could not exclude {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
+                else:
+                    _announce_line(session, f"{selected.name!r} excluded; it is not carried on this node.")
+                    if not await lane.run(list_carry_decisions, state):
+                        return
 
 
 def _published_dial_in_summary(db: Database) -> tuple[tuple[str, ...], str]:
@@ -12472,6 +12500,7 @@ async def _dial_in_editor(
     )
 
 
+@located("Link status")
 async def _link_status_screen(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext,
     node_controls: NodeControls | None = None,
@@ -12536,7 +12565,7 @@ async def _link_status_screen(
         choice, page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Link status", breadcrumb=("SysOp", "Operations"),
+                session, chrome, "Link status", own=True,
                 subtitle="Identity, capacity, relay activity, and verified peers.",
             ),
             sections=sections, actions=actions, page=page, message=message,
@@ -12613,6 +12642,7 @@ def _key_history_table(identity, purpose: str) -> Table:
     return Table(("Key", "Status", "Authorized", "Retired"), rows)
 
 
+@located("Node keys")
 async def _node_keys_screen(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext, key_rotation,
 ) -> None:
@@ -12656,7 +12686,7 @@ async def _node_keys_screen(
         choice, listing.page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Node keys", breadcrumb=("SysOp", "Operations", "Link status"),
+                session, chrome, "Node keys", own=True,
                 subtitle="The keys this node signs and connects with, and their rotation.",
             ),
             sections=sections, actions=actions, page=listing.page, message=listing.take_message(),
@@ -12708,7 +12738,7 @@ async def _node_key_detail(
         choice, page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, title, breadcrumb=("SysOp", "Operations", "Link status", "Node keys"),
+                session, chrome, title,
                 subtitle=explanation,
             ),
             sections=[
@@ -12765,6 +12795,7 @@ _WORK_ITEM_STATUS_COLORS = {
 }
 
 
+@located("Outbox")
 async def _outbox_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """
     SysOp inspection, replay, and cancellation for outbound Link work
@@ -12812,7 +12843,7 @@ async def _outbox_screen(session: Session, lane: DatabaseLane, actor: User) -> N
         choice, _page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Outbox", breadcrumb=("SysOp", "Operations"),
+                session, chrome, "Outbox", own=True,
                 subtitle="Outgoing Link mail and acknowledgement deliveries.",
             ),
             sections=[Section("Work items by status", rows)], actions=actions, message=message,
@@ -12870,7 +12901,7 @@ async def _outbox_item_screen(
     )
     choice, _page = await show_detail(
         session,
-        title=_detail_title(session, chrome, "Work item", breadcrumb=("SysOp", "Operations", "Outbox")),
+        title=_detail_title(session, chrome, "Work item"),
         sections=[Section(None, rows)], actions=[*actions, _BACK_ACTION],
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
         help_title="Work item help",
@@ -12959,6 +12990,7 @@ def _load_mail_tools(db: Database) -> dict:
     }
 
 
+@located("Mail")
 async def _mail_tools_screen(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None,
 ) -> None:
@@ -13028,7 +13060,7 @@ async def _mail_tools_screen(
         choice, _page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Mail", breadcrumb=("SysOp", "Operations"),
+                session, chrome, "Mail", own=True,
                 subtitle="Mailbox sizes and the Link mail this node refused.",
             ),
             sections=[
@@ -13089,7 +13121,7 @@ async def _mailboxes_screen(session: Session, lane: DatabaseLane, actor: User) -
         choice, listing.page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Mailboxes", breadcrumb=("SysOp", "Operations", "Mail"),
+                session, chrome, "Mailboxes",
                 subtitle=(
                     f"By account name. Each inbox keeps up to {MAX_MAIL_PER_RECIPIENT} letters."
                     if by_name else
@@ -13122,6 +13154,7 @@ async def _mailboxes_screen(session: Session, lane: DatabaseLane, actor: User) -
             listing.page = 0
 
 
+@located("Refused Link mail")
 async def _refused_link_mail_screen(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None,
 ) -> None:
@@ -13159,7 +13192,7 @@ async def _refused_link_mail_screen(
         choice, listing.page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Refused Link mail", breadcrumb=("SysOp", "Operations", "Mail"),
+                session, chrome, "Refused Link mail", own=True,
                 subtitle="Mail from other nodes not delivered here, and why; each sender got a bounce.",
             ),
             sections=[Section(None, rows), Section(None, [Note(_MAIL_PRIVACY_NOTE)])],
@@ -13193,6 +13226,7 @@ async def _refused_link_mail_screen(
         )
 
 
+@located("Refused letter")
 async def _refused_letter_screen(
     session: Session, lane: DatabaseLane, actor: User, refusal: LinkMailRefusal, *,
     node_label: str, when, link_context: LinkContext | None,
@@ -13266,8 +13300,7 @@ async def _refused_letter_screen(
         choice, listing.page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Refused letter",
-                breadcrumb=("SysOp", "Operations", "Mail", "Refused Link mail"),
+                session, chrome, "Refused letter", own=True,
             ),
             sections=[
                 Section("The letter", letter),
@@ -13281,14 +13314,13 @@ async def _refused_letter_screen(
         )
         if choice == "b":
             return
-        breadcrumb = ("SysOp", "Operations", "Mail", "Refused Link mail")
         if choice == "n":
             await _trust_subject_screen(
-                session, lane, actor, node_subject, link_context=link_context, breadcrumb=breadcrumb,
+                session, lane, actor, node_subject, link_context=link_context,
             )
         elif choice == "u" and user_subject is not None:
             await _trust_subject_screen(
-                session, lane, actor, user_subject, link_context=link_context, breadcrumb=breadcrumb,
+                session, lane, actor, user_subject, link_context=link_context,
             )
 
 
@@ -13301,6 +13333,7 @@ def _diagnostic_level_color(level: str) -> int:
     return ALERT_COLOR if level in ("ERROR", "CRITICAL") else WARNING_COLOR
 
 
+@located("Diagnostic log")
 async def _diagnostic_log_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """
     Read-only SysOp inspection of the bounded Link diagnostic log
@@ -13324,7 +13357,7 @@ async def _diagnostic_log_screen(session: Session, lane: DatabaseLane, actor: Us
     entries = await lane.run(list_diagnostic_log_entries)
     if not entries:
         await _show_report(
-            session, lane, actor, "Diagnostic log", breadcrumb=("SysOp", "Operations"),
+            session, lane, actor, "Diagnostic log", own=True,
             sections=[Section(None, [Note("Nothing logged yet.")])],
             help_title="Diagnostic log help",
             help_about="Warnings and errors from Link and MRC. Nothing has been logged yet.",
@@ -13349,7 +13382,7 @@ async def _diagnostic_log_screen(session: Session, lane: DatabaseLane, actor: Us
             name_of=lambda entry: f"{entry.created_at}  {entry.level}",
             stable_id_of=lambda entry: entry.id,
             description_of=lambda entry: sanitize_text(entry.message),
-            title="Diagnostic log",
+            title="Diagnostic log", own=True,
             empty_message="Nothing logged yet.",
             start_stable_id=reopen_at,
             on_sort=_flip_order,
@@ -13369,7 +13402,7 @@ async def _diagnostic_log_screen(session: Session, lane: DatabaseLane, actor: Us
         )
         await show_detail(
             session,
-            title=_detail_title(session, chrome, "Diagnostic entry", breadcrumb=("SysOp", "Operations", "Diagnostic log")),
+            title=_detail_title(session, chrome, "Diagnostic entry"),
             sections=[Section(None, [
                 Field("When", when, color=DATE_COLOR),
                 Field("Level", selected.level, color=_diagnostic_level_color(selected.level), bold=True),
@@ -13386,7 +13419,7 @@ async def _diagnostic_log_screen(session: Session, lane: DatabaseLane, actor: Us
 async def _audit_log_screen(
     session: Session, lane: DatabaseLane, actor: User, *,
     object_type: str | None = None, object_id: int | None = None,
-    title: str = "Audit log", breadcrumb: tuple[str, ...] = ("SysOp", "Operations"),
+    title: str = "Audit log",
     moderators: list[str] | None = None,
 ) -> None:
     """
@@ -13404,150 +13437,151 @@ async def _audit_log_screen(
     history, reached from its detail screen (issue #678), under
     `moderators`: who may moderate it.
     """
-    chrome = await _load_chrome(lane, actor)
-    entries = await lane.run(lambda db: list_recent_actions(db, object_type=object_type, object_id=object_id))
-    moderator_section = (
-        [Section("Moderators", [Note(line) for line in moderators])] if moderators is not None else []
-    )
-    if not entries:
-        await _show_report(
-            session, lane, actor, title, breadcrumb=breadcrumb,
-            sections=[*moderator_section, Section(None, [Note("Nothing logged yet.")])],
-            help_title="Audit log help",
-            help_about="The moderation and administrative actions logged here. Nothing has been logged yet.",
+    with entered(session, title):
+        chrome = await _load_chrome(lane, actor)
+        entries = await lane.run(lambda db: list_recent_actions(db, object_type=object_type, object_id=object_id))
+        moderator_section = (
+            [Section("Moderators", [Note(line) for line in moderators])] if moderators is not None else []
         )
-        return
-    # One row each, whatever the terminal (Codex review on #797): the
-    # picker pages its items, not this heading, so a wrapped line would push
-    # the list off a narrow screen. The revoke screen lists a user's grants
-    # in full.
-    masthead_width = max(8, session.terminal_width - 1)
-    masthead = "\r\n".join(
-        [colored("MODERATORS", fg_color=LABEL_COLOR, bold=True)]
-        + [
-            f"  {line}" if display_width(f"  {line}") <= masthead_width
-            else cut_to_width(f"  {line}", masthead_width - 3) + "..."
-            for line in moderators
-        ]
-    ) if moderators is not None else ""
-
-    newest_first = list(entries)
-    order = {"ascending": False}
-
-    async def _flip_order() -> list:
-        order["ascending"] = not order["ascending"]
-        return list(reversed(newest_first)) if order["ascending"] else list(newest_first)
-
-    def _resolve_names(db: Database) -> dict[int, str]:
-        ids = {entry.actor_user_id for entry in entries if entry.actor_user_id is not None}
-        ids |= {entry.target_user_id for entry in entries if entry.target_user_id is not None}
-        names: dict[int, str] = {}
-        for user_id in ids:
-            user = get_user_by_id(db, user_id)
-            names[user_id] = user.username if user is not None else "(deleted account)"
-        return names
-
-    usernames = await lane.run(_resolve_names)
-    display_format, display_timezone = await lane.run(resolve_display_preferences)
-
-    def _actor_name(entry) -> str:
-        if entry.actor_user_id is None:
-            return "(system)"
-        return usernames.get(entry.actor_user_id, "(deleted account)")
-
-    def _when(entry) -> str:
-        # Dogfood report: `entry.created_at` is `utc_now_iso()`'s own
-        # always-6-decimal *storage* format (design doc/timeutil.py's
-        # own docstring: fixed precision so two events never hash/sign
-        # differently just because one happened to land on a whole
-        # second) -- never meant to reach a human eye directly.
-        # `format_for_display` is this codebase's own established fix,
-        # already used everywhere else a stored timestamp reaches a
-        # screen; the audit log was just never wired through it.
-        return format_for_display(entry.created_at, override_format=display_format, override_timezone=display_timezone)
-
-    def _row_label(entry) -> str:
-        return f"{_when(entry)}  {entry.action}  (by {_actor_name(entry)})"
-
-    accent_color = await lane.run(effective_accent_color_256)
-
-    def _row_name_segments(entry) -> list[tuple[str, int]]:
-        # Dogfood report: distinct colors per field, not one flat
-        # accent-colored string -- METADATA_COLOR for the timestamp
-        # matches that constant's own documented purpose ("timestamps,
-        # counts, and secondary context"); the action keeps this
-        # screen's own `accent_color` (respects a SysOp's node-wide
-        # accent override, same as every other navigable item name in
-        # this module); NICK_COLOR for the actor matches the existing
-        # "a person's own identity gets its own color" convention
-        # `netbbs.net.chat_flow` already established. Punctuation/glue
-        # text stays MUTED_COLOR, the module's existing convention for
-        # de-emphasized connective text.
-        return [
-            (_when(entry), METADATA_COLOR),
-            ("  ", None),
-            (entry.action, accent_color),
-            ("  (by ", MUTED_COLOR),
-            (_actor_name(entry), NICK_COLOR),
-            (")", MUTED_COLOR),
-        ]
-
-    def _row_description(entry) -> str:
-        parts = []
-        if entry.object_type is not None:
-            parts.append(f"{entry.object_type} #{entry.object_id}")
-        if entry.target_user_id is not None:
-            parts.append(f"target: {usernames.get(entry.target_user_id, '(deleted account)')}")
-        if entry.detail:
-            parts.append(sanitize_text(entry.detail))
-        return "  ".join(parts) if parts else "(no detail)"
-
-    # One entry's detail is a screen of its own, and leaving it comes back to
-    # the list: printed after the picker closed, it was wiped by the
-    # Operations menu's redraw before it could be read.
-    reopen_at: int | None = None
-    while True:
-        selected = await pick_item(
-            session, list(reversed(newest_first)) if order["ascending"] else newest_first,
-            name_of=_row_label,
-            stable_id_of=lambda entry: entry.id,
-            description_of=_row_description,
-            name_segments_of=_row_name_segments,
-            title=title,
-            masthead=masthead,
-            empty_message="Nothing logged yet.",
-            start_stable_id=reopen_at,
-            on_sort=_flip_order,
-            sort_label=lambda: "oldest first" if order["ascending"] else "newest first",
-            redraw_in_place=chrome.redraw_in_place,
-            unicode_style=chrome.unicode_style,
-            collapsed=chrome.collapsed,
-            accent_color=accent_color,
-            header_color=chrome.header_color,
-        )
-        if selected is None:
+        if not entries:
+            await _show_report(
+                session, lane, actor, title, own=True,
+                sections=[*moderator_section, Section(None, [Note("Nothing logged yet.")])],
+                help_title="Audit log help",
+                help_about="The moderation and administrative actions logged here. Nothing has been logged yet.",
+            )
             return
-        reopen_at = selected.id
+        # One row each, whatever the terminal (Codex review on #797): the
+        # picker pages its items, not this heading, so a wrapped line would push
+        # the list off a narrow screen. The revoke screen lists a user's grants
+        # in full.
+        masthead_width = max(8, session.terminal_width - 1)
+        masthead = "\r\n".join(
+            [colored("MODERATORS", fg_color=LABEL_COLOR, bold=True)]
+            + [
+                f"  {line}" if display_width(f"  {line}") <= masthead_width
+                else cut_to_width(f"  {line}", masthead_width - 3) + "..."
+                for line in moderators
+            ]
+        ) if moderators is not None else ""
 
-        rows = [
-            Field("When", _when(selected), color=DATE_COLOR),
-            Field("Action", selected.action, bold=True),
-            Field("By", _actor_name(selected), color=AUTHOR_COLOR),
-        ]
-        if selected.object_type is not None:
-            rows.append(Field("Object", f"{selected.object_type} #{selected.object_id}"))
-        if selected.target_user_id is not None:
-            rows.append(Field("Target", usernames.get(selected.target_user_id, "(deleted account)")))
-        if selected.detail:
-            rows.append(Field("Detail", selected.detail))
-        await show_detail(
-            session,
-            title=_detail_title(session, chrome, "Audit entry", breadcrumb=(*breadcrumb, title)),
-            sections=[Section(None, rows)], actions=[_BACK_ACTION],
-            redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
-            help_title="Audit entry help",
-            help_about="One logged action in full: who did it, when, and to what.",
-        )
+        newest_first = list(entries)
+        order = {"ascending": False}
+
+        async def _flip_order() -> list:
+            order["ascending"] = not order["ascending"]
+            return list(reversed(newest_first)) if order["ascending"] else list(newest_first)
+
+        def _resolve_names(db: Database) -> dict[int, str]:
+            ids = {entry.actor_user_id for entry in entries if entry.actor_user_id is not None}
+            ids |= {entry.target_user_id for entry in entries if entry.target_user_id is not None}
+            names: dict[int, str] = {}
+            for user_id in ids:
+                user = get_user_by_id(db, user_id)
+                names[user_id] = user.username if user is not None else "(deleted account)"
+            return names
+
+        usernames = await lane.run(_resolve_names)
+        display_format, display_timezone = await lane.run(resolve_display_preferences)
+
+        def _actor_name(entry) -> str:
+            if entry.actor_user_id is None:
+                return "(system)"
+            return usernames.get(entry.actor_user_id, "(deleted account)")
+
+        def _when(entry) -> str:
+            # Dogfood report: `entry.created_at` is `utc_now_iso()`'s own
+            # always-6-decimal *storage* format (design doc/timeutil.py's
+            # own docstring: fixed precision so two events never hash/sign
+            # differently just because one happened to land on a whole
+            # second) -- never meant to reach a human eye directly.
+            # `format_for_display` is this codebase's own established fix,
+            # already used everywhere else a stored timestamp reaches a
+            # screen; the audit log was just never wired through it.
+            return format_for_display(entry.created_at, override_format=display_format, override_timezone=display_timezone)
+
+        def _row_label(entry) -> str:
+            return f"{_when(entry)}  {entry.action}  (by {_actor_name(entry)})"
+
+        accent_color = await lane.run(effective_accent_color_256)
+
+        def _row_name_segments(entry) -> list[tuple[str, int]]:
+            # Dogfood report: distinct colors per field, not one flat
+            # accent-colored string -- METADATA_COLOR for the timestamp
+            # matches that constant's own documented purpose ("timestamps,
+            # counts, and secondary context"); the action keeps this
+            # screen's own `accent_color` (respects a SysOp's node-wide
+            # accent override, same as every other navigable item name in
+            # this module); NICK_COLOR for the actor matches the existing
+            # "a person's own identity gets its own color" convention
+            # `netbbs.net.chat_flow` already established. Punctuation/glue
+            # text stays MUTED_COLOR, the module's existing convention for
+            # de-emphasized connective text.
+            return [
+                (_when(entry), METADATA_COLOR),
+                ("  ", None),
+                (entry.action, accent_color),
+                ("  (by ", MUTED_COLOR),
+                (_actor_name(entry), NICK_COLOR),
+                (")", MUTED_COLOR),
+            ]
+
+        def _row_description(entry) -> str:
+            parts = []
+            if entry.object_type is not None:
+                parts.append(f"{entry.object_type} #{entry.object_id}")
+            if entry.target_user_id is not None:
+                parts.append(f"target: {usernames.get(entry.target_user_id, '(deleted account)')}")
+            if entry.detail:
+                parts.append(sanitize_text(entry.detail))
+            return "  ".join(parts) if parts else "(no detail)"
+
+        # One entry's detail is a screen of its own, and leaving it comes back to
+        # the list: printed after the picker closed, it was wiped by the
+        # Operations menu's redraw before it could be read.
+        reopen_at: int | None = None
+        while True:
+            selected = await pick_item(
+                session, list(reversed(newest_first)) if order["ascending"] else newest_first,
+                name_of=_row_label,
+                stable_id_of=lambda entry: entry.id,
+                description_of=_row_description,
+                name_segments_of=_row_name_segments,
+                title=title, own=True,
+                masthead=masthead,
+                empty_message="Nothing logged yet.",
+                start_stable_id=reopen_at,
+                on_sort=_flip_order,
+                sort_label=lambda: "oldest first" if order["ascending"] else "newest first",
+                redraw_in_place=chrome.redraw_in_place,
+                unicode_style=chrome.unicode_style,
+                collapsed=chrome.collapsed,
+                accent_color=accent_color,
+                header_color=chrome.header_color,
+            )
+            if selected is None:
+                return
+            reopen_at = selected.id
+
+            rows = [
+                Field("When", _when(selected), color=DATE_COLOR),
+                Field("Action", selected.action, bold=True),
+                Field("By", _actor_name(selected), color=AUTHOR_COLOR),
+            ]
+            if selected.object_type is not None:
+                rows.append(Field("Object", f"{selected.object_type} #{selected.object_id}"))
+            if selected.target_user_id is not None:
+                rows.append(Field("Target", usernames.get(selected.target_user_id, "(deleted account)")))
+            if selected.detail:
+                rows.append(Field("Detail", selected.detail))
+            await show_detail(
+                session,
+                title=_detail_title(session, chrome, "Audit entry"),
+                sections=[Section(None, rows)], actions=[_BACK_ACTION],
+                redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
+                help_title="Audit entry help",
+                help_about="One logged action in full: who did it, when, and to what.",
+            )
 
 
 # How often `_diagnostic_log_tail_screen` polls for new rows -- the log
@@ -13654,6 +13688,7 @@ def _node_log_lines(entry: NodeLogEntry) -> list[str]:
     return [first, *(colored("  " + sanitize_text(line), fg_color=MUTED_COLOR) for line in entry.continuation)]
 
 
+@located("Node log")
 async def _node_log_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """Issue #729: the node's own `netbbs.log`, read-only and bounded.
 
@@ -13676,7 +13711,7 @@ async def _node_log_screen(session: Session, lane: DatabaseLane, actor: User) ->
             else f"There is no {path.name} beside the database yet. The node creates it when it starts."
         )
         await _show_report(
-            session, lane, actor, "Node log", breadcrumb=("SysOp", "Operations"),
+            session, lane, actor, "Node log", own=True,
             sections=[Section(None, [Field("File", str(path)), Note(note)])],
             help_title="Node log help",
             help_about="The node's log file, which could not be read or does not exist yet.",
@@ -13745,8 +13780,7 @@ async def _node_log_screen(session: Session, lane: DatabaseLane, actor: User) ->
             stable_id_of=lambda entry: entry.id,
             description_of=lambda entry: entry.message,
             name_segments_of=_row_segments,
-            title="Node log",
-            breadcrumb=("SysOp", "Operations"),
+            title="Node log", own=True,
             # One call serves every [L]evel, so this names no level; the
             # standing line below says which one is showing.
             empty_message=f"Nothing at this level in the newest part of {path.name}.",
@@ -13780,7 +13814,7 @@ async def _node_log_screen(session: Session, lane: DatabaseLane, actor: User) ->
             sections.append(Section("Continued", [Note(line, color=VALUE_COLOR) for line in selected.continuation]))
         await show_detail(
             session,
-            title=_detail_title(session, chrome, "Log entry", breadcrumb=("SysOp", "Operations", "Node log")),
+            title=_detail_title(session, chrome, "Log entry"),
             sections=sections,
             actions=[_BACK_ACTION],
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
@@ -13857,7 +13891,7 @@ async def _repair_carried_posts_screen(session: Session, lane: DatabaseLane, act
     else:
         rows = [Field("Result", f"materialized {rebuilt} missing row(s)", color=SUCCESS_COLOR)]
     await _show_report(
-        session, lane, actor, "Repair carried posts", breadcrumb=("SysOp", "Operations"),
+        session, lane, actor, "Repair carried posts",
         subtitle="Rebuilds local posts rows from already-accepted Link events.",
         sections=[Section(None, rows)],
         help_title="Repair help",
@@ -13911,7 +13945,7 @@ async def _prune_drafts_screen(session: Session, lane: DatabaseLane, actor: User
         choice, _page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Prune drafts", breadcrumb=("SysOp", "Operations"),
+                session, chrome, "Prune drafts",
                 subtitle="Abandoned post-edit and bio drafts past the retention window.",
             ),
             sections=[_prune_report_section(report)], actions=actions,
@@ -13993,7 +14027,7 @@ async def _search_indexes_screen(session: Session, lane: DatabaseLane, actor: Us
         choice, _page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "Search indexes", breadcrumb=("SysOp", "Operations"),
+                session, chrome, "Search indexes",
                 subtitle="What Find searches, compared with the content it indexes.",
             ),
             sections=[_search_index_section(report)], actions=actions,
@@ -14070,6 +14104,7 @@ def _request_live_access_recheck(node_controls: NodeControls | None, target: Use
 # -- node management (design doc) -------------------------------------------
 
 
+@located("Node")
 async def _node_menu(session: Session, lane: DatabaseLane, actor: User, node_controls: NodeControls) -> None:
     # Fetched once, here, and threaded through as a plain parameter --
     # NOT re-queried inside `_draw_node_menu` on every redraw. An
@@ -14161,7 +14196,7 @@ async def _draw_node_menu(
     operational detail) rather than only when something's active.
     """
     await session.write_line("\r\n" + screen_title("Node management",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
     # The state leads the screen, above the menu that changes it, each fact in
     # the colour of what it means: it used to trail the menu as one alert-red
     # sentence, "off" included, so a quiet node read as an alarm.
@@ -14223,6 +14258,7 @@ def _session_description(entry: SessionSummary, display_format: str, display_tim
     return f"connected since {when}"
 
 
+@located("Active sessions")
 async def _who_screen(session: Session, lane: DatabaseLane, actor: User, node_controls: NodeControls) -> None:
     """
     Design doc -- node management, Thiesi's own dogfood-testing report:
@@ -14253,7 +14289,7 @@ async def _who_screen(session: Session, lane: DatabaseLane, actor: User, node_co
         stable_id_of=lambda e: e.session_id,
         description_of=lambda e: _session_description(e, display_format, display_timezone,
                                                       node_controls.presence),
-        title="Active sessions",
+        title="Active sessions", own=True,
         empty_message="No active sessions.",
         redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
         unicode_style=await lane.run(unicode_style_enabled, actor),
@@ -14939,6 +14975,7 @@ async def _lock_and_drain_screen(session: Session, lane: DatabaseLane, actor: Us
 # it moved.
 
 
+@located("Mastheads & banners")
 async def _banners_and_mastheads_menu(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None = None
 ) -> None:
@@ -14996,7 +15033,7 @@ async def _draw_banners_and_mastheads_menu(
     unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
 ) -> None:
     await session.write_line("\r\n" + screen_title("Mastheads & banners",
-            breadcrumb=(session.node_display_name, "Settings"), width=session.terminal_width, clear=redraw_in_place,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place,
             unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     await _write_wrapped_subtitle(
@@ -15022,6 +15059,7 @@ async def _draw_banners_and_mastheads_menu(
 # initiative) ----------------------------------------------------------
 
 
+@located("Welcome banner")
 async def _welcome_banner_menu(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None = None
 ) -> None:
@@ -15144,7 +15182,7 @@ async def _draw_welcome_banner_menu(
 ) -> None:
     status = await lane.run(welcome_banner_status)
     rows = await _write_counted(session, "\r\n" + screen_title("Welcome banner",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners", "Session banners"), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
             header_color=await lane.run(effective_header_color_256), node_name_gradient=session.node_name_gradient))
     credit_line = await lane.run(is_welcome_banner_credit_enabled)
     speed = await lane.run(art_speed, WELCOME_ART)
@@ -15838,6 +15876,7 @@ async def _welcome_banner_filesystem_screen(
 # of) ---------------------------------------------------------------
 
 
+@located("Main-menu masthead")
 async def _main_menu_banner_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -15921,7 +15960,7 @@ async def _draw_main_menu_banner_menu(
     status = await lane.run(main_menu_banner_status)
     mode = await lane.run(main_menu_art_mode)
     rows = await _write_counted(session, "\r\n" + screen_title("Main-menu masthead",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners", "Mastheads"), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
             header_color=await lane.run(effective_header_color_256), node_name_gradient=session.node_name_gradient))
     sauce = await asyncio.to_thread(_banner_sauce, status)
     speed = await lane.run(art_speed, MAIN_MENU_ART)
@@ -16349,6 +16388,7 @@ async def _main_menu_banner_filesystem_screen(
 # made misleading and visually repetitive lifecycle banners.
 
 
+@located("Session banners")
 async def _banners_menu(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None = None
 ) -> None:
@@ -16393,7 +16433,7 @@ async def _draw_banners_menu(
     unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
 ) -> None:
     await session.write_line("\r\n" + screen_title("Session banners",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners"), width=session.terminal_width, clear=redraw_in_place,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place,
             unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     await _write_wrapped_subtitle(
@@ -16422,6 +16462,7 @@ async def _draw_banners_menu(
 # -- logoff banner --------------------------------------------------------
 
 
+@located("Logoff banner")
 async def _logoff_banner_menu(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None = None
 ) -> None:
@@ -16489,7 +16530,7 @@ async def _draw_logoff_banner_menu(
 ) -> None:
     status = await lane.run(logoff_banner_status)
     rows = await _write_counted(session, "\r\n" + screen_title("Logoff banner",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners", "Session banners"), width=session.terminal_width,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
             clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     rows += await _write_wrapped_subtitle(
@@ -16713,6 +16754,7 @@ async def _logoff_banner_filesystem_screen(
 # -- new-account banner (before signup) ------------------------------------
 
 
+@located("New account banner (before)")
 async def _new_account_banner_before_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -16778,7 +16820,7 @@ async def _draw_new_account_banner_before_menu(
 ) -> None:
     status = await lane.run(new_account_banner_before_status)
     rows = await _write_counted(session, "\r\n" + screen_title("New account banner (before)",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners", "Session banners"), width=session.terminal_width,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
             clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     rows += await _write_wrapped_subtitle(
@@ -16999,6 +17041,7 @@ async def _new_account_banner_before_filesystem_screen(
 # -- new-account banner (after signup) -------------------------------------
 
 
+@located("New account banner (after)")
 async def _new_account_banner_after_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -17064,7 +17107,7 @@ async def _draw_new_account_banner_after_menu(
 ) -> None:
     status = await lane.run(new_account_banner_after_status)
     rows = await _write_counted(session, "\r\n" + screen_title("New account banner (after)",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners", "Session banners"), width=session.terminal_width,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
             clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     rows += await _write_wrapped_subtitle(
@@ -17290,6 +17333,7 @@ async def _new_account_banner_after_filesystem_screen(
 # independent singletons on the same mechanism.
 
 
+@located("Mastheads")
 async def _mastheads_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -17332,7 +17376,7 @@ async def _draw_mastheads_menu(
     unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
 ) -> None:
     await session.write_line("\r\n" + screen_title("Mastheads",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners"), width=session.terminal_width, clear=redraw_in_place,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place,
             unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     await _write_wrapped_subtitle(
@@ -17542,6 +17586,7 @@ async def _preview_list_slot_art(session: Session, lane: DatabaseLane, actor: Us
 # -- board list masthead --------------------------------------------------
 
 
+@located("Board list masthead")
 async def _board_list_masthead_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -17627,7 +17672,7 @@ async def _draw_board_list_masthead_menu(
     status = await lane.run(board_list_banner_status)
     mode = await lane.run(list_art_mode, BOARD_LIST)
     rows = await _write_counted(session, "\r\n" + screen_title("Board list masthead",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners", "Mastheads"), width=session.terminal_width,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
             clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     rows += await _write_wrapped_subtitle(
@@ -17858,6 +17903,7 @@ async def _board_list_masthead_filesystem_screen(
 # -- file area masthead ----------------------------------------------------
 
 
+@located("File area masthead")
 async def _file_area_masthead_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -17943,7 +17989,7 @@ async def _draw_file_area_masthead_menu(
     status = await lane.run(file_area_banner_status)
     mode = await lane.run(list_art_mode, FILE_AREA)
     rows = await _write_counted(session, "\r\n" + screen_title("File area masthead",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners", "Mastheads"), width=session.terminal_width,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
             clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     rows += await _write_wrapped_subtitle(
@@ -18172,6 +18218,7 @@ async def _file_area_masthead_filesystem_screen(
 # -- chat channel picker masthead -------------------------------------------
 
 
+@located("Chat channel picker masthead")
 async def _chat_channel_picker_masthead_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -18257,7 +18304,7 @@ async def _draw_chat_channel_picker_masthead_menu(
     status = await lane.run(chat_channel_picker_banner_status)
     mode = await lane.run(list_art_mode, CHAT_CHANNEL_PICKER)
     rows = await _write_counted(session, "\r\n" + screen_title("Chat channel picker masthead",
-            breadcrumb=(session.node_display_name, "Settings", "Mastheads & banners", "Mastheads"), width=session.terminal_width,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
             clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
             node_name_gradient=session.node_name_gradient))
     rows += await _write_wrapped_subtitle(
@@ -18700,6 +18747,7 @@ async def _theme_colors_menu(session: Session, lane: DatabaseLane, actor: User) 
 # building a shared abstraction for just two call sites.
 
 
+@located("Content")
 async def _content_menu(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None,
     mrc_bridge: MrcBridge | None = None,
@@ -18833,7 +18881,7 @@ async def _draw_content_menu(session: Session, *, stats: dict[str, Any]) -> None
         "\r\n"
         + screen_title(
             "Manage message boards/file areas/chat channels",
-            breadcrumb=(session.node_display_name, "SysOp"),
+            breadcrumb=crumbs(session, own=True),
             subtitle="Content repositories, categories, and moderation permissions.",
             width=session.terminal_width,
             clear=redraw_in_place,
@@ -19636,6 +19684,7 @@ def _community_label(db: Database, community_id: int | None) -> str:
 # -- Communities (design doc §16) ------------------
 
 
+@located("Communities")
 async def _community_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -19681,7 +19730,7 @@ async def _draw_community_menu(
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
 ) -> None:
     await session.write_line("\r\n" + screen_title("Communities",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
     await session.write_line(
         _menu_row(
             list(_COMMUNITY_MENU),
@@ -19901,7 +19950,7 @@ async def _list_communities_screen(session: Session, lane: DatabaseLane, actor: 
             description_of=_community_description,
             columns=_COMMUNITY_COLUMNS,
             column_values_of=_community_columns,
-            title="Communities",
+            title="Communities", own=True,
             empty_message="No Communities yet.",
             start_stable_id=reopen_at,
             redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
@@ -19978,6 +20027,7 @@ async def _delete_community_screen(session: Session, lane: DatabaseLane, actor: 
 # -- message boards ----------------------------------------------------
 
 
+@located("Message boards")
 async def _board_menu(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None
 ) -> None:
@@ -20025,7 +20075,7 @@ async def _draw_board_menu(
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
 ) -> None:
     await session.write_line("\r\n" + screen_title("Message boards",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
     await session.write_line(
         _menu_row(
             list(_BOARD_MENU),
@@ -20286,202 +20336,203 @@ async def _board_screen(
     nothing waits to be saved. Creating uses the same screen with an empty
     draft and no actions, and returns the board it created; nothing is
     written before [S]ave either way."""
-    current: dict[str, Board | None] = {"board": existing}
-    own_fingerprint = link_context.node_identity.fingerprint if link_context is not None else None
+    with entered(session, sanitize_text(existing.name) if existing is not None else "Create message board"):
+        current: dict[str, Board | None] = {"board": existing}
+        own_fingerprint = link_context.node_identity.fingerprint if link_context is not None else None
 
-    async def save(draft: dict) -> Board:
-        if not draft["name"]:
-            raise BoardError("name cannot be blank")
-        board = current["board"]
-        if board is None:
-            created = await lane.run(
-                create_board,
-                draft["name"], description=draft["description"], min_read_level=draft["min_read_level"],
-                min_write_level=draft["min_write_level"], category_id=draft["category_id"],
-                pinned=draft["pinned"], moderated=draft["moderated"],
+        async def save(draft: dict) -> Board:
+            if not draft["name"]:
+                raise BoardError("name cannot be blank")
+            board = current["board"]
+            if board is None:
+                created = await lane.run(
+                    create_board,
+                    draft["name"], description=draft["description"], min_read_level=draft["min_read_level"],
+                    min_write_level=draft["min_write_level"], category_id=draft["category_id"],
+                    pinned=draft["pinned"], moderated=draft["moderated"],
+                    max_post_age_days=draft["max_post_age_days"], min_age=draft["min_age"],
+                    name_requirement=draft["name_requirement"], community_id=draft["community_id"],
+                    allow_color=draft["allow_color"], age_requirement=draft["age_requirement"], creator=actor,
+                )
+                _announce_line(session, f"Created message board {created.name!r}.")
+                return created
+            updated = await lane.run(
+                update_board,
+                board, name=draft["name"], description=draft["description"],
+                min_read_level=draft["min_read_level"], min_write_level=draft["min_write_level"],
+                category_id=draft["category_id"], pinned=draft["pinned"], moderated=draft["moderated"],
                 max_post_age_days=draft["max_post_age_days"], min_age=draft["min_age"],
                 name_requirement=draft["name_requirement"], community_id=draft["community_id"],
-                allow_color=draft["allow_color"], age_requirement=draft["age_requirement"], creator=actor,
+                allow_color=draft["allow_color"], age_requirement=draft["age_requirement"], changed_by=actor,
             )
-            _announce_line(session, f"Created message board {created.name!r}.")
-            return created
-        updated = await lane.run(
-            update_board,
-            board, name=draft["name"], description=draft["description"],
-            min_read_level=draft["min_read_level"], min_write_level=draft["min_write_level"],
-            category_id=draft["category_id"], pinned=draft["pinned"], moderated=draft["moderated"],
-            max_post_age_days=draft["max_post_age_days"], min_age=draft["min_age"],
-            name_requirement=draft["name_requirement"], community_id=draft["community_id"],
-            allow_color=draft["allow_color"], age_requirement=draft["age_requirement"], changed_by=actor,
+            _announce_line(session, f"Updated {updated.name!r}.")
+            return updated
+
+        def _act(run: Callable[[Board], Awaitable[bool | None]]):
+            async def action(session: Session, lane: DatabaseLane) -> bool:
+                await session.write_line("")
+                return bool(await run(current["board"]))
+            return action
+
+        async def _move(board: Board, offset: int) -> bool:
+            # The first cannot go up nor the last down; the bar never offers them.
+            await lane.run(move_board, board, offset, moved_by=actor)
+            return False
+
+        async def _remove(board: Board) -> bool:
+            return await _delete_board_screen(session, lane, actor, board, own_fingerprint=own_fingerprint)
+
+        async def _pending(board: Board) -> bool:
+            await _pending_posts_screen(session, lane, actor, board, link_context=link_context)
+            return False
+
+        async def _history(board: Board) -> bool:
+            await _audit_log_screen(
+                session, lane, actor, object_type="board", object_id=board.id,
+                moderators=await lane.run(_moderator_lines, "board", board.id),
+                # A carried board's name is its origin's: sanitized before it
+                # reaches a title (Codex review on #797).
+                title=f"History of {sanitize_text(board.name)}",
+            )
+            return False
+
+        async def _link(board: Board) -> bool:
+            await _link_board_screen(session, lane, actor, board, link_context)
+            return False
+
+        async def _transfer(board: Board) -> bool:
+            await _transfer_board_origin_screen(session, lane, board, link_context)
+            return False
+
+        async def _close(board: Board) -> bool:
+            await _close_board_screen(session, lane, board, link_context)
+            return False
+
+        async def _accept(board: Board) -> bool:
+            await _accept_board_origin_transfer_screen(session, lane, board, link_context)
+            return False
+
+        async def _who_posts(board: Board) -> bool:
+            # A toggle steps (design doc §3.5): anyone, then this node starts
+            # threads, then only this node posts. Only the latest setting is
+            # pushed, at the next sync pass.
+            current_mode = await lane.run(board_posting_mode, board)
+            following = BOARD_POSTING_MODES[(BOARD_POSTING_MODES.index(current_mode) + 1) % len(BOARD_POSTING_MODES)]
+            try:
+                posting = await lane.run(set_board_posting, board, following, node_identity=link_context.node_identity)
+            except LinkBoardsError as exc:
+                _announce_line(session, colored(f"Could not change who posts: {exc}", fg_color=MUTED_COLOR))
+            else:
+                link_context.link_node.known_event_ids.add(posting.content_id)
+                link_context.link_node.events[posting.content_id] = posting.to_dict()
+                _announce_line(
+                    session, f"Who posts on {board.name!r}: {_POSTING_LABELS[following]}. Sent on the next sync pass.",
+                )
+            return False
+
+        async def refresh() -> DetailState:
+            board = current["board"]
+            if board is None:
+                return DetailState(draft=_board_draft(None))
+
+            def _load(db: Database):
+                fresh = next((b for b in list_boards(db) if b.id == board.id), board)
+                count, last_post_at = count_visible_posts(db, fresh)
+                order = [b.id for b in board_siblings(db, fresh)]
+                community = get_community(db, fresh.community_id) if fresh.community_id is not None else None
+                category = get_board_category_by_id(db, fresh.category_id) if fresh.category_id is not None else None
+                labels = {
+                    "community_id_label": community.name if community is not None else None,
+                    "category_id_label": category.name if category is not None else None,
+                }
+                return fresh, count, last_post_at, order, labels
+
+            board, post_count, last_post_at, order, labels = await lane.run(_load)
+            current["board"] = board
+            place, total = (order.index(board.id) if board.id in order else 0), len(order)
+            if last_post_at is None:
+                activity = "no posts yet"
+            else:
+                display_format, display_timezone = await lane.run(resolve_display_preferences)
+                activity = "last post " + format_for_display(
+                    last_post_at, override_format=display_format, override_timezone=display_timezone,
+                )
+            linked = await lane.run(is_board_linked, board) if link_context is not None else False
+            header_bits = [f"{post_count} posts ({activity})", f"place {_place_label(place, total, pinned=board.pinned)}"]
+            after = ""
+            is_origin = has_incoming_offer = is_closed = False
+            if link_context is not None:
+                rows, is_origin, has_incoming_offer, is_closed = await _board_link_rows(
+                    lane, board, link_context, linked=linked,
+                )
+                header_bits.append(("Linked, origin here" if is_origin else "Linked") if linked else "not Linked")
+                after = _sections_text(
+                    [Section("NetBBS Link", rows)], width=session.terminal_width,
+                    unicode_style=await lane.run(unicode_style_enabled, actor),
+                )
+            # Design doc §6.8: a board is local, Linked or FTN, never two, so a
+            # Linked board shows no FTN section and offers no [E]cho.
+            ftn_networks = [] if linked else await lane.run(list_networks)
+            if ftn_networks:
+                ftn_rows = await lane.run(board_echo_rows, board)
+                after = (after + "\r\n" if after else "") + _sections_text(
+                    [Section("FTN", ftn_rows)], width=session.terminal_width,
+                    unicode_style=await lane.run(unicode_style_enabled, actor),
+                )
+            actions = []
+            if place > 0:
+                actions.append(DetailAction("u", menu_key("U", "p"), _act(lambda b: _move(b, -1)), brief="Earlier in the callers' list"))
+            if place < total - 1:
+                actions.append(DetailAction("d", menu_key("D", "own"), _act(lambda b: _move(b, 1)), brief="Later in the callers' list"))
+            actions += [
+                DetailAction("r", menu_key("R", "emove"), _act(_remove), brief="Permanently remove this board"),
+                DetailAction("p", menu_key("P", "ending posts"), _act(_pending), brief="Review posts awaiting approval"),
+                DetailAction("h", menu_key("H", "istory"), _act(_history), brief="Its moderators and what they did"),
+            ]
+            if link_context is not None and not linked:
+                actions.append(DetailAction("l", menu_key("L", "ink this message board"), _act(_link), brief="Share it via NetBBS Link"))
+            if (
+                link_context is not None and linked and is_origin and not is_closed
+                and board.board_id not in link_context.link_node.pending_origin_transfers
+            ):
+                actions.append(DetailAction("t", menu_key("T", "ransfer origin"), _act(_transfer), brief="Hand off origin to a peer"))
+                actions.append(DetailAction("c", menu_key("C", "lose message board"), _act(_close), brief="Stop accepting new posts"))
+            if link_context is not None and linked and is_origin and not is_closed:
+                actions.append(DetailAction("w", menu_key("W", "ho posts"), _act(_who_posts), brief="Who may post, network-wide"))
+            if has_incoming_offer:
+                actions.append(DetailAction("a", menu_key("A", "ccept transfer"), _act(_accept), brief="Accept incoming origin transfer"))
+            if ftn_networks:
+                actions.append(DetailAction(
+                    "e", menu_key("E", "cho (FTN)"), _act(lambda b: board_echo_action(session, lane, actor, b)),
+                    brief="Carry an FTN echo area here"))
+            return DetailState(
+                draft={**_board_draft(board), **labels},
+                title=sanitize_text(board.name),
+                header=colored(" · ".join(header_bits), fg_color=MUTED_COLOR),
+                after_fields=after, actions=actions,
+            )
+
+        redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
+        unicode_style = await lane.run(unicode_style_enabled, actor)
+        collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
+        return await edit_resource_draft(
+            session, lane,
+            title=sanitize_text(existing.name) if existing is not None else "Create message board", own=True,
+            fields=_board_field_specs(
+                actor=actor, redraw_in_place=redraw_in_place,
+                unicode_style=unicode_style, collapsed=collapsed,
+                levels=await lane.run(level_context),
+            ),
+            draft={}, save=save, error_type=BoardError,
+            save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
+            description_level=await lane.run(menu_description_level, actor),
+            redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
+            unicode_style=unicode_style,
+            collapsed=collapsed,
+            accent_color=await lane.run(effective_accent_color_256),
+            header_color=await lane.run(effective_header_color_256),
+            detail=DetailMode(refresh=refresh, stay_after_save=existing is not None),
         )
-        _announce_line(session, f"Updated {updated.name!r}.")
-        return updated
-
-    def _act(run: Callable[[Board], Awaitable[bool | None]]):
-        async def action(session: Session, lane: DatabaseLane) -> bool:
-            await session.write_line("")
-            return bool(await run(current["board"]))
-        return action
-
-    async def _move(board: Board, offset: int) -> bool:
-        # The first cannot go up nor the last down; the bar never offers them.
-        await lane.run(move_board, board, offset, moved_by=actor)
-        return False
-
-    async def _remove(board: Board) -> bool:
-        return await _delete_board_screen(session, lane, actor, board, own_fingerprint=own_fingerprint)
-
-    async def _pending(board: Board) -> bool:
-        await _pending_posts_screen(session, lane, actor, board, link_context=link_context)
-        return False
-
-    async def _history(board: Board) -> bool:
-        await _audit_log_screen(
-            session, lane, actor, object_type="board", object_id=board.id,
-            moderators=await lane.run(_moderator_lines, "board", board.id),
-            # A carried board's name is its origin's: sanitized before it
-            # reaches a title (Codex review on #797).
-            title=f"History of {sanitize_text(board.name)}", breadcrumb=("SysOp", "Message boards"),
-        )
-        return False
-
-    async def _link(board: Board) -> bool:
-        await _link_board_screen(session, lane, actor, board, link_context)
-        return False
-
-    async def _transfer(board: Board) -> bool:
-        await _transfer_board_origin_screen(session, lane, board, link_context)
-        return False
-
-    async def _close(board: Board) -> bool:
-        await _close_board_screen(session, lane, board, link_context)
-        return False
-
-    async def _accept(board: Board) -> bool:
-        await _accept_board_origin_transfer_screen(session, lane, board, link_context)
-        return False
-
-    async def _who_posts(board: Board) -> bool:
-        # A toggle steps (design doc §3.5): anyone, then this node starts
-        # threads, then only this node posts. Only the latest setting is
-        # pushed, at the next sync pass.
-        current_mode = await lane.run(board_posting_mode, board)
-        following = BOARD_POSTING_MODES[(BOARD_POSTING_MODES.index(current_mode) + 1) % len(BOARD_POSTING_MODES)]
-        try:
-            posting = await lane.run(set_board_posting, board, following, node_identity=link_context.node_identity)
-        except LinkBoardsError as exc:
-            _announce_line(session, colored(f"Could not change who posts: {exc}", fg_color=MUTED_COLOR))
-        else:
-            link_context.link_node.known_event_ids.add(posting.content_id)
-            link_context.link_node.events[posting.content_id] = posting.to_dict()
-            _announce_line(
-                session, f"Who posts on {board.name!r}: {_POSTING_LABELS[following]}. Sent on the next sync pass.",
-            )
-        return False
-
-    async def refresh() -> DetailState:
-        board = current["board"]
-        if board is None:
-            return DetailState(draft=_board_draft(None))
-
-        def _load(db: Database):
-            fresh = next((b for b in list_boards(db) if b.id == board.id), board)
-            count, last_post_at = count_visible_posts(db, fresh)
-            order = [b.id for b in board_siblings(db, fresh)]
-            community = get_community(db, fresh.community_id) if fresh.community_id is not None else None
-            category = get_board_category_by_id(db, fresh.category_id) if fresh.category_id is not None else None
-            labels = {
-                "community_id_label": community.name if community is not None else None,
-                "category_id_label": category.name if category is not None else None,
-            }
-            return fresh, count, last_post_at, order, labels
-
-        board, post_count, last_post_at, order, labels = await lane.run(_load)
-        current["board"] = board
-        place, total = (order.index(board.id) if board.id in order else 0), len(order)
-        if last_post_at is None:
-            activity = "no posts yet"
-        else:
-            display_format, display_timezone = await lane.run(resolve_display_preferences)
-            activity = "last post " + format_for_display(
-                last_post_at, override_format=display_format, override_timezone=display_timezone,
-            )
-        linked = await lane.run(is_board_linked, board) if link_context is not None else False
-        header_bits = [f"{post_count} posts ({activity})", f"place {_place_label(place, total, pinned=board.pinned)}"]
-        after = ""
-        is_origin = has_incoming_offer = is_closed = False
-        if link_context is not None:
-            rows, is_origin, has_incoming_offer, is_closed = await _board_link_rows(
-                lane, board, link_context, linked=linked,
-            )
-            header_bits.append(("Linked, origin here" if is_origin else "Linked") if linked else "not Linked")
-            after = _sections_text(
-                [Section("NetBBS Link", rows)], width=session.terminal_width,
-                unicode_style=await lane.run(unicode_style_enabled, actor),
-            )
-        # Design doc §6.8: a board is local, Linked or FTN, never two, so a
-        # Linked board shows no FTN section and offers no [E]cho.
-        ftn_networks = [] if linked else await lane.run(list_networks)
-        if ftn_networks:
-            ftn_rows = await lane.run(board_echo_rows, board)
-            after = (after + "\r\n" if after else "") + _sections_text(
-                [Section("FTN", ftn_rows)], width=session.terminal_width,
-                unicode_style=await lane.run(unicode_style_enabled, actor),
-            )
-        actions = []
-        if place > 0:
-            actions.append(DetailAction("u", menu_key("U", "p"), _act(lambda b: _move(b, -1)), brief="Earlier in the callers' list"))
-        if place < total - 1:
-            actions.append(DetailAction("d", menu_key("D", "own"), _act(lambda b: _move(b, 1)), brief="Later in the callers' list"))
-        actions += [
-            DetailAction("r", menu_key("R", "emove"), _act(_remove), brief="Permanently remove this board"),
-            DetailAction("p", menu_key("P", "ending posts"), _act(_pending), brief="Review posts awaiting approval"),
-            DetailAction("h", menu_key("H", "istory"), _act(_history), brief="Its moderators and what they did"),
-        ]
-        if link_context is not None and not linked:
-            actions.append(DetailAction("l", menu_key("L", "ink this message board"), _act(_link), brief="Share it via NetBBS Link"))
-        if (
-            link_context is not None and linked and is_origin and not is_closed
-            and board.board_id not in link_context.link_node.pending_origin_transfers
-        ):
-            actions.append(DetailAction("t", menu_key("T", "ransfer origin"), _act(_transfer), brief="Hand off origin to a peer"))
-            actions.append(DetailAction("c", menu_key("C", "lose message board"), _act(_close), brief="Stop accepting new posts"))
-        if link_context is not None and linked and is_origin and not is_closed:
-            actions.append(DetailAction("w", menu_key("W", "ho posts"), _act(_who_posts), brief="Who may post, network-wide"))
-        if has_incoming_offer:
-            actions.append(DetailAction("a", menu_key("A", "ccept transfer"), _act(_accept), brief="Accept incoming origin transfer"))
-        if ftn_networks:
-            actions.append(DetailAction(
-                "e", menu_key("E", "cho (FTN)"), _act(lambda b: board_echo_action(session, lane, actor, b)),
-                brief="Carry an FTN echo area here"))
-        return DetailState(
-            draft={**_board_draft(board), **labels},
-            title=sanitize_text(board.name),
-            header=colored(" · ".join(header_bits), fg_color=MUTED_COLOR),
-            after_fields=after, actions=actions,
-        )
-
-    redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    return await edit_resource_draft(
-        session, lane,
-        title=sanitize_text(existing.name) if existing is not None else "Create message board",
-        fields=_board_field_specs(
-            actor=actor, redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style, collapsed=collapsed,
-            levels=await lane.run(level_context),
-        ),
-        draft={}, save=save, error_type=BoardError,
-        save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
-        description_level=await lane.run(menu_description_level, actor),
-        redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
-        unicode_style=unicode_style,
-        collapsed=collapsed,
-        accent_color=await lane.run(effective_accent_color_256),
-        header_color=await lane.run(effective_header_color_256),
-        detail=DetailMode(refresh=refresh, stay_after_save=existing is not None),
-    )
 
 
 async def _list_boards_screen(
@@ -20513,7 +20564,7 @@ async def _list_boards_screen(
             description_of=lambda b: _board_description(b, effective[b.id], b.board_id in to_review),
             columns=_BOARD_COLUMNS,
             column_values_of=lambda b: _board_columns(b, effective[b.id], counts[b.id], b.board_id in to_review),
-            title="Message boards",
+            title="Message boards", own=True,
             empty_message="No message boards yet.",
             start_stable_id=reopen_at,
             linked_of=lambda b, linked=linked_boards: b.id in linked,  # issue #1104
@@ -21523,7 +21574,7 @@ async def _pick_pending_item(
         column_values_of=lambda item: (
             [item.where, item.kind, item.author, item.when] if node_wide else [item.kind, item.author, item.when]
         ),
-        title=title,
+        title=title, own=True,
         empty_message=empty_message,
         redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
         unicode_style=await lane.run(unicode_style_enabled, actor),
@@ -21533,6 +21584,7 @@ async def _pick_pending_item(
     )
 
 
+@located("Pending review")
 async def _pending_review_screen(
     session: Session, lane: DatabaseLane, actor: User, *,
     link_context: LinkContext | None = None, transfers: Any = None,
@@ -21566,6 +21618,7 @@ async def moderation_queue(
     await _pending_review_screen(session, lane, actor, link_context=link_context, transfers=transfers)
 
 
+@located("Pending posts")
 async def _pending_posts_screen(
     session: Session, lane: DatabaseLane, actor: User, board: Board, *, link_context: LinkContext | None = None
 ) -> None:
@@ -21638,7 +21691,7 @@ async def _post_action_screen(
     while True:
         title = screen_title(
             sanitize_text(post.subject),
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=False,
+            breadcrumb=crumbs(session), width=session.terminal_width, clear=False,
             unicode_style=unicode_style, collapsed=collapsed,
             header_color=header_color, node_name_gradient=session.node_name_gradient,
         )
@@ -21746,6 +21799,7 @@ async def _post_action_screen(
 # -- file areas ----------------------------------------------------------
 
 
+@located("File areas")
 async def _area_menu(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None,
     transfers: Any = None,
@@ -21806,7 +21860,7 @@ async def _draw_area_menu(
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
 ) -> None:
     await session.write_line("\r\n" + screen_title("File areas",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
     await session.write_line(
         menu_grid(
             [(
@@ -21844,7 +21898,7 @@ async def _gc_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
         choice, _page = await show_detail(
             session,
             title=_detail_title(
-                session, chrome, "GC storage", breadcrumb=("File areas",),
+                session, chrome, "GC storage",
                 subtitle="File blobs on disk that no file entry refers to any more.",
             ),
             sections=[_gc_report_section(report)], actions=actions,
@@ -22054,153 +22108,154 @@ async def _area_screen(
     fields; the NetBBS Link section after them; [U]p, [D]own, [R]emove,
     [P]ending files, [E]xpired files, [H]istory and [L]ink while nothing
     waits to be saved."""
-    current: dict[str, FileArea | None] = {"area": existing}
-    own_fingerprint = link_context.node_identity.fingerprint if link_context is not None else None
+    with entered(session, sanitize_text(existing.name) if existing is not None else "Create file area"):
+        current: dict[str, FileArea | None] = {"area": existing}
+        own_fingerprint = link_context.node_identity.fingerprint if link_context is not None else None
 
-    async def save(draft: dict) -> FileArea:
-        if not draft["name"]:
-            raise FileAreaError("name cannot be blank")
-        area = current["area"]
-        if area is None:
-            created = await lane.run(
-                create_file_area,
-                draft["name"], description=draft["description"], min_read_level=draft["min_read_level"],
-                min_write_level=draft["min_write_level"], category_id=draft["category_id"],
-                pinned=draft["pinned"], moderated=draft["moderated"],
+        async def save(draft: dict) -> FileArea:
+            if not draft["name"]:
+                raise FileAreaError("name cannot be blank")
+            area = current["area"]
+            if area is None:
+                created = await lane.run(
+                    create_file_area,
+                    draft["name"], description=draft["description"], min_read_level=draft["min_read_level"],
+                    min_write_level=draft["min_write_level"], category_id=draft["category_id"],
+                    pinned=draft["pinned"], moderated=draft["moderated"],
+                    max_file_age_days=draft["max_file_age_days"], min_age=draft["min_age"],
+                    name_requirement=draft["name_requirement"], community_id=draft["community_id"],
+                    age_requirement=draft["age_requirement"], creator=actor,
+                )
+                _announce_line(session, f"Created file area {created.name!r}.")
+                return created
+            updated = await lane.run(
+                update_file_area,
+                area, name=draft["name"], description=draft["description"],
+                min_read_level=draft["min_read_level"], min_write_level=draft["min_write_level"],
+                category_id=draft["category_id"], pinned=draft["pinned"], moderated=draft["moderated"],
                 max_file_age_days=draft["max_file_age_days"], min_age=draft["min_age"],
                 name_requirement=draft["name_requirement"], community_id=draft["community_id"],
-                age_requirement=draft["age_requirement"], creator=actor,
+                age_requirement=draft["age_requirement"], changed_by=actor,
             )
-            _announce_line(session, f"Created file area {created.name!r}.")
-            return created
-        updated = await lane.run(
-            update_file_area,
-            area, name=draft["name"], description=draft["description"],
-            min_read_level=draft["min_read_level"], min_write_level=draft["min_write_level"],
-            category_id=draft["category_id"], pinned=draft["pinned"], moderated=draft["moderated"],
-            max_file_age_days=draft["max_file_age_days"], min_age=draft["min_age"],
-            name_requirement=draft["name_requirement"], community_id=draft["community_id"],
-            age_requirement=draft["age_requirement"], changed_by=actor,
+            _announce_line(session, f"Updated {updated.name!r}.")
+            return updated
+
+        def _act(run: Callable[[FileArea], Awaitable[bool | None]]):
+            async def action(session: Session, lane: DatabaseLane) -> bool:
+                await session.write_line("")
+                return bool(await run(current["area"]))
+            return action
+
+        async def _move(area: FileArea, offset: int) -> bool:
+            # Moved within its category (issue #839), as a board moves.
+            await lane.run(move_file_area, area, offset, moved_by=actor)
+            return False
+
+        async def _remove(area: FileArea) -> bool:
+            return await _delete_area_screen(session, lane, actor, area, own_fingerprint=own_fingerprint)
+
+        async def _pending(area: FileArea) -> bool:
+            await _pending_files_screen(session, lane, actor, area, link_context=link_context, transfers=transfers)
+            return False
+
+        async def _expired(area: FileArea) -> bool:
+            await _expired_files_screen(session, lane, actor, area, transfers=transfers)
+            return False
+
+        async def _history(area: FileArea) -> bool:
+            await _audit_log_screen(
+                session, lane, actor, object_type="file_area", object_id=area.id,
+                moderators=await lane.run(_moderator_lines, "file_area", area.id),
+                title=f"History of {sanitize_text(area.name)}",
+            )
+            return False
+
+        async def _link(area: FileArea) -> bool:
+            await _link_area_screen(session, lane, actor, area, link_context)
+            return False
+
+        async def refresh() -> DetailState:
+            area = current["area"]
+            if area is None:
+                return DetailState(draft=_area_draft(None))
+
+            def _load(db: Database):
+                fresh = next((a for a in list_file_areas(db) if a.id == area.id), area)
+                count, last_file_at = count_visible_files(db, fresh)
+                order = [a.id for a in file_area_siblings(db, fresh)]
+                community = get_community(db, fresh.community_id) if fresh.community_id is not None else None
+                category = (
+                    get_file_area_category_by_id(db, fresh.category_id) if fresh.category_id is not None else None
+                )
+                labels = {
+                    "community_id_label": community.name if community is not None else None,
+                    "category_id_label": category.name if category is not None else None,
+                }
+                return fresh, count, last_file_at, order, labels
+
+            area, file_count, last_file_at, order, labels = await lane.run(_load)
+            current["area"] = area
+            place, total = (order.index(area.id) if area.id in order else 0), len(order)
+            if last_file_at is None:
+                activity = "no files yet"
+            else:
+                display_format, display_timezone = await lane.run(resolve_display_preferences)
+                activity = "last upload " + format_for_display(
+                    last_file_at, override_format=display_format, override_timezone=display_timezone,
+                )
+            linked = await lane.run(is_area_linked, area) if link_context is not None else False
+            header_bits = [f"{file_count} files ({activity})", f"place {_place_label(place, total, pinned=area.pinned)}"]
+            after = ""
+            if link_context is not None:
+                header_bits.append("Linked" if linked else "not Linked")
+                rows: list[Field | Note] = [Field("Linked", _yes_no(linked))]
+                if linked:
+                    rows.extend(await _peer_reach_rows(lane, link_context, link_context.link_node.file_areas.get(area.area_id)))
+                after = _sections_text(
+                    [Section("NetBBS Link", rows)], width=session.terminal_width,
+                    unicode_style=await lane.run(unicode_style_enabled, actor),
+                )
+            actions = []
+            if place > 0:
+                actions.append(DetailAction("u", menu_key("U", "p"), _act(lambda a: _move(a, -1)), brief="Earlier in the callers' list"))
+            if place < total - 1:
+                actions.append(DetailAction("d", menu_key("D", "own"), _act(lambda a: _move(a, 1)), brief="Later in the callers' list"))
+            actions += [
+                DetailAction("r", menu_key("R", "emove"), _act(_remove), brief="Permanently remove this area"),
+                DetailAction("p", menu_key("P", "ending files"), _act(_pending), brief="Review uploads awaiting approval"),
+                DetailAction("e", menu_key("E", "xpired files"), _act(_expired), brief="Recover before they are purged"),
+                DetailAction("h", menu_key("H", "istory"), _act(_history), brief="Its moderators and what they did"),
+            ]
+            if link_context is not None and not linked:
+                actions.append(DetailAction("l", menu_key("L", "ink this file area"), _act(_link), brief="Share it via NetBBS Link"))
+            return DetailState(
+                draft={**_area_draft(area), **labels},
+                title=sanitize_text(area.name),
+                header=colored(" · ".join(header_bits), fg_color=MUTED_COLOR),
+                after_fields=after, actions=actions,
+            )
+
+        redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
+        unicode_style = await lane.run(unicode_style_enabled, actor)
+        collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
+        return await edit_resource_draft(
+            session, lane,
+            title=sanitize_text(existing.name) if existing is not None else "Create file area", own=True,
+            fields=_area_field_specs(
+                actor=actor, redraw_in_place=redraw_in_place,
+                unicode_style=unicode_style, collapsed=collapsed,
+                levels=await lane.run(level_context),
+            ),
+            draft={}, save=save, error_type=FileAreaError,
+            save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
+            description_level=await lane.run(menu_description_level, actor),
+            redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
+            unicode_style=unicode_style,
+            collapsed=collapsed,
+            accent_color=await lane.run(effective_accent_color_256),
+            header_color=await lane.run(effective_header_color_256),
+            detail=DetailMode(refresh=refresh, stay_after_save=existing is not None),
         )
-        _announce_line(session, f"Updated {updated.name!r}.")
-        return updated
-
-    def _act(run: Callable[[FileArea], Awaitable[bool | None]]):
-        async def action(session: Session, lane: DatabaseLane) -> bool:
-            await session.write_line("")
-            return bool(await run(current["area"]))
-        return action
-
-    async def _move(area: FileArea, offset: int) -> bool:
-        # Moved within its category (issue #839), as a board moves.
-        await lane.run(move_file_area, area, offset, moved_by=actor)
-        return False
-
-    async def _remove(area: FileArea) -> bool:
-        return await _delete_area_screen(session, lane, actor, area, own_fingerprint=own_fingerprint)
-
-    async def _pending(area: FileArea) -> bool:
-        await _pending_files_screen(session, lane, actor, area, link_context=link_context, transfers=transfers)
-        return False
-
-    async def _expired(area: FileArea) -> bool:
-        await _expired_files_screen(session, lane, actor, area, transfers=transfers)
-        return False
-
-    async def _history(area: FileArea) -> bool:
-        await _audit_log_screen(
-            session, lane, actor, object_type="file_area", object_id=area.id,
-            moderators=await lane.run(_moderator_lines, "file_area", area.id),
-            title=f"History of {sanitize_text(area.name)}", breadcrumb=("SysOp", "File areas"),
-        )
-        return False
-
-    async def _link(area: FileArea) -> bool:
-        await _link_area_screen(session, lane, actor, area, link_context)
-        return False
-
-    async def refresh() -> DetailState:
-        area = current["area"]
-        if area is None:
-            return DetailState(draft=_area_draft(None))
-
-        def _load(db: Database):
-            fresh = next((a for a in list_file_areas(db) if a.id == area.id), area)
-            count, last_file_at = count_visible_files(db, fresh)
-            order = [a.id for a in file_area_siblings(db, fresh)]
-            community = get_community(db, fresh.community_id) if fresh.community_id is not None else None
-            category = (
-                get_file_area_category_by_id(db, fresh.category_id) if fresh.category_id is not None else None
-            )
-            labels = {
-                "community_id_label": community.name if community is not None else None,
-                "category_id_label": category.name if category is not None else None,
-            }
-            return fresh, count, last_file_at, order, labels
-
-        area, file_count, last_file_at, order, labels = await lane.run(_load)
-        current["area"] = area
-        place, total = (order.index(area.id) if area.id in order else 0), len(order)
-        if last_file_at is None:
-            activity = "no files yet"
-        else:
-            display_format, display_timezone = await lane.run(resolve_display_preferences)
-            activity = "last upload " + format_for_display(
-                last_file_at, override_format=display_format, override_timezone=display_timezone,
-            )
-        linked = await lane.run(is_area_linked, area) if link_context is not None else False
-        header_bits = [f"{file_count} files ({activity})", f"place {_place_label(place, total, pinned=area.pinned)}"]
-        after = ""
-        if link_context is not None:
-            header_bits.append("Linked" if linked else "not Linked")
-            rows: list[Field | Note] = [Field("Linked", _yes_no(linked))]
-            if linked:
-                rows.extend(await _peer_reach_rows(lane, link_context, link_context.link_node.file_areas.get(area.area_id)))
-            after = _sections_text(
-                [Section("NetBBS Link", rows)], width=session.terminal_width,
-                unicode_style=await lane.run(unicode_style_enabled, actor),
-            )
-        actions = []
-        if place > 0:
-            actions.append(DetailAction("u", menu_key("U", "p"), _act(lambda a: _move(a, -1)), brief="Earlier in the callers' list"))
-        if place < total - 1:
-            actions.append(DetailAction("d", menu_key("D", "own"), _act(lambda a: _move(a, 1)), brief="Later in the callers' list"))
-        actions += [
-            DetailAction("r", menu_key("R", "emove"), _act(_remove), brief="Permanently remove this area"),
-            DetailAction("p", menu_key("P", "ending files"), _act(_pending), brief="Review uploads awaiting approval"),
-            DetailAction("e", menu_key("E", "xpired files"), _act(_expired), brief="Recover before they are purged"),
-            DetailAction("h", menu_key("H", "istory"), _act(_history), brief="Its moderators and what they did"),
-        ]
-        if link_context is not None and not linked:
-            actions.append(DetailAction("l", menu_key("L", "ink this file area"), _act(_link), brief="Share it via NetBBS Link"))
-        return DetailState(
-            draft={**_area_draft(area), **labels},
-            title=sanitize_text(area.name),
-            header=colored(" · ".join(header_bits), fg_color=MUTED_COLOR),
-            after_fields=after, actions=actions,
-        )
-
-    redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    return await edit_resource_draft(
-        session, lane,
-        title=sanitize_text(existing.name) if existing is not None else "Create file area",
-        fields=_area_field_specs(
-            actor=actor, redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style, collapsed=collapsed,
-            levels=await lane.run(level_context),
-        ),
-        draft={}, save=save, error_type=FileAreaError,
-        save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
-        description_level=await lane.run(menu_description_level, actor),
-        redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
-        unicode_style=unicode_style,
-        collapsed=collapsed,
-        accent_color=await lane.run(effective_accent_color_256),
-        header_color=await lane.run(effective_header_color_256),
-        detail=DetailMode(refresh=refresh, stay_after_save=existing is not None),
-    )
 
 
 async def _list_areas_screen(
@@ -22229,7 +22284,7 @@ async def _list_areas_screen(
             description_of=lambda a: _area_description(a, effective[a.id], a.area_id in to_review),
             columns=_AREA_COLUMNS,
             column_values_of=lambda a: _area_columns(a, effective[a.id], counts[a.id], a.area_id in to_review),
-            title="File areas",
+            title="File areas", own=True,
             empty_message="No file areas yet.",
             start_stable_id=reopen_at,
             linked_of=lambda a, linked=linked_areas: a.id in linked,  # issue #1104
@@ -22418,6 +22473,7 @@ async def _delete_area_screen(
     )
 
 
+@located("Pending files")
 async def _pending_files_screen(
     session: Session, lane: DatabaseLane, actor: User, area: FileArea, *,
     link_context: LinkContext | None = None, transfers: Any = None,
@@ -22448,7 +22504,7 @@ async def _write_file_record(
     above their action bars. Returns the rows used, for `_fitted_menu`."""
     await session.write_line(
         "\r\n" + screen_title(sanitize_text(entry.filename),
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
+            breadcrumb=crumbs(session), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
             header_color=header_color, node_name_gradient=session.node_name_gradient)
     )
     panel_rows = await _write_sections(session, [Section(heading, fields)], unicode_style=unicode_style)
@@ -22631,6 +22687,7 @@ async def _file_action_screen(
             await session.write(reject_unhandled_key(choice))
 
 
+@located("Expired files")
 async def _expired_files_screen(
     session: Session, lane: DatabaseLane, actor: User, area: FileArea, *, transfers: Any = None,
 ) -> None:
@@ -22646,7 +22703,7 @@ async def _expired_files_screen(
             name_of=lambda f: f.filename,
             stable_id_of=lambda f: f.id,
             description_of=lambda f: f"by {f.uploader_label}",
-            title=f"Expired files in {area.name!r}",
+            title=f"Expired files in {area.name!r}", own=True,
             empty_message="No expired files.",
             redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
             unicode_style=await lane.run(unicode_style_enabled, actor),
@@ -22740,6 +22797,7 @@ async def _expired_file_screen(
 # than boards'/areas' own.
 
 
+@located("Doors")
 async def _door_menu(session: Session, lane: DatabaseLane, actor: User, *, door_services: Any = None,
                      backup_identity_dir: Path | None = None) -> None:
     description_level = await lane.run(menu_description_level, actor)
@@ -22803,7 +22861,7 @@ async def _draw_door_menu(
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
 ) -> None:
     await session.write_line("\r\n" + screen_title("Doors",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
     await session.write_line(
         menu_grid(
             [(
@@ -22921,153 +22979,154 @@ async def _door_screen(
     for a brand-new door, merged over the ordinary blank draft -- the same
     screen, save validation and `create_door` call as manual `[C]reate`,
     just not starting from an all-blank form. Ignored when editing."""
-    from netbbs.net.door_profile_flow import edit_door_profile, show_door_diagnostic
+    with entered(session, sanitize_text(existing.name) if existing is not None else "Register door"):
+        from netbbs.net.door_profile_flow import edit_door_profile, show_door_diagnostic
 
-    current: dict[str, Door | None] = {"door": existing}
+        current: dict[str, Door | None] = {"door": existing}
 
-    async def save(draft: dict) -> Door:
-        if not draft["name"]:
-            raise DoorError("name cannot be blank")
-        if not draft["executable_path"]:
-            raise DoorError("executable path cannot be blank")
-        try:
-            args = tuple(shlex.split(draft["args_line"]))
-        except ValueError as exc:
-            raise DoorError(f"could not parse arguments -- {exc}") from exc
-        door = current["door"]
-        if door is None:
-            created = await lane.run(
-                create_door,
-                draft["name"], draft["executable_path"], description=draft["description"], args=args,
-                min_play_level=draft["min_play_level"], pinned=draft["pinned"],
-                community_id=draft["community_id"], creator=actor,
+        async def save(draft: dict) -> Door:
+            if not draft["name"]:
+                raise DoorError("name cannot be blank")
+            if not draft["executable_path"]:
+                raise DoorError("executable path cannot be blank")
+            try:
+                args = tuple(shlex.split(draft["args_line"]))
+            except ValueError as exc:
+                raise DoorError(f"could not parse arguments -- {exc}") from exc
+            door = current["door"]
+            if door is None:
+                created = await lane.run(
+                    create_door,
+                    draft["name"], draft["executable_path"], description=draft["description"], args=args,
+                    min_play_level=draft["min_play_level"], pinned=draft["pinned"],
+                    community_id=draft["community_id"], creator=actor,
+                )
+                _announce_line(session, f"Registered door {created.name!r}.")
+                return created
+            updated = await lane.run(
+                update_door,
+                door, name=draft["name"], description=draft["description"],
+                executable_path=draft["executable_path"], args=args, min_play_level=draft["min_play_level"],
+                pinned=draft["pinned"], community_id=draft["community_id"], changed_by=actor,
             )
-            _announce_line(session, f"Registered door {created.name!r}.")
-            return created
-        updated = await lane.run(
-            update_door,
-            door, name=draft["name"], description=draft["description"],
-            executable_path=draft["executable_path"], args=args, min_play_level=draft["min_play_level"],
-            pinned=draft["pinned"], community_id=draft["community_id"], changed_by=actor,
-        )
-        _announce_line(session, f"Updated {updated.name!r}.")
-        if door_services is not None:
-            # The edit can change the executable a service launches, so it
-            # reconciles now; otherwise the old one runs on until a caller
-            # arrives.
-            await door_services.adopt(updated)
-        return updated
+            _announce_line(session, f"Updated {updated.name!r}.")
+            if door_services is not None:
+                # The edit can change the executable a service launches, so it
+                # reconciles now; otherwise the old one runs on until a caller
+                # arrives.
+                await door_services.adopt(updated)
+            return updated
 
-    def _act(run: Callable[[Door], Awaitable[bool | None]], *, line: bool = True):
-        async def action(session: Session, lane: DatabaseLane) -> bool:
-            if line:
-                await session.write_line("")
-            return bool(await run(current["door"]))
-        return action
+        def _act(run: Callable[[Door], Awaitable[bool | None]], *, line: bool = True):
+            async def action(session: Session, lane: DatabaseLane) -> bool:
+                if line:
+                    await session.write_line("")
+                return bool(await run(current["door"]))
+            return action
 
-    async def _compatibility(door: Door) -> bool:
-        updated = await edit_door_profile(session, lane, actor, door, door_services=door_services)
-        if updated is not None and door_services is not None:
-            # Reconcile straight away. Waiting for the next caller would leave
-            # an edited service's old process running, and removing a service
-            # hides the very controls which could stop it.
-            await door_services.adopt(updated)
-        return False
-
-    async def _diagnostic(door: Door) -> bool:
-        await show_door_diagnostic(session, lane, door)
-        return False
-
-    async def _outbound(door: Door) -> bool:
-        await _door_outbound_screen(session, lane, actor, door)
-        return False
-
-    async def _world(door: Door) -> bool:
-        await _war_dialer_world_screen(session, lane, actor, door, backup_identity_dir=backup_identity_dir)
-        return False
-
-    async def _delete(door: Door) -> bool:
-        deleted = await _delete_door_screen(session, lane, actor, door, door_services=door_services)
-        if deleted and door_services is not None:
-            # The registration is gone, so nothing could reach its service
-            # again; without this the companion and its restart loop run on
-            # until the node stops, with no control left to halt it.
-            await door_services.forget(door.id)
-        return deleted
-
-    def _service(choice: str):
-        async def run(door: Door) -> bool:
-            await _door_service_action(session, lane, actor, door, choice, door_services)
+        async def _compatibility(door: Door) -> bool:
+            updated = await edit_door_profile(session, lane, actor, door, door_services=door_services)
+            if updated is not None and door_services is not None:
+                # Reconcile straight away. Waiting for the next caller would leave
+                # an edited service's old process running, and removing a service
+                # hides the very controls which could stop it.
+                await door_services.adopt(updated)
             return False
-        return run
 
-    async def refresh() -> DetailState:
-        door = current["door"]
-        if door is None:
-            return DetailState(draft={**_door_draft(None), **(prefill or {})})
+        async def _diagnostic(door: Door) -> bool:
+            await show_door_diagnostic(session, lane, door)
+            return False
 
-        def _load(db: Database):
-            fresh = next((d for d in list_doors(db) if d.id == door.id), door)
-            community = get_community(db, fresh.community_id) if fresh.community_id is not None else None
-            return fresh, {"community_id_label": community.name if community is not None else None}
+        async def _outbound(door: Door) -> bool:
+            await _door_outbound_screen(session, lane, actor, door)
+            return False
 
-        door, labels = await lane.run(_load)
-        current["door"] = door
-        header = "Compatibility: " + (door.profile.adapter if door.profile else "NetBBS native API")
-        after = ""
-        if door.profile and door.profile.service:
-            # Issue #466: only a door which declares a service says anything
-            # about one, so most doors look exactly as before.
-            status = door_services.status(door.id) if door_services is not None else None
-            service_rows: list[Field | Note] = [Field(
-                "Service", status.summary() if status is not None else "not supervised by this process",
-                color=VALUE_COLOR if status is not None else MUTED_COLOR,
-            )]
-            if status is not None and status.last_exit_code is not None:
-                service_rows.append(Field(
-                    "Last service exit code", str(status.last_exit_code),
-                    color=VALUE_COLOR if status.last_exit_code == 0 else WARNING_COLOR,
-                ))
-            after = _sections_text(
-                [Section("Companion service", service_rows)], width=session.terminal_width,
-                unicode_style=await lane.run(unicode_style_enabled, actor),
-            )
-        actions = [
-            DetailAction("c", menu_key("C", "ompatibility"), _act(_compatibility, line=False), brief="Profile, preflight and test launch"),
-            DetailAction("l", menu_key("L", "ast diagnostic"), _act(_diagnostic, line=False), brief="View runtime errors"),
-            DetailAction("o", menu_key("O", "utbound"), _act(_outbound, line=False), brief="Whether it may post to a board"),
-        ]
-        if await asyncio.to_thread(_is_war_dialer_door, await lane.run(_node_db_path), door):
-            actions.append(DetailAction("w", menu_key("W", "orld"), _act(_world, line=False), brief="Status and maintenance"))
-        actions.append(DetailAction("d", menu_key("D", "elete"), _act(_delete), brief="Permanently remove this door"))
-        if door.profile and door.profile.service and door_services is not None:
-            actions += [
-                DetailAction("s", menu_key("S", "tart service"), _act(_service("s")), brief="Start its companion process"),
-                DetailAction("h", menu_key("H", "alt service"), _act(_service("h")), brief="Stop this door's companion process"),
-                DetailAction("r", menu_key("R", "estart service"), _act(_service("r")), brief="Stop then start it again"),
-                DetailAction("v", menu_key("V", "iew service log"), _act(_service("v")), brief="Recent service stderr"),
+        async def _world(door: Door) -> bool:
+            await _war_dialer_world_screen(session, lane, actor, door, backup_identity_dir=backup_identity_dir)
+            return False
+
+        async def _delete(door: Door) -> bool:
+            deleted = await _delete_door_screen(session, lane, actor, door, door_services=door_services)
+            if deleted and door_services is not None:
+                # The registration is gone, so nothing could reach its service
+                # again; without this the companion and its restart loop run on
+                # until the node stops, with no control left to halt it.
+                await door_services.forget(door.id)
+            return deleted
+
+        def _service(choice: str):
+            async def run(door: Door) -> bool:
+                await _door_service_action(session, lane, actor, door, choice, door_services)
+                return False
+            return run
+
+        async def refresh() -> DetailState:
+            door = current["door"]
+            if door is None:
+                return DetailState(draft={**_door_draft(None), **(prefill or {})})
+
+            def _load(db: Database):
+                fresh = next((d for d in list_doors(db) if d.id == door.id), door)
+                community = get_community(db, fresh.community_id) if fresh.community_id is not None else None
+                return fresh, {"community_id_label": community.name if community is not None else None}
+
+            door, labels = await lane.run(_load)
+            current["door"] = door
+            header = "Compatibility: " + (door.profile.adapter if door.profile else "NetBBS native API")
+            after = ""
+            if door.profile and door.profile.service:
+                # Issue #466: only a door which declares a service says anything
+                # about one, so most doors look exactly as before.
+                status = door_services.status(door.id) if door_services is not None else None
+                service_rows: list[Field | Note] = [Field(
+                    "Service", status.summary() if status is not None else "not supervised by this process",
+                    color=VALUE_COLOR if status is not None else MUTED_COLOR,
+                )]
+                if status is not None and status.last_exit_code is not None:
+                    service_rows.append(Field(
+                        "Last service exit code", str(status.last_exit_code),
+                        color=VALUE_COLOR if status.last_exit_code == 0 else WARNING_COLOR,
+                    ))
+                after = _sections_text(
+                    [Section("Companion service", service_rows)], width=session.terminal_width,
+                    unicode_style=await lane.run(unicode_style_enabled, actor),
+                )
+            actions = [
+                DetailAction("c", menu_key("C", "ompatibility"), _act(_compatibility, line=False), brief="Profile, preflight and test launch"),
+                DetailAction("l", menu_key("L", "ast diagnostic"), _act(_diagnostic, line=False), brief="View runtime errors"),
+                DetailAction("o", menu_key("O", "utbound"), _act(_outbound, line=False), brief="Whether it may post to a board"),
             ]
-        return DetailState(
-            draft={**_door_draft(door), **labels},
-            title=sanitize_text(door.name),
-            header=colored(header, fg_color=MUTED_COLOR), after_fields=after, actions=actions,
-        )
+            if await asyncio.to_thread(_is_war_dialer_door, await lane.run(_node_db_path), door):
+                actions.append(DetailAction("w", menu_key("W", "orld"), _act(_world, line=False), brief="Status and maintenance"))
+            actions.append(DetailAction("d", menu_key("D", "elete"), _act(_delete), brief="Permanently remove this door"))
+            if door.profile and door.profile.service and door_services is not None:
+                actions += [
+                    DetailAction("s", menu_key("S", "tart service"), _act(_service("s")), brief="Start its companion process"),
+                    DetailAction("h", menu_key("H", "alt service"), _act(_service("h")), brief="Stop this door's companion process"),
+                    DetailAction("r", menu_key("R", "estart service"), _act(_service("r")), brief="Stop then start it again"),
+                    DetailAction("v", menu_key("V", "iew service log"), _act(_service("v")), brief="Recent service stderr"),
+                ]
+            return DetailState(
+                draft={**_door_draft(door), **labels},
+                title=sanitize_text(door.name),
+                header=colored(header, fg_color=MUTED_COLOR), after_fields=after, actions=actions,
+            )
 
-    redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
-    return await edit_resource_draft(
-        session, lane,
-        title=sanitize_text(existing.name) if existing is not None else "Register door",
-        fields=_door_field_specs(actor=actor, levels=await lane.run(level_context)),
-        draft={}, save=save, error_type=DoorError,
-        save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
-        description_level=await lane.run(menu_description_level, actor),
-        redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
-        unicode_style=await lane.run(unicode_style_enabled, actor),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
-        accent_color=await lane.run(effective_accent_color_256),
-        header_color=await lane.run(effective_header_color_256),
-        detail=DetailMode(refresh=refresh, stay_after_save=existing is not None),
-    )
+        redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
+        return await edit_resource_draft(
+            session, lane,
+            title=sanitize_text(existing.name) if existing is not None else "Register door", own=True,
+            fields=_door_field_specs(actor=actor, levels=await lane.run(level_context)),
+            draft={}, save=save, error_type=DoorError,
+            save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
+            description_level=await lane.run(menu_description_level, actor),
+            redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
+            unicode_style=await lane.run(unicode_style_enabled, actor),
+            collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
+            accent_color=await lane.run(effective_accent_color_256),
+            header_color=await lane.run(effective_header_color_256),
+            detail=DetailMode(refresh=refresh, stay_after_save=existing is not None),
+        )
 
 
 def _find_door_by_name(db: Database, name: str) -> Door | None:
@@ -23363,7 +23422,7 @@ async def _list_doors_screen(session: Session, lane: DatabaseLane, actor: User, 
         name_of=lambda d: d.name,
         stable_id_of=lambda d: d.id,
         description_of=lambda d: d.description,
-        title="Doors",
+        title="Doors", own=True,
         empty_message="No doors yet.",
         redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
         unicode_style=await lane.run(unicode_style_enabled, actor),
@@ -23431,6 +23490,7 @@ def _door_channel_summary(db: Database, target) -> str:
     return f"{name} (muted{by}{until})"
 
 
+@located("Outbound")
 async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: User, door: Door) -> None:
     """Switch one door's outbound hook on or off, and curate its allowlist.
 
@@ -23466,7 +23526,7 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
         channel_summary = [await lane.run(_door_channel_summary, target) for target in channels]
         await session.write_line(
             "\r\n" + screen_title(f"{sanitize_text(door.name)} — outbound",
-                breadcrumb=(session.node_display_name,), width=session.terminal_width,
+                breadcrumb=crumbs(session, own=True), width=session.terminal_width,
                 clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
                 header_color=header_color, node_name_gradient=session.node_name_gradient)
         )
@@ -24093,8 +24153,7 @@ async def _war_dialer_world_screen(session: Session, lane: DatabaseLane, actor: 
         actions += [("r", menu_key("R", "efresh")), _BACK_ACTION]
         choice, page = await show_detail(
             session,
-            title=_detail_title(session, chrome, f"{sanitize_text(door.name)} — world",
-                                breadcrumb=("Content", "Doors")),
+            title=_detail_title(session, chrome, f"{sanitize_text(door.name)} — world"),
             sections=sections, actions=actions, page=page,
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
             help_title="War Dialer world help",
@@ -24169,6 +24228,7 @@ async def _delete_door_screen(session: Session, lane: DatabaseLane, actor: User,
 # approval.
 
 
+@located("Chat channels")
 async def _channel_menu(
     session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None,
     mrc_bridge: MrcBridge | None = None,
@@ -24218,7 +24278,7 @@ async def _draw_channel_menu(
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
 ) -> None:
     await session.write_line("\r\n" + screen_title("Chat channels",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
     await session.write_line(
         _menu_row(
             list(_CHANNEL_MENU),
@@ -24443,179 +24503,180 @@ async def _channel_screen(
     afterwards, so with the running node in reach the rename is refused
     until the channel is empty; the standalone admin CLI, which cannot
     see occupancy, says what a rename does to anyone inside instead."""
-    current: dict = {"channel": existing, "mrc": None}
-    own_fingerprint = link_context.node_identity.fingerprint if link_context is not None else None
+    with entered(session, sanitize_text(existing.name) if existing is not None else "Create chat channel"):
+        current: dict = {"channel": existing, "mrc": None}
+        own_fingerprint = link_context.node_identity.fingerprint if link_context is not None else None
 
-    async def save(draft: dict) -> Channel:
-        if not draft["name"]:
-            raise ChannelError("name cannot be blank")
-        channel = current["channel"]
-        if channel is not None and draft["name"] != channel.name and chat_hub is not None:
-            occupants = chat_hub.participant_count(channel.name)
-            if occupants:
-                # A carried Link channel's name comes from a remote signed
-                # genesis: sanitize before it is styled into the refusal.
-                raise ChannelError(
-                    f"{sanitize_text(channel.name)!r} cannot be renamed while {occupants} caller(s) are in it: "
-                    "live chat membership follows the channel name, so they would be cut off from "
-                    "everyone who joins afterwards. Wait until the channel is empty."
+        async def save(draft: dict) -> Channel:
+            if not draft["name"]:
+                raise ChannelError("name cannot be blank")
+            channel = current["channel"]
+            if channel is not None and draft["name"] != channel.name and chat_hub is not None:
+                occupants = chat_hub.participant_count(channel.name)
+                if occupants:
+                    # A carried Link channel's name comes from a remote signed
+                    # genesis: sanitize before it is styled into the refusal.
+                    raise ChannelError(
+                        f"{sanitize_text(channel.name)!r} cannot be renamed while {occupants} caller(s) are in it: "
+                        "live chat membership follows the channel name, so they would be cut off from "
+                        "everyone who joins afterwards. Wait until the channel is empty."
+                    )
+            if channel is None:
+                created = await lane.run(
+                    create_channel,
+                    draft["name"], description=draft["description"], min_level=draft["min_level"],
+                    category_id=draft["category_id"], pinned=draft["pinned"], hidden=draft["hidden"],
+                    members_only=draft["members_only"], allow_member_invites=draft["allow_member_invites"],
+                    min_age=draft["min_age"], name_requirement=draft["name_requirement"],
+                    community_id=draft["community_id"], age_requirement=draft["age_requirement"], creator=actor,
                 )
-        if channel is None:
-            created = await lane.run(
-                create_channel,
-                draft["name"], description=draft["description"], min_level=draft["min_level"],
+                _announce_line(session, f"Created chat channel {created.name!r}.")
+                return created
+            updated = await lane.run(
+                update_channel,
+                channel, name=draft["name"], description=draft["description"], min_level=draft["min_level"],
                 category_id=draft["category_id"], pinned=draft["pinned"], hidden=draft["hidden"],
                 members_only=draft["members_only"], allow_member_invites=draft["allow_member_invites"],
                 min_age=draft["min_age"], name_requirement=draft["name_requirement"],
-                community_id=draft["community_id"], age_requirement=draft["age_requirement"], creator=actor,
+                community_id=draft["community_id"], age_requirement=draft["age_requirement"], changed_by=actor,
             )
-            _announce_line(session, f"Created chat channel {created.name!r}.")
-            return created
-        updated = await lane.run(
-            update_channel,
-            channel, name=draft["name"], description=draft["description"], min_level=draft["min_level"],
-            category_id=draft["category_id"], pinned=draft["pinned"], hidden=draft["hidden"],
-            members_only=draft["members_only"], allow_member_invites=draft["allow_member_invites"],
-            min_age=draft["min_age"], name_requirement=draft["name_requirement"],
-            community_id=draft["community_id"], age_requirement=draft["age_requirement"], changed_by=actor,
-        )
-        _announce_line(session, f"Updated {updated.name!r}.")
-        if updated.name != channel.name:
-            if chat_hub is None:
-                _announce_line(session, colored(
-                    "If the node is running with callers in this channel, they keep the old name "
-                    "until they leave and rejoin.",
-                    fg_color=MUTED_COLOR,
-                ))
-            if mrc_bridge is not None and current["mrc"] is not None:
-                # The bridge caches the mapped channel's name for hub
-                # delivery; a rename must reach it now (issue #275).
+            _announce_line(session, f"Updated {updated.name!r}.")
+            if updated.name != channel.name:
+                if chat_hub is None:
+                    _announce_line(session, colored(
+                        "If the node is running with callers in this channel, they keep the old name "
+                        "until they leave and rejoin.",
+                        fg_color=MUTED_COLOR,
+                    ))
+                if mrc_bridge is not None and current["mrc"] is not None:
+                    # The bridge caches the mapped channel's name for hub
+                    # delivery; a rename must reach it now (issue #275).
+                    await mrc_bridge.refresh_channel_mappings()
+            return updated
+
+        def _act(run: Callable[[Channel], Awaitable[bool | None]]):
+            async def action(session: Session, lane: DatabaseLane) -> bool:
+                await session.write_line("")
+                return bool(await run(current["channel"]))
+            return action
+
+        async def _delete(channel: Channel) -> bool:
+            deleted = await _delete_channel_screen(
+                session, lane, actor, channel, own_fingerprint=own_fingerprint, chat_hub=chat_hub,
+            )
+            if deleted and mrc_bridge is not None and current["mrc"] is not None:
+                # The running bridge must forget the room now, not on the next
+                # inbound line for it (issue #275).
                 await mrc_bridge.refresh_channel_mappings()
-        return updated
+            return deleted
 
-    def _act(run: Callable[[Channel], Awaitable[bool | None]]):
-        async def action(session: Session, lane: DatabaseLane) -> bool:
-            await session.write_line("")
-            return bool(await run(current["channel"]))
-        return action
+        async def _restrictions(channel: Channel) -> bool:
+            await _channel_restrictions_screen(session, lane, actor, channel)
+            return False
 
-    async def _delete(channel: Channel) -> bool:
-        deleted = await _delete_channel_screen(
-            session, lane, actor, channel, own_fingerprint=own_fingerprint, chat_hub=chat_hub,
-        )
-        if deleted and mrc_bridge is not None and current["mrc"] is not None:
-            # The running bridge must forget the room now, not on the next
-            # inbound line for it (issue #275).
-            await mrc_bridge.refresh_channel_mappings()
-        return deleted
+        async def _link(channel: Channel) -> bool:
+            await _link_channel_screen(session, lane, actor, channel, link_context)
+            return False
 
-    async def _restrictions(channel: Channel) -> bool:
-        await _channel_restrictions_screen(session, lane, actor, channel)
-        return False
+        async def _mrc_room(channel: Channel) -> bool:
+            await _mrc_room_screen(session, lane, actor, channel, current["mrc"], mrc_bridge=mrc_bridge)
+            return False
 
-    async def _link(channel: Channel) -> bool:
-        await _link_channel_screen(session, lane, actor, channel, link_context)
-        return False
+        async def _adopt(channel: Channel) -> bool:
+            await _adopt_open_room_screen(session, lane, actor, channel, mrc_bridge=mrc_bridge)
+            return False
 
-    async def _mrc_room(channel: Channel) -> bool:
-        await _mrc_room_screen(session, lane, actor, channel, current["mrc"], mrc_bridge=mrc_bridge)
-        return False
+        async def _retire(channel: Channel) -> bool:
+            return await _retire_open_room_screen(
+                session, lane, actor, channel, mrc_bridge=mrc_bridge, chat_hub=chat_hub,
+            )
 
-    async def _adopt(channel: Channel) -> bool:
-        await _adopt_open_room_screen(session, lane, actor, channel, mrc_bridge=mrc_bridge)
-        return False
+        async def _unbridge(channel: Channel) -> bool:
+            await _unbridge_mrc_room(session, lane, actor, channel, current["mrc"], mrc_bridge=mrc_bridge)
+            return False
 
-    async def _retire(channel: Channel) -> bool:
-        return await _retire_open_room_screen(
-            session, lane, actor, channel, mrc_bridge=mrc_bridge, chat_hub=chat_hub,
-        )
+        async def _pause(channel: Channel) -> bool:
+            await _toggle_mrc_pause(session, lane, actor, channel, current["mrc"], mrc_bridge=mrc_bridge)
+            return False
 
-    async def _unbridge(channel: Channel) -> bool:
-        await _unbridge_mrc_room(session, lane, actor, channel, current["mrc"], mrc_bridge=mrc_bridge)
-        return False
+        async def refresh() -> DetailState:
+            channel = current["channel"]
+            if channel is None:
+                return DetailState(draft=_channel_draft(None))
 
-    async def _pause(channel: Channel) -> bool:
-        await _toggle_mrc_pause(session, lane, actor, channel, current["mrc"], mrc_bridge=mrc_bridge)
-        return False
+            def _load(db: Database):
+                fresh = next((c for c in list_channels(db) if c.id == channel.id), channel)
+                community = get_community(db, fresh.community_id) if fresh.community_id is not None else None
+                category = get_channel_category_by_id(db, fresh.category_id) if fresh.category_id is not None else None
+                labels = {
+                    "community_id_label": community.name if community is not None else None,
+                    "category_id_label": category.name if category is not None else None,
+                }
+                return fresh, get_mrc_mapping(db, fresh), labels
 
-    async def refresh() -> DetailState:
-        channel = current["channel"]
-        if channel is None:
-            return DetailState(draft=_channel_draft(None))
-
-        def _load(db: Database):
-            fresh = next((c for c in list_channels(db) if c.id == channel.id), channel)
-            community = get_community(db, fresh.community_id) if fresh.community_id is not None else None
-            category = get_channel_category_by_id(db, fresh.category_id) if fresh.category_id is not None else None
-            labels = {
-                "community_id_label": community.name if community is not None else None,
-                "category_id_label": category.name if category is not None else None,
-            }
-            return fresh, get_mrc_mapping(db, fresh), labels
-
-        channel, mrc_mapping, labels = await lane.run(_load)
-        current["channel"], current["mrc"] = channel, mrc_mapping
-        linked = await lane.run(is_channel_linked, channel) if link_context is not None else False
-        open_room = mrc_mapping is not None and mrc_mapping.is_open_room
-        header_bits = []
-        if link_context is not None:
-            header_bits.append("Linked" if linked else "not Linked")
-        if mrc_mapping is None:
-            header_bits.append("no MRC room")
-        else:
-            state = "open room" if open_room else ("paused" if mrc_mapping.paused else "bridged")
-            header_bits.append(f"MRC #{mrc_mapping.room} ({state})")
-        after = _sections_text(
-            [Section("Sharing", await _channel_sharing_rows(
-                lane, channel, link_context, linked=linked, mrc_mapping=mrc_mapping,
-            ))],
-            width=session.terminal_width, unicode_style=await lane.run(unicode_style_enabled, actor),
-        )
-        actions = [
-            DetailAction("d", menu_key("D", "elete"), _act(_delete), brief="Permanently remove this channel"),
-            DetailAction("r", menu_key("R", "estrictions"), _act(_restrictions), brief="Active mutes and bans"),
-        ]
-        if link_context is not None and not linked and not open_room:
-            actions.append(DetailAction("l", menu_key("L", "ink this chat channel"), _act(_link), brief="Share it via NetBBS Link"))
-        if open_room:
-            actions.append(DetailAction("a", menu_key("A", "dopt"), _act(_adopt), brief="Keep it as a bridged channel"))
-            actions.append(DetailAction("c", menu_key("C", "lose room"), _act(_retire), brief="Remove it and its scrollback now"))
-        else:
-            actions.append(DetailAction("m", menu_key("M", "RC room"), _act(_mrc_room), brief="Bridge to a Multi Relay Chat room"))
-        if mrc_mapping is not None and not open_room:
-            actions.append(DetailAction("u", menu_key("U", "nbridge"), _act(_unbridge), brief="Stop relaying and forget the room"))
-            if mrc_mapping.paused:
-                actions.append(DetailAction("p", menu_key("P", "ause MRC bridge: on"), _act(_pause), brief="Resume relaying to MRC"))
+            channel, mrc_mapping, labels = await lane.run(_load)
+            current["channel"], current["mrc"] = channel, mrc_mapping
+            linked = await lane.run(is_channel_linked, channel) if link_context is not None else False
+            open_room = mrc_mapping is not None and mrc_mapping.is_open_room
+            header_bits = []
+            if link_context is not None:
+                header_bits.append("Linked" if linked else "not Linked")
+            if mrc_mapping is None:
+                header_bits.append("no MRC room")
             else:
-                actions.append(DetailAction("p", menu_key("P", "ause MRC bridge: off"), _act(_pause), brief="Keep the mapping, relay nothing"))
-        return DetailState(
-            draft={**_channel_draft(channel), **labels},
-            title=sanitize_text(channel.name),
-            header=colored(" · ".join(header_bits), fg_color=MUTED_COLOR),
-            after_fields=after, actions=actions,
-        )
+                state = "open room" if open_room else ("paused" if mrc_mapping.paused else "bridged")
+                header_bits.append(f"MRC #{mrc_mapping.room} ({state})")
+            after = _sections_text(
+                [Section("Sharing", await _channel_sharing_rows(
+                    lane, channel, link_context, linked=linked, mrc_mapping=mrc_mapping,
+                ))],
+                width=session.terminal_width, unicode_style=await lane.run(unicode_style_enabled, actor),
+            )
+            actions = [
+                DetailAction("d", menu_key("D", "elete"), _act(_delete), brief="Permanently remove this channel"),
+                DetailAction("r", menu_key("R", "estrictions"), _act(_restrictions), brief="Active mutes and bans"),
+            ]
+            if link_context is not None and not linked and not open_room:
+                actions.append(DetailAction("l", menu_key("L", "ink this chat channel"), _act(_link), brief="Share it via NetBBS Link"))
+            if open_room:
+                actions.append(DetailAction("a", menu_key("A", "dopt"), _act(_adopt), brief="Keep it as a bridged channel"))
+                actions.append(DetailAction("c", menu_key("C", "lose room"), _act(_retire), brief="Remove it and its scrollback now"))
+            else:
+                actions.append(DetailAction("m", menu_key("M", "RC room"), _act(_mrc_room), brief="Bridge to a Multi Relay Chat room"))
+            if mrc_mapping is not None and not open_room:
+                actions.append(DetailAction("u", menu_key("U", "nbridge"), _act(_unbridge), brief="Stop relaying and forget the room"))
+                if mrc_mapping.paused:
+                    actions.append(DetailAction("p", menu_key("P", "ause MRC bridge: on"), _act(_pause), brief="Resume relaying to MRC"))
+                else:
+                    actions.append(DetailAction("p", menu_key("P", "ause MRC bridge: off"), _act(_pause), brief="Keep the mapping, relay nothing"))
+            return DetailState(
+                draft={**_channel_draft(channel), **labels},
+                title=sanitize_text(channel.name),
+                header=colored(" · ".join(header_bits), fg_color=MUTED_COLOR),
+                after_fields=after, actions=actions,
+            )
 
-    redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    return await edit_resource_draft(
-        session, lane,
-        title=sanitize_text(existing.name) if existing is not None else "Create chat channel",
-        fields=_channel_field_specs(
-            actor=actor, redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style, collapsed=collapsed,
-            levels=await lane.run(level_context),
-        ),
-        draft={}, save=save, error_type=ChannelError,
-        save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
-        description_level=await lane.run(menu_description_level, actor),
-        redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
-        unicode_style=unicode_style,
-        collapsed=collapsed,
-        accent_color=await lane.run(effective_accent_color_256),
-        header_color=await lane.run(effective_header_color_256),
-        detail=DetailMode(refresh=refresh, stay_after_save=existing is not None),
-    )
+        redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
+        unicode_style = await lane.run(unicode_style_enabled, actor)
+        collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
+        return await edit_resource_draft(
+            session, lane,
+            title=sanitize_text(existing.name) if existing is not None else "Create chat channel", own=True,
+            fields=_channel_field_specs(
+                actor=actor, redraw_in_place=redraw_in_place,
+                unicode_style=unicode_style, collapsed=collapsed,
+                levels=await lane.run(level_context),
+            ),
+            draft={}, save=save, error_type=ChannelError,
+            save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
+            description_level=await lane.run(menu_description_level, actor),
+            redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
+            unicode_style=unicode_style,
+            collapsed=collapsed,
+            accent_color=await lane.run(effective_accent_color_256),
+            header_color=await lane.run(effective_header_color_256),
+            detail=DetailMode(refresh=refresh, stay_after_save=existing is not None),
+        )
 
 
 async def _list_channels_screen(
@@ -24638,7 +24699,7 @@ async def _list_channels_screen(
         description_of=lambda c: _channel_description(c, effective[c.id], c.channel_id in to_review),
         columns=_CHANNEL_COLUMNS,
         column_values_of=lambda c: _channel_columns(c, effective[c.id], c.channel_id in to_review),
-        title="Chat channels",
+        title="Chat channels", own=True,
         empty_message="No chat channels yet.",
         linked_of=lambda c: c.id in linked_channels,  # issue #1104
         redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
@@ -25077,6 +25138,7 @@ async def _delete_channel_screen(
 # -- categories ----------------------------------------------------------
 
 
+@located("Categories")
 async def _category_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
@@ -25157,7 +25219,7 @@ async def _draw_category_menu(
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
 ) -> None:
     await session.write_line("\r\n" + screen_title("Categories",
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
     await session.write_line(
         _menu_row(
             [
@@ -25179,42 +25241,43 @@ async def _generic_category_screen(
     session: Session, lane: DatabaseLane, actor: User, *, create, list_top_level, list_subcategories, delete,
     error_type, title: str, update=None, move=None,
 ) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    header_color = await lane.run(effective_header_color_256)
-    await _draw_generic_category_menu(session, title, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-    while True:
-        choice = (await session.read_key()).lower()
+    with entered(session, title):
+        description_level = await lane.run(menu_description_level, actor)
+        unicode_style = await lane.run(unicode_style_enabled, actor)
+        collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
+        redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
+        header_color = await lane.run(effective_header_color_256)
+        await _draw_generic_category_menu(session, title, description_level, redraw_in_place, unicode_style, collapsed, header_color)
+        while True:
+            choice = (await session.read_key()).lower()
 
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "c":
-            await session.write_line("")
-            await _create_category_screen(
-                session, lane, actor, create=create, list_top_level=list_top_level, error_type=error_type,
-            )
-            await _draw_generic_category_menu(session, title, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "l":
-            await session.write_line("")
-            await _list_categories_screen(
-                session, lane, actor, list_top_level=list_top_level,
-                list_subcategories=list_subcategories, delete=delete,
-                update=update, move=move, create=create, error_type=error_type,
-            )
-            await _draw_generic_category_menu(session, title, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == HELP_KEY:
-            await show_menu_help(
-                session, f"{title} help", _GENERIC_CATEGORY_MENU,
-                about="Categories group the items of one kind into folders callers browse, at most two "
-                      "levels deep. Pick one from the list to rename, move or remove it.",
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_generic_category_menu(session, title, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        else:
-            await session.write(reject_unhandled_key(choice))
+            if choice == "b":
+                await session.write_line("")
+                return
+            elif choice == "c":
+                await session.write_line("")
+                await _create_category_screen(
+                    session, lane, actor, create=create, list_top_level=list_top_level, error_type=error_type,
+                )
+                await _draw_generic_category_menu(session, title, description_level, redraw_in_place, unicode_style, collapsed, header_color)
+            elif choice == "l":
+                await session.write_line("")
+                await _list_categories_screen(
+                    session, lane, actor, list_top_level=list_top_level,
+                    list_subcategories=list_subcategories, delete=delete,
+                    update=update, move=move, create=create, error_type=error_type, title=title,
+                )
+                await _draw_generic_category_menu(session, title, description_level, redraw_in_place, unicode_style, collapsed, header_color)
+            elif choice == HELP_KEY:
+                await show_menu_help(
+                    session, f"{title} help", _GENERIC_CATEGORY_MENU,
+                    about="Categories group the items of one kind into folders callers browse, at most two "
+                          "levels deep. Pick one from the list to rename, move or remove it.",
+                    header_color=header_color, unicode_style=unicode_style,
+                )
+                await _draw_generic_category_menu(session, title, description_level, redraw_in_place, unicode_style, collapsed, header_color)
+            else:
+                await session.write(reject_unhandled_key(choice))
 
 
 _GENERIC_CATEGORY_MENU = (
@@ -25231,7 +25294,7 @@ async def _draw_generic_category_menu(
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
 ) -> None:
     await session.write_line("\r\n" + screen_title(title,
-            breadcrumb=(session.node_display_name,), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color, node_name_gradient=session.node_name_gradient))
     await session.write_line(
         _menu_row(
             list(_GENERIC_CATEGORY_MENU),
@@ -25262,117 +25325,118 @@ async def _create_category_screen(
     parent"), `[S]ave`; nothing is created before Save, and a domain
     rejection (duplicate name, ...) returns to the draft intact.
     """
-    redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    accent_color = await lane.run(effective_accent_color_256)
-    header_color = await lane.run(effective_header_color_256)
+    with entered(session, sanitize_text(existing.name) if existing is not None else "Create category"):
+        redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
+        unicode_style = await lane.run(unicode_style_enabled, actor)
+        collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
+        accent_color = await lane.run(effective_accent_color_256)
+        header_color = await lane.run(effective_header_color_256)
 
-    # With `existing` and `update`, the same draft edits a category
-    # (issue #681): its name, description and parent, prefilled.
-    draft: dict = {"name": "", "description": None, "parent": None}
-    if existing is not None:
-        parents = {category.id: category for category in await lane.run(list_top_level)}
-        draft = {
-            "name": existing.name, "description": existing.description,
-            "parent": parents.get(existing.parent_category_id),
-        }
-
-    async def _parent_prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
-        # (name, category-or-None) pairs: a "no parent" entry leads the
-        # list so clearing a previously chosen parent is a pick like any
-        # other, and backing out of the picker keeps the draft as-is.
-        choices = [("(none -- a top-level category)", None)]
-        editing = current["category"] if current is not None else existing
-        choices += [
-            (category.name, category) for category in await lane.run(list_top_level)
-            if editing is None or category.id != editing.id
-        ]
-        selected = await pick_item(
-            session, choices,
-            name_of=lambda item: item[0],
-            stable_id_of=lambda item: 0 if item[1] is None else item[1].id,
-            title="Parent category",
-            empty_message="No top-level categories exist yet.",
-            redraw_in_place=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
-            accent_color=accent_color, header_color=header_color,
-        )
-        if selected is None:
-            return
-        draft["parent"] = selected[1]
-
-    fields = [
-        FieldSpec(
-            key="name", label="Name",
-            render=lambda d: sanitize_text(d["name"]) if d["name"] else "(blank)",
-            prompt=text_field("name", required=True),
-            brief="The category's name",
-            help="Shown wherever this category is listed. Required.",
-        ),
-        FieldSpec(
-            key="description", label="Description",
-            render=lambda d: sanitize_text(d["description"]) if d["description"] else "(none)",
-            prompt=text_field("description"),
-            brief="Optional one-line description",
-            help="Optional. Shown under the category name where there is room for it.",
-        ),
-        FieldSpec(
-            key="parent", label="Parent",
-            render=lambda d: sanitize_text(d["parent"].name) if d["parent"] is not None else "(none -- top-level)",
-            prompt=_parent_prompt,
-            brief="Nest under an existing category",
-            help=(
-                "Pick an existing top-level category to make this one its sub-category, or "
-                "the first entry to keep it top-level."
-            ),
-        ),
-    ]
-
-    async def save(draft: dict) -> object:
-        if not draft["name"]:
-            # Raised, not returned: a bare `return None` would close the
-            # editor and discard the description/parent already entered
-            # (Codex review on #289); the caught error keeps the draft up.
-            raise error_type("name cannot be blank")
-        parent = draft["parent"]
+        # With `existing` and `update`, the same draft edits a category
+        # (issue #681): its name, description and parent, prefilled.
+        draft: dict = {"name": "", "description": None, "parent": None}
         if existing is not None:
-            category = await lane.run(
-                update, current["category"] if current is not None else existing,
-                name=draft["name"], description=draft["description"],
-                parent_category_id=parent.id if parent is not None else None, changed_by=actor,
+            parents = {category.id: category for category in await lane.run(list_top_level)}
+            draft = {
+                "name": existing.name, "description": existing.description,
+                "parent": parents.get(existing.parent_category_id),
+            }
+
+        async def _parent_prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
+            # (name, category-or-None) pairs: a "no parent" entry leads the
+            # list so clearing a previously chosen parent is a pick like any
+            # other, and backing out of the picker keeps the draft as-is.
+            choices = [("(none -- a top-level category)", None)]
+            editing = current["category"] if current is not None else existing
+            choices += [
+                (category.name, category) for category in await lane.run(list_top_level)
+                if editing is None or category.id != editing.id
+            ]
+            selected = await pick_item(
+                session, choices,
+                name_of=lambda item: item[0],
+                stable_id_of=lambda item: 0 if item[1] is None else item[1].id,
+                title="Parent category",
+                empty_message="No top-level categories exist yet.",
+                redraw_in_place=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
+                accent_color=accent_color, header_color=header_color,
             )
-            _announce_line(session, f"Saved category {category.name!r}.")
+            if selected is None:
+                return
+            draft["parent"] = selected[1]
+
+        fields = [
+            FieldSpec(
+                key="name", label="Name",
+                render=lambda d: sanitize_text(d["name"]) if d["name"] else "(blank)",
+                prompt=text_field("name", required=True),
+                brief="The category's name",
+                help="Shown wherever this category is listed. Required.",
+            ),
+            FieldSpec(
+                key="description", label="Description",
+                render=lambda d: sanitize_text(d["description"]) if d["description"] else "(none)",
+                prompt=text_field("description"),
+                brief="Optional one-line description",
+                help="Optional. Shown under the category name where there is room for it.",
+            ),
+            FieldSpec(
+                key="parent", label="Parent",
+                render=lambda d: sanitize_text(d["parent"].name) if d["parent"] is not None else "(none -- top-level)",
+                prompt=_parent_prompt,
+                brief="Nest under an existing category",
+                help=(
+                    "Pick an existing top-level category to make this one its sub-category, or "
+                    "the first entry to keep it top-level."
+                ),
+            ),
+        ]
+
+        async def save(draft: dict) -> object:
+            if not draft["name"]:
+                # Raised, not returned: a bare `return None` would close the
+                # editor and discard the description/parent already entered
+                # (Codex review on #289); the caught error keeps the draft up.
+                raise error_type("name cannot be blank")
+            parent = draft["parent"]
+            if existing is not None:
+                category = await lane.run(
+                    update, current["category"] if current is not None else existing,
+                    name=draft["name"], description=draft["description"],
+                    parent_category_id=parent.id if parent is not None else None, changed_by=actor,
+                )
+                _announce_line(session, f"Saved category {category.name!r}.")
+                return category
+            category = await lane.run(
+                create, draft["name"], description=draft["description"],
+                parent_category_id=parent.id if parent is not None else None, created_by=actor,
+            )
+            _announce_line(session, f"Created category {category.name!r}.")
             return category
-        category = await lane.run(
-            create, draft["name"], description=draft["description"],
-            parent_category_id=parent.id if parent is not None else None, created_by=actor,
+
+        if detail is None:
+            # Creating uses the same screen as a category's own, with an empty
+            # draft and no actions, and returns what it created (issue #1081).
+            async def _empty() -> DetailState:
+                return DetailState(draft=dict(draft))
+
+            detail = DetailMode(refresh=_empty, stay_after_save=False)
+        return await edit_resource_draft(
+            session, lane,
+            title=sanitize_text(existing.name) if existing is not None else "Create category", own=True,
+            fields=fields, draft=draft, save=save, error_type=error_type,
+            save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
+            description_level=await lane.run(menu_description_level, actor),
+            redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
+            unicode_style=unicode_style, collapsed=collapsed,
+            accent_color=accent_color, header_color=header_color,
+            detail=detail,
         )
-        _announce_line(session, f"Created category {category.name!r}.")
-        return category
-
-    if detail is None:
-        # Creating uses the same screen as a category's own, with an empty
-        # draft and no actions, and returns what it created (issue #1081).
-        async def _empty() -> DetailState:
-            return DetailState(draft=dict(draft))
-
-        detail = DetailMode(refresh=_empty, stay_after_save=False)
-    return await edit_resource_draft(
-        session, lane,
-        title=sanitize_text(existing.name) if existing is not None else "Create category",
-        fields=fields, draft=draft, save=save, error_type=error_type,
-        save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
-        description_level=await lane.run(menu_description_level, actor),
-        redraw_in_place=redraw_in_place, redraw_hint=redraw_hint,
-        unicode_style=unicode_style, collapsed=collapsed,
-        accent_color=accent_color, header_color=header_color,
-        detail=detail,
-    )
 
 
 async def _list_categories_screen(
     session: Session, lane: DatabaseLane, actor: User, *, list_top_level, list_subcategories, delete,
-    update=None, move=None, create=None, error_type=Exception,
+    update=None, move=None, create=None, error_type=Exception, title: str = "Categories",
 ) -> None:
     """Every category, each sub-category under its parent, in the SysOp's
     order (issue #681). Picking one opens its screen, to edit, move or
@@ -25399,7 +25463,7 @@ async def _list_categories_screen(
                 f"in {by_id[c.parent_category_id].name}" if not c.is_top_level and c.parent_category_id in by_id
                 else sanitize_text(c.description) if c.description else "top-level"
             ),
-            title="Categories",
+            title=title, own=True,
             empty_message="No categories yet.",
             start_stable_id=reopen_at,
             redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
@@ -25681,6 +25745,7 @@ def _moderator_preset_permissions(object_type: str, preset: str):
     return BoardPermission.APPROVE
 
 
+@located("Grant moderator")
 async def _grant_moderator_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
     """
     Issue #282: this was a five-step chain (user picker, scope key,
@@ -25841,7 +25906,7 @@ async def _grant_moderator_screen(session: Session, lane: DatabaseLane, actor: U
 
     await edit_resource_draft(
         session, lane,
-        title="Grant moderator",
+        title="Grant moderator", own=True,
         fields=fields, draft=draft, save=save, error_type=ModeratorGrantError,
         save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
         description_level=await lane.run(menu_description_level, actor),
