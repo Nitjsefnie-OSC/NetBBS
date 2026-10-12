@@ -203,6 +203,10 @@ class BotLink:
             await self.runtime.enqueue(bot, channel, caller, frame.payload["text"], completed=completed)
         except (BotError, LinkProtocolError):
             await completed("This bot is unavailable here, busy, or not permitted to respond.")
+        except Exception:
+            # Answer the caller rather than leave them waiting for the timeout.
+            _logger.exception("Remote bot request failed")
+            await completed("This bot is unavailable here, busy, or not permitted to respond.")
 
     def _desired(self, db):
         result = {}

@@ -356,7 +356,7 @@ def test_baud_availability_tracks_node_switch_without_losing_instance_grant(db, 
                 await runtime.enqueue(bot, channel, caller, "help", pid)
                 await next_line(queue, "No language model is enabled")
                 await runtime.enqueue(bot, channel, caller, "unknown command", pid)
-                await next_line(queue, "Conversation and other abilities are not enabled")
+                await next_line(queue, "Conversation is not enabled")
                 for enabled in (True, False):
                     old = runtime.workers[bot.id]
                     model.save_settings(db, replace(config, enabled=enabled), actor=sysop, api_key="")

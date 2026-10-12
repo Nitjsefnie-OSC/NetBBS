@@ -6,6 +6,7 @@ from netbbs.config import get_node_display_name
 from netbbs.link.enforcement import LinkPolicyAction, decide_node_action, decide_user_authorship
 from netbbs.rendering import sanitize_text
 from netbbs.session_history import list_recent_sessions, session_history_name_visible
+from netbbs.timeutil import format_for_display
 
 
 def run_query(db, bot_id, channel_name, query, target, *, caller, online, uptime_seconds):
@@ -54,5 +55,10 @@ def run_query(db, bot_id, channel_name, query, target, *, caller, online, uptime
     if not candidates:
         return unavailable
     timestamp, basis = max(candidates, key=lambda item: item[0])
+    try:
+        # Replies are read by people: the node's one display clock (§6.3).
+        shown = format_for_display(timestamp, db)
+    except ValueError:
+        return unavailable
     return {"available": True, "username": label, "online": False, "at": timestamp, "basis": basis,
-            "text": f"{label}: last recorded {basis} {timestamp}."}
+            "text": f"{label}: last recorded {basis} {shown}."}
