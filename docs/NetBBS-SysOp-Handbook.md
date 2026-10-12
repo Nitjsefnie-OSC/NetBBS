@@ -2014,80 +2014,128 @@ What callers and you see:
 
 ## MRC chat bridge
 
-MRC is a separate, public inter-BBS chat network. It is not NetBBS Link and
-does not provide Link's authenticated identities or trust model.
+| At a glance | |
+| --- | --- |
+| **Set up under** | **Settings ▸ Inter-BBS chat (MRC)** |
+| **Watch under** | **Node ▸ Inter-BBS chat (MRC)** |
+| **Decide first** | Which channels to bridge, and whether callers may open rooms themselves |
 
-1. Under **Settings → Inter-BBS chat (MRC)**, configure and enable the hub
+> [!IMPORTANT]
+> MRC is a separate, public inter-BBS chat network. It is not NetBBS Link and
+> does not provide Link's authenticated identities or trust model.
+
+### Bridge a channel
+
+1. Under **Settings ▸ Inter-BBS chat (MRC)**, configure and enable the hub
    connection and the site name/details it announces. Saving applies live.
 2. Set **MRC room** on each channel you want bridged. One room maps to one
-   channel. Callers see an MRC badge and a notice that their handle is visible.
-3. Optionally enable **Open rooms** so callers can select or name rooms through
-   the Multi Relay Chat picker. Set its access gates, room cap, retention, and
-   blocklist. Adopt a room to retain it, or retire it deliberately.
+   channel. Callers see an MRC badge and a notice that their handle is
+   visible.
+3. Optionally enable **Open rooms** so callers can select or name rooms
+   through the Multi Relay Chat picker. Set its access gates, room cap,
+   retention, and blocklist. Adopt a room to retain it, or retire it
+   deliberately.
 
-IP-address reporting and extra caller metadata are separate opt-in settings.
-Terminal size is sent for reply formatting. Private MRC messages require each
-caller's opt-in and are not confidential from the network. Do not type MRC
-passwords as ordinary chat; `/mrc register`, `/mrc identify`, and the related
-password commands ask separately without echo.
+### What MRC sees
 
-Use **Node → Inter-BBS chat (MRC)** for connection state, round-trip time, errors,
-and reconnect. Pause one channel's bridge or disable the whole bridge without
-removing local chat. MRC moderation and room rules also depend on the remote hub.
+- IP-address reporting and extra caller metadata are separate opt-in
+  settings.
+- Terminal size is sent for reply formatting.
+- Private MRC messages require each caller's opt-in and are not confidential
+  from the network.
 
-The room picker learns the network directory when a caller enters an MRC
-room; `/rooms` refreshes it. Reported user counts are snapshots, with stale
-readings marked. The chat status bar labels local occupancy separately from
-MRC occupancy; the hub roster does not supply a remote away count. A hub
-nickname or room correction that cannot identify one of several local callers
-produces a notice and diagnostic instead of being applied to an arbitrary
-account.
+> [!WARNING]
+> Do not type MRC passwords as ordinary chat; `/mrc register`,
+> `/mrc identify`, and the related password commands ask separately without
+> echo.
+
+### Run the bridge
+
+Use **Node ▸ Inter-BBS chat (MRC)** for connection state, round-trip time,
+errors, and reconnect. Pause one channel's bridge or disable the whole bridge
+without removing local chat. MRC moderation and room rules also depend on the
+remote hub.
+
+<details>
+<summary>Room directory, user counts and roster corrections</summary>
+
+- The room picker learns the network directory when a caller enters an MRC
+  room; `/rooms` refreshes it.
+- Reported user counts are snapshots, with stale readings marked.
+- The chat status bar labels local occupancy separately from MRC occupancy;
+  the hub roster does not supply a remote away count.
+- A hub nickname or room correction that cannot identify one of several local
+  callers produces a notice and diagnostic instead of being applied to an
+  arbitrary account.
+
+</details>
 
 ## FTN networks (FidoNet, fsxNet)
 
-NetBBS can join FidoNet or an FTN othernet, such as fsxNet, as an ordinary FTN
-node. Echomail arrives on boards and netmail in Mail. It is a gateway, not
-NetBBS Link. An FTN board is never also a Linked board, and nothing that
-arrives over FTN is trust-evaluated.
+| At a glance | |
+| --- | --- |
+| **Set up under** | **Settings ▸ Echomail & netmail (FTN)** |
+| **Watch under** | **Node ▸ Echomail & netmail (FTN)** |
+| **From the shell** | `python -m netbbs.admin ftn-import-nodelist` |
+| **Decide first** | Which network to join; fsxNet is the usual first network for a new BBS |
 
-1. Apply to the network for an address. fsxNet, the usual first network for a
-   new BBS, takes applications by email on the form in its infopack. It gives
-   you an address such as `21:1/199`, a hub, and one password for both BinkP
-   and AreaFix.
-2. Under **Settings → Echomail & netmail (FTN)**, press [C]reate.
+NetBBS can join FidoNet or an FTN othernet, such as fsxNet, as an ordinary FTN
+node. Echomail arrives on boards and netmail in Mail.
+
+> [!IMPORTANT]
+> It is a gateway, not NetBBS Link. An FTN board is never also a Linked
+> board, and nothing that arrives over FTN is trust-evaluated.
+
+In this chapter: [Join a network](#join-a-network) · [Netmail](#netmail) ·
+[Held packets and status](#held-packets-and-status) ·
+[Not supported](#not-supported)
+
+### Join a network
+
+1. Apply to the network for an address. fsxNet, the usual first network for
+   a new BBS, takes applications by email on the form in its infopack. It
+   gives you an address such as `21:1/199`, a hub, and one password for both
+   BinkP and AreaFix.
+2. Under **Settings ▸ Echomail & netmail (FTN)**, press
+   <kbd>C</kbd> **Create**.
    - A new network starts as fsxNet's main hub. Enter **Our address** and the
-     passwords, then **Enable** it.
+     passwords, then set **Enabled**.
    - **Answer calls** lets the hub, and other nodes, call this BBS on the
      **Answer port** (24554 by default), which must be reachable from the
      internet.
-   - Without it, the BBS only calls out, once every **Poll** interval.
-3. On each board that should carry an echo, use [E]cho on the board's screen
-   and enter the echo's tag, such as `FSX_GEN`. Each echo goes to one board,
-   and a Linked board can't carry one.
-4. Ask the hub to send those echoes. Under **Node → Echomail & netmail (FTN)**, press
-   [A]reaFix and enter `+FSX_GEN`, or `%LIST` to see what the hub carries. The
-   hub's answer arrives in your Mail.
+   - Without it, the BBS only calls out, once every **Poll every** interval.
+3. On each board that should carry an echo, use <kbd>E</kbd> **Echo (FTN)**
+   on the board's screen and enter the echo's tag, such as `FSX_GEN`. Each
+   echo goes to one board, and a Linked board can't carry one.
+4. Ask the hub to send those echoes. Under
+   **Node ▸ Echomail & netmail (FTN)**, press <kbd>A</kbd> **AreaFix** and
+   enter `+FSX_GEN`, or `%LIST` to see what the hub carries. The hub's answer
+   arrives in your Mail.
 
-An echomail message from the network is posted under its author's FTN name
-and address, and goes through the board's own moderation. What callers post on
-an FTN board goes out with the next call. Edits and deletions stay on this BBS,
-because FTN has no way to carry them.
+#### How echomail behaves
+
+- An echomail message from the network is posted under its author's FTN name
+  and address, and goes through the board's own moderation.
+- What callers post on an FTN board goes out with the next call.
+- Edits and deletions stay on this BBS, because FTN has no way to carry them.
 
 ### Netmail
 
 Netmail is personal mail to an address written as `Name (zone:net/node)`.
 
-- **Who may send it:** each network has a **Netmail level**, and only accounts
-  at that level may send netmail. It starts at 255, SysOp only, because netmail
-  leaves under this BBS's address.
-- **Who receives it:** every account. Netmail for a name with no account here
-  comes to you.
-- **Direct delivery:** import the network's nodelist, either from **Node →
-  Echomail & netmail (FTN)** with [N]odelist import, or with
-  `python -m netbbs.admin ftn-import-nodelist fsxNet FSXNET.280`. Netmail to a
-  node whose nodelist entry gives a BinkP host then goes to it directly.
-- **Via the hub:** the rest goes through the hub, and so does anything a direct
-  call fails to deliver after three tries.
+| Netmail | |
+| --- | --- |
+| **Who may send it** | Each network has a **Netmail level**, and only accounts at that level may send netmail. It starts at 255, SysOp only, because netmail leaves under this BBS's address. |
+| **Who receives it** | Every account. Netmail for a name with no account here comes to you. |
+| **Direct delivery** | Import the network's nodelist (below). Netmail to a node whose nodelist entry gives a BinkP host then goes to it directly. |
+| **Via the hub** | The rest goes through the hub, and so does anything a direct call fails to deliver after three tries. |
+
+Import the nodelist either from **Node ▸ Echomail & netmail (FTN)** with
+<kbd>N</kbd> **Nodelist import**, or on the host:
+
+```sh
+python -m netbbs.admin ftn-import-nodelist fsxNet FSXNET.280
+```
 
 ### Held packets and status
 
@@ -2097,11 +2145,13 @@ Some packets are held instead of tossed:
 - a packet addressed to another address;
 - a message that couldn't be stored, for example because a mailbox was full.
 
-Look at them under **Node → Echomail & netmail (FTN)** with [H]eld packets, then [R]elease
-(toss) or [D]elete each one.
+Look at them under **Node ▸ Echomail & netmail (FTN)** with
+<kbd>H</kbd> **Held packets**, then <kbd>R</kbd> **Release** (toss) or
+<kbd>D</kbd> **Delete** each one.
 
-**Node → Echomail & netmail (FTN)** also shows each network's last call, errors, waiting
-messages and recently answered calls. [P]oll now calls the hub at once.
+**Node ▸ Echomail & netmail (FTN)** also shows each network's last call,
+errors, waiting messages and recently answered calls.
+<kbd>P</kbd> **Poll now** calls the hub at once.
 
 ### Not supported
 
@@ -2109,7 +2159,8 @@ messages and recently answered calls. [P]oll now calls the hub at once.
 - acting as a hub for other nodes;
 - ARC and ARJ bundles. Ask the hub for ZIP bundles or uncompressed packets.
 
-Check a network's rules before gating its echoes anywhere else.
+> [!NOTE]
+> Check a network's rules before gating its echoes anywhere else.
 
 ## Daily operation
 
