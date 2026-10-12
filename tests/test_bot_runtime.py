@@ -257,9 +257,9 @@ def test_request_text_reaches_bots_as_plain_text(db, lane, hub, sysop, alice, ch
         try:
             await eventually(lambda: bot.id in runtime.running_ids)
             caller = {"id": "link:abc:bob", "name": "bob@Elsewhere"}
-            await runtime.enqueue(bot, channel, caller, "remind 1h tab\there\x1b[2J‮end")
+            await runtime.enqueue(bot, channel, caller, "remind 1h tab\there\x1b[2J\u202eend  keeps  spacing")
             await next_line(queue, "Saved reminder")
-            assert read_state(db, bot.storage_name)["reminders"][0]["text"] == "tab here[2Jend"
+            assert read_state(db, bot.storage_name)["reminders"][0]["text"] == "tab here[2Jend  keeps  spacing"
         finally:
             await runtime.close()
             hub.leave(channel.name, pid)

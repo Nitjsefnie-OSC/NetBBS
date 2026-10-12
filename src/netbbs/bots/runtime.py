@@ -125,7 +125,8 @@ class BotRuntime:
             raise BotError(f"{bot.label} is busy; try again shortly.")
         # Link request text arrives unsanitized; a control kept here would be
         # stored by the bot and refused by publish on every later attempt.
-        text = " ".join(sanitize_text(text).split())
+        # Ordinary spacing is the caller's and passes through unchanged.
+        text = sanitize_text(text).replace("\t", " ")
         request = uuid.uuid4().hex
         worker.pending[request] = (channel.name, participant_id, time.monotonic() + REQUEST_SECONDS, completed, dict(caller), text)
         worker.events.put_nowait({"type": "message", "request": request, "channel": channel.name,
