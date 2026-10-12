@@ -8277,15 +8277,21 @@ dispatch, per-item try/except-log-and-continue tolerance, the fixed sleep
 — is unchanged.
 
 **SysOp surface**: `list_work_items` (filterable by status/kind) plus
-`replay_work_item`/`cancel_work_item` (both audit-logged via
-`record_action`, matching every other SysOp-triggered mutation in this
-codebase) — a new admin-menu screen, most naturally alongside `[L]ink
-status` under `System`, listing dead-lettered/retrying items with a picker
-to inspect one and replay or cancel it. `replay_work_item` resets a
-`dead_lettered`/`cancelled` item to `pending` with `attempts = 0` and, for
-`link_mail_delivery`, is the one place the caller undoes the
-`mail_messages.link_delivery_status = 'expired'` side effect back to
-`'pending'` — symmetric with how dead-lettering set it.
+`replay_work_item`/`cancel_work_item`/`delete_work_item` (all audit-logged
+via `record_action`, matching every other SysOp-triggered mutation in this
+codebase) — the Outbox screen under Operations, listing dead-lettered/
+retrying items with a picker to inspect one and replay, cancel or delete
+it. `replay_work_item` resets a `dead_lettered`/`cancelled` item to
+`pending` with `attempts = 0` and a fresh `created_at`, so a replay gets
+the whole retry schedule again rather than meeting the age cap on its first
+failure (issue #1245), and, for `link_mail_delivery`, is the one place the
+caller undoes the `mail_messages.link_delivery_status = 'expired'` side
+effect back to `'pending'` — symmetric with how dead-lettering set it.
+`delete_work_item` removes a `dead_lettered`/`cancelled` row outright, after
+a yes/no, for a recipient that is gone for good, where every replay would
+only fail again and keep Link reporting ATTENTION (issue #1245). It touches
+nothing else: a letter stays `expired`, so its sender still knows it was
+not delivered.
 
 **Explicitly deferred, not part of this slice**: retention/purge of old
 `dead_lettered`/`cancelled`/`pushed` rows (this table will otherwise grow

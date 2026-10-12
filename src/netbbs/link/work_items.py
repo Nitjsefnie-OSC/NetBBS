@@ -60,9 +60,9 @@ _UNRESOLVED_STATUSES = ("pending", "retrying")
 
 
 class WorkItemError(Exception):
-    """Raised for an invalid work-item state transition (replaying
-    something that isn't dead-lettered/cancelled, cancelling something
-    already resolved) or an unknown work-item id."""
+    """Raised for an invalid work-item state transition (replaying or
+    deleting something that isn't dead-lettered/cancelled, cancelling
+    something already resolved) or an unknown work-item id."""
 
 
 @dataclass(frozen=True)
@@ -264,6 +264,9 @@ def wake_work_items_for_target(db: Database, target_fingerprint: str, *, error: 
 def replay_work_item(db: Database, work_item_id: int, *, replayed_by: User) -> WorkItem:
     """Reset a `dead_lettered`/`cancelled` item back to `pending` with a
     clean attempt count, eligible for an immediate retry next pass.
+    `created_at` restarts too: `record_failure`'s age budget counts from
+    it, so keeping the original would dead-letter a replay of any item
+    older than `_MAX_AGE_SECONDS` on its first failure (issue #1245).
     Refuses on anything not already terminal -- replaying a `pending`/
     `retrying` item makes no sense (it's already going to be tried
     again on its own), and replaying an already-`pushed` one would
@@ -278,10 +281,11 @@ def replay_work_item(db: Database, work_item_id: int, *, replayed_by: User) -> W
     db.connection.execute(
         """
         UPDATE link_work_items
-        SET status = 'pending', attempts = 0, next_attempt_at = ?, last_error = NULL, resolved_at = NULL
+        SET status = 'pending', attempts = 0, next_attempt_at = ?, created_at = ?, last_error = NULL,
+            resolved_at = NULL
         WHERE id = ?
         """,
-        (now, work_item_id),
+        (now, now, work_item_id),
     )
     record_action(
         db, actor=replayed_by, action="replay_link_work_item", object_type="link_work_item",
@@ -308,6 +312,25 @@ def cancel_work_item(db: Database, work_item_id: int, *, cancelled_by: User) -> 
         object_id=work_item_id, detail=f"kind={item.kind} target={item.target_fingerprint}",
     )
     return get_work_item(db, work_item_id)
+
+
+def delete_work_item(db: Database, work_item_id: int, *, deleted_by: User) -> None:
+    """Forget a `dead_lettered`/`cancelled` item for good -- for a SysOp
+    whose recipient is gone, so a replay could only fail again (issue
+    #1245). Only the tracking row goes: a letter's own `expired` delivery
+    status stays, so its sender still sees it was not delivered. Refuses
+    on anything still unresolved (cancel it first) or already pushed."""
+    item = get_work_item(db, work_item_id)
+    if item.status not in ("dead_lettered", "cancelled"):
+        raise WorkItemError(
+            f"cannot delete work item {work_item_id}: status is {item.status!r}, "
+            "not 'dead_lettered' or 'cancelled'"
+        )
+    db.connection.execute("DELETE FROM link_work_items WHERE id = ?", (work_item_id,))
+    record_action(
+        db, actor=deleted_by, action="delete_link_work_item", object_type="link_work_item",
+        object_id=work_item_id, detail=f"kind={item.kind} target={item.target_fingerprint}",
+    )
 
 
 def _row_to_work_item(row) -> WorkItem:
