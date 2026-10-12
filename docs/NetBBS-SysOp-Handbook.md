@@ -1746,7 +1746,7 @@ Check a network's rules before gating its echoes anywhere else.
 | --- | --- |
 | **Where** | The SysOp console's dashboard, **Settings** and **Operations** |
 | **From the shell** | `python -m netbbs.admin` (the console with the node stopped), `python -m netbbs.search check\|rebuild --db PATH` |
-| **Decide first** | Your display timezone, and whether guests may use mail, the node map and your own doors |
+| **Decide first** | Your display timezone, and whether guests may use the node map and your own doors |
 
 In this chapter: [Routine checks](#routine-checks) ·
 [Limits and retention](#limits-and-retention) ·
@@ -1911,7 +1911,9 @@ Up/Down selects a caller. Then:
 | <kbd>M</kbd> **Message** | Sends them a line. |
 | <kbd>K</kbd> **Kick** | Opens the same disconnect screen as **Who**: an optional message, then <kbd>D</kbd> **Disconnect**, which is recorded in the audit log. |
 | <kbd>U</kbd> **Unwind** | Sends them back to the main menu. |
-| <kbd>O</kbd> **Order** | Sorts by time on, idle time or name; a mark in the heading shows which. |
+
+<kbd>O</kbd> **Order** sorts the whole table by time on, idle time or name; a
+mark in the heading shows which.
 
 **Snoop:** the caller is not told at the time. Chat's `/help` and the User
 Handbook say that you can do this, and the node log records every snoop: who
