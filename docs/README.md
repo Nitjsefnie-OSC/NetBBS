@@ -53,3 +53,35 @@ link to it. Update present-tense status in place; keep release history in
 release notes and Git history. Verify commands and menu names against the
 current implementation, and distinguish automated evidence from manual
 or cross-platform validation.
+
+### Formatting the handbooks
+
+The handbooks carry no screenshots: a picture of a menu that has since
+changed misleads more than it helps. Structure carries the reading instead.
+These conventions apply to chapters as they are reworked; the SysOp
+handbook's "Accounts, permissions, and identity" chapter is the model.
+
+| Element | Write | Renders as |
+| --- | --- | --- |
+| Menu path | `**Users ▸ Held names**` | **Users ▸ Held names** |
+| Hotkey with its label | `<kbd>L</kbd> **Level**` | <kbd>L</kbd> **Level** |
+| A key on its own | `<kbd>Esc</kbd>` | <kbd>Esc</kbd> |
+
+- Write labels as the console draws them, without the hotkey brackets.
+  `tests/test_handbook_menu_names.py` checks every menu path and every
+  hotkey-with-label in these notations against the source, so a renamed
+  screen fails the test suite instead of going stale. Text in the older
+  notation (`→`, `[N]ame`) is not checked.
+- Start a chapter with a short table: where it lives in the console, its
+  shell commands, and the decision to make first.
+- Write a procedure as numbered steps, with its explanation after them, and
+  a set of rules or effects as a bulleted list rather than a paragraph.
+- Use GitHub alerts sparingly, at most a few per section:
+  `> [!NOTE]` for background worth knowing, `> [!TIP]` for a shortcut or a
+  good default, `> [!IMPORTANT]` for what a step needs to succeed,
+  `> [!WARNING]` for what can lock someone out or give away too much, and
+  `> [!CAUTION]` for what cannot be undone.
+- Fold rationale and rare cases into `<details>` with a `<summary>` that
+  says what is inside.
+- Give a task its own `####` heading named for the task ("Reset a
+  password"), so the page outline finds it.
