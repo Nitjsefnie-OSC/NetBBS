@@ -280,15 +280,28 @@ its `ReadWritePaths` if you put games or state elsewhere. NetBSD's example sets
 | Telnet | Disabled, loopback, port 2323 | Enable explicitly; plaintext credentials and traffic |
 | Web | Disabled, loopback, port 8080 | Install `web` extra; provide HTTPS through a reverse proxy |
 
-**MANUAL — outside NetBBS:** configure firewall rules, router forwarding,
-DNS, and the reverse proxy for the connection methods you offer. A bind
-address of `0.0.0.0` means all IPv4 interfaces; it is not an address to give
-callers. A loopback listener is reachable only from the same host. Enabling
-Telnet or web with `enabled = true` alone leaves it on loopback; the node log
-says so at every start, naming the `host` line to add.
+In this chapter: [Reaching the node](#reaching-the-node) ·
+[Browser access behind a proxy](#browser-access-behind-a-proxy) ·
+[File transfers](#file-transfers)
 
-For a browser terminal and transfer links behind a proxy, replace the existing
-`[web]` table with:
+### Reaching the node
+
+> [!IMPORTANT]
+> **Manual, outside NetBBS.** Configure firewall rules, router forwarding,
+> DNS, and the reverse proxy for the connection methods you offer.
+
+- A bind address of `0.0.0.0` means all IPv4 interfaces; it is not an
+  address to give callers.
+- A loopback listener is reachable only from the same host.
+- Enabling Telnet or web with `enabled = true` alone leaves it on loopback;
+  the node log says so at every start, naming the `host` line to add.
+
+### Browser access behind a proxy
+
+#### 1. Configure the web listener
+
+For a browser terminal and transfer links behind a proxy, replace the
+existing `[web]` table with:
 
 ```toml
 [web]
@@ -299,18 +312,28 @@ public_url = "https://bbs.example.org"
 trusted_proxies = ["127.0.0.1", "::1"]
 ```
 
-Point the HTTPS proxy at that local port, forwarding WebSocket upgrades as
-well as ordinary requests. Set its upload body limit at least 1 MiB above
-NetBBS's upload cap (**Settings → Limits & retention**, 100 MiB by default):
-a browser upload carries form framing on top of the file.
-Use a real hostname and certificate;
-`bbs.example.org` is a placeholder. Restart after changing listener settings.
+Use a real hostname and certificate; `bbs.example.org` is a placeholder.
+Restart after changing listener settings.
 
-If you don't run a web server yet, [Caddy](https://caddyserver.com/) is the
-shortest route: it obtains and renews the certificate itself, forwards
-WebSocket upgrades, and sets no upload limit of its own. The hostname must
-already point at this host, with ports 80 and 443 reachable from outside.
-Its whole `Caddyfile` is below. Debian and Ubuntu packages read
+#### 2. Point an HTTPS proxy at it
+
+The proxy must:
+
+- forward to that local port, WebSocket upgrades as well as ordinary
+  requests;
+- allow an upload body at least 1 MiB above NetBBS's upload cap
+  (**Settings ▸ Limits & retention**, 100 MiB by default): a browser upload
+  carries form framing on top of the file.
+
+Pick the one you run:
+
+<details>
+<summary><b>Caddy</b>: the shortest route if you don't run a web server yet</summary>
+
+[Caddy](https://caddyserver.com/) obtains and renews the certificate itself,
+forwards WebSocket upgrades, and sets no upload limit of its own. The
+hostname must already point at this host, with ports 80 and 443 reachable
+from outside. Its whole `Caddyfile` is below. Debian and Ubuntu packages read
 `/etc/caddy/Caddyfile`; on NetBSD, pkgsrc's Caddy reads
 `/usr/pkg/etc/caddy/Caddyfile`.
 
@@ -320,7 +343,12 @@ bbs.example.org {
 }
 ```
 
-With nginx, inside the `server` block that already holds your certificate:
+</details>
+
+<details>
+<summary><b>nginx</b></summary>
+
+Inside the `server` block that already holds your certificate:
 
 ```nginx
 location / {
@@ -338,8 +366,13 @@ location / {
 `proxy_read_timeout` keeps nginx from cutting off a browser caller who sits
 idle for a minute, and `client_max_body_size` follows the upload cap.
 
-With Apache httpd 2.4.47 or later, with `mod_proxy` and `mod_proxy_http`
-loaded, inside the `VirtualHost` that already holds your certificate:
+</details>
+
+<details>
+<summary><b>Apache httpd</b> 2.4.47 or later</summary>
+
+With `mod_proxy` and `mod_proxy_http` loaded, inside the `VirtualHost` that
+already holds your certificate:
 
 ```apache
 ProxyPreserveHost On
@@ -349,39 +382,63 @@ LimitRequestBody 105906176
 ```
 
 NetBBS sends no WebSocket pings, so without `timeout=` Apache cuts off an idle
-browser caller at its global `Timeout`. On NetBSD, one host refused every
-backend connection with `AH00957 (22)Invalid argument` when it was set to
-3600, while 600 and 1800 work; stay at 1800 or below there.
-`LimitRequestBody` is in bytes, 101 MiB here.
+browser caller at its global `Timeout`. `LimitRequestBody` is in bytes,
+101 MiB here.
 
-**Each browser caller's own address.** Behind any of these proxies, every
-browser caller reaches NetBBS from the proxy's address. `trusted_proxies`
-tells NetBBS which addresses are your proxies: for a connection from one of
-them, NetBBS takes the caller's address from the `X-Forwarded-For` header the
-proxy adds (Caddy and Apache add it by default; the nginx example above has
-the line). Without it, all web callers share one address: one caller
-mistyping a password, or one script guessing, soon throttles **every** web
-login on the node, and the SysOp screens cannot tell browser callers apart.
-List only proxies you run. A caller can write anything into the header, so
-NetBBS reads it only from a connection whose own address is listed, and then
-only the entry your proxy added. Entries are IP addresses or networks such as
-`10.0.0.0/8`, never hostnames.
+> [!WARNING]
+> On NetBSD, one host refused every backend connection with
+> `AH00957 (22)Invalid argument` when it was set to 3600, while 600 and 1800
+> work; stay at 1800 or below there.
 
-`public_url` supplies the externally reachable base address for transfer links.
-Without it, a node bound to a wildcard or loopback address cannot give remote
-terminal callers a usable link. A specific reachable bind address may be used
-as a fallback, but explicit configuration is preferable behind a proxy. When
-the web listener is on and SSH or Telnet callers would get no link, the node
-log warns at every start.
+</details>
 
-File transfers work through the browser, through short-lived browser links
-shown to terminal callers, or through Zmodem in a capable terminal client.
+#### 3. Let NetBBS see each browser caller's own address
+
+Behind any of these proxies, every browser caller reaches NetBBS from the
+proxy's address. `trusted_proxies` tells NetBBS which addresses are your
+proxies: for a connection from one of them, NetBBS takes the caller's address
+from the `X-Forwarded-For` header the proxy adds (Caddy and Apache add it by
+default; the nginx example above has the line).
+
+> [!WARNING]
+> Without it, all web callers share one address: one caller mistyping a
+> password, or one script guessing, soon throttles **every** web login on the
+> node, and the SysOp screens cannot tell browser callers apart.
+
+- List only proxies you run. A caller can write anything into the header, so
+  NetBBS reads it only from a connection whose own address is listed, and
+  then only the entry your proxy added.
+- Entries are IP addresses or networks such as `10.0.0.0/8`, never
+  hostnames.
+
+#### Why `public_url` matters
+
+`public_url` supplies the externally reachable base address for transfer
+links. Without it, a node bound to a wildcard or loopback address cannot give
+remote terminal callers a usable link. A specific reachable bind address may
+be used as a fallback, but explicit configuration is preferable behind a
+proxy. When the web listener is on and SSH or Telnet callers would get no
+link, the node log warns at every start.
+
+### File transfers
+
+File transfers work three ways:
+
+| Route | Who can use it |
+| --- | --- |
+| Through the browser | Browser callers |
+| Short-lived browser links shown to terminal callers | Terminal callers |
+| Zmodem | Callers with a capable terminal client |
+
 PuTTY and ordinary SSH clients lack Zmodem. They need the web listener for
 browser transfers. SFTP is not provided by the NetBBS SSH server.
 
-Transfer URLs contain bearer tokens: anyone holding one can use that transfer.
-Use HTTPS, avoid sharing or logging those links, and request a new link after
-expiry. The node's upload limit and any lower proxy limit both apply.
+> [!CAUTION]
+> Transfer URLs contain bearer tokens: anyone holding one can use that
+> transfer. Use HTTPS, avoid sharing or logging those links, and request a
+> new link after expiry.
+
+The node's upload limit and any lower proxy limit both apply.
 
 ## Using the SysOp console
 
