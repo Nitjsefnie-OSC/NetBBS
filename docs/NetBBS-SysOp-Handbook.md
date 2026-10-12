@@ -220,7 +220,7 @@ First-run onboarding offers two independent choices:
 | **Join NetBBS Link through the reliable nodes** | Outgoing-only participation, using the project's bootstrap and relay nodes. A distinct node name is required. |
 | **Managed `<name>.netbbs.org` subdomain** | A public hostname managed through the project's DNS service. This does not configure your router, TLS, or ports. |
 
-> [!CAUTION]
+> [!WARNING]
 > Read the choices before pressing <kbd>Enter</kbd>: the first-run choices
 > default to yes.
 
