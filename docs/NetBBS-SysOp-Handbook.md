@@ -1085,25 +1085,44 @@ boards, chat channels, file catalogues, and mail. Your node decides what to
 carry and which peers to trust. A signature identifies who sent something;
 it does not make that sender trustworthy.
 
-**Current boundary:** asynchronous services, trust controls, live chat,
-presence, and live relay are implemented. Federation remains private and
-experimental pending [public-readiness validation](NetBBS-phase4-readiness.md)
-and independently operated dogfood. Independent implementation compatibility
-is not yet established. Local Communities are available; Link Communities
-and cross-node `/dm` invitation chats are not. Cross-node `/msg` and `/private`
-do work when a live path exists.
+| At a glance | |
+| --- | --- |
+| **Where** | **Settings ▸ Join NetBBS Link**, **Operations ▸ Link status**, **Settings ▸ Policy trust**, **Operations ▸ Mail** |
+| **From the shell** | `python -m netbbs.admin export-node-map`, `python -m netbbs.admin rotate-key` |
+| **Decide first** | Outgoing-only (the default, no port forwarding) or a full peer |
+
+> [!NOTE]
+> **Current boundary:** asynchronous services, trust controls, live chat,
+> presence, and live relay are implemented. Federation remains private and
+> experimental pending [public-readiness validation](NetBBS-phase4-readiness.md)
+> and independently operated dogfood. Independent implementation
+> compatibility is not yet established. Local Communities are available;
+> Link Communities and cross-node `/dm` invitation chats are not. Cross-node
+> `/msg` and `/private` do work when a live path exists.
+
+In this chapter: [Join and share](#join-and-share) ·
+[Link mail](#link-mail) · [Behind an HTTP proxy](#behind-an-http-proxy) ·
+[Trust and recovery](#trust-and-recovery) · [Managed names](#managed-names) ·
+[Node keys](#node-keys)
 
 ### Join and share
 
-Install the `web` extra even if callers use only SSH. Enable participation
-through first-run onboarding or **Settings → Join NetBBS Link**, unless TOML
-explicitly overrides it. Use a distinct node name. The default outgoing-only
-mode uses reliable nodes for discovery and relay; no Link port forwarding is
-needed. Caller access still needs its own reachable listener.
+#### Join the Link
+
+1. Install the `web` extra, even if callers use only SSH.
+2. Enable participation through first-run onboarding or
+   **Settings ▸ Join NetBBS Link**, unless TOML explicitly overrides it.
+3. Use a distinct node name.
+
+The default outgoing-only mode uses reliable nodes for discovery and relay; no
+Link port forwarding is needed. Caller access still needs its own reachable
+listener.
 
 Reliable nodes are bootstrap/relay infrastructure, not owners of your BBS.
 Manual seeds can supplement them. A full peer additionally advertises a
 reachable Link address and needs the corresponding network setup.
+
+#### Run as a full peer
 
 For a full peer, these are the two Link listeners, separate from caller ports:
 
@@ -1119,164 +1138,235 @@ advertised_port = 7862
 realtime_advertised_port = 8862
 ```
 
-**MANUAL — outside NetBBS:** replace the hostname and allow/forward both TCP
-ports to this node. Restart and have another operator check asynchronous
-exchange and live chat separately. If omitted, the real-time port is the HTTP
-Link port plus 1000. Keep outgoing-only mode if you cannot provide this reachability.
+> [!IMPORTANT]
+> **Manual, outside NetBBS:** replace the hostname and allow/forward both TCP
+> ports to this node. Restart and have another operator check asynchronous
+> exchange and live chat separately.
 
-The
+If omitted, the real-time port is the HTTP Link port plus 1000. Keep
+outgoing-only mode if you cannot provide this reachability. The
 [developer handbook's configuration reference](NetBBS-Developer-Handbook.md#node-configuration-reference)
 lists the less common transport and quota settings.
 
-Create a local resource before promoting it to linked scope. Linked boards,
-channels and file areas from other nodes are carried automatically up to the
-`max_carried_boards` / `max_carried_channels` / `max_carried_file_areas` caps
-(500 each; **Settings → Operating limits → Carry caps**). Past a cap, a new one is not lost: it waits under **Link status →
-Offered**, with its origin and why, until you **Accept** it (not limited by the
-cap) or **Exclude** it. Set a cap to 0 to carry only what you accept. Lowering a
-cap removes nothing already carried. Deleting a carried resource that another
-node originated excludes it without destroying it: callers stop seeing it and
-this node stops carrying it, but everything in it -- your users' posts, your
-moderation -- is kept. **Link status → Excluded** lists it: **Restore** brings it
-back exactly as it was (what arrived meanwhile follows with the next sync), and
-**Purge** deletes it for good. Its name stays taken until you do one or the
-other. Deleting a board, channel or file area this node originated is still a
-real delete. Link status shows `carried/cap` for all three kinds and how many are
-offered and excluded.
-
-On a Linked board this node originated, the board's screen has **[W]ho posts**,
-which steps through three settings that every node carrying the board
-follows:
-
-- **anyone** (the default): every node's callers post, each node's own write
-  level holding its own callers;
-- **the origin's callers start threads; anyone replies**: for announcements
-  people can answer;
-- **the origin's callers only**: for announcements nobody else writes in.
-
-A post from another node that the setting does not allow is not shown
-anywhere, and callers on other nodes are not offered **[P]ost** (or
-**[R]eply**) where it would be refused; the board tells them why. The setting
-reaches other nodes with the next sync pass. Every board's screen shows it as
-**Who posts**. Your own write level still holds your own callers: an
-announcements board is write level 255 here and "origin's callers only"
-everywhere. A closed board takes no new post from any node.
+#### What your node carries
 
 There is nothing to subscribe to: what an established peer shares arrives on
-its own, within the caps. A node's screen under **Link status → Peers** lists
-what this node already carries from it and, while it is on probation here,
-what it offers that is being held back. Carrying a message board creates a
-local browsable copy; file catalogues do not automatically download all file
-contents. Carried boards, channels and file areas appear in callers' **Message
-boards**, **Chat** and **Files** lists, outside any Community, because Link
-Communities do not exist; edit one and set its **Community** to put it in one
-of yours. Ask the other SysOp to verify both sides when first testing
-publication. Hello/discovery alone does not prove content arrived.
+its own, within the caps. Linked boards, channels and file areas from other
+nodes are carried automatically up to the `max_carried_boards` /
+`max_carried_channels` / `max_carried_file_areas` caps (500 each;
+**Settings ▸ Operating limits ▸ Carry caps**).
 
-Linking one of your own boards, channels or file areas sends it to the peers
-you have established, on a later sync pass. Its **NetBBS Link** rows then show,
-for each peer, whether it holds it, refused it because your node is on
-probation there, or is not sent it while it is on probation here. A node
-learns this only from peers it dials itself, so a peer that only dials yours
-reads "not known". **Fork of** is for a board that carries on another node's
-board under yours, for example after that one was closed; leave it empty for
-a board of your own.
+- **Past a cap**, a new one is not lost: it waits under
+  **Link status ▸ Offered**, with its origin and why, until you
+  <kbd>A</kbd> **Accept** it (not limited by the cap) or
+  <kbd>E</kbd> **Exclude** it.
+- Set a cap to 0 to carry only what you accept.
+- Lowering a cap removes nothing already carried.
+- Link status shows `carried/cap` for all three kinds and how many are offered
+  and excluded.
+
+A node's screen under **Link status ▸ Peers** lists what this node already
+carries from it and, while it is on probation here, what it offers that is
+being held back.
+
+- Carrying a message board creates a local browsable copy; file catalogues do
+  not automatically download all file contents.
+- Carried boards, channels and file areas appear in callers'
+  **Message boards**, **Chat** and **Files** lists, outside any Community,
+  because Link Communities do not exist. Edit one and set its **Community** to
+  put it in one of yours.
+
+> [!TIP]
+> Ask the other SysOp to verify both sides when first testing publication.
+> Hello/discovery alone does not prove content arrived.
+
+#### Remove a carried resource
+
+Deleting a carried resource that another node originated excludes it without
+destroying it: callers stop seeing it and this node stops carrying it, but
+everything in it -- your users' posts, your moderation -- is kept.
+**Link status ▸ Excluded** lists it:
+
+- <kbd>R</kbd> **Restore** brings it back exactly as it was (what arrived
+  meanwhile follows with the next sync).
+- <kbd>P</kbd> **Purge** deletes it for good.
+
+Its name stays taken until you do one or the other.
+
+> [!CAUTION]
+> Deleting a board, channel or file area this node originated is still a real
+> delete.
+
+#### Share your own boards, channels and file areas
+
+Create a local resource before promoting it to linked scope. Linking one of
+your own boards, channels or file areas sends it to the peers you have
+established, on a later sync pass. Its **NetBBS Link** rows then show, for each
+peer, whether it:
+
+- holds it,
+- refused it because your node is on probation there, or
+- is not sent it while it is on probation here.
+
+A node learns this only from peers it dials itself, so a peer that only dials
+yours reads "not known". **Fork of** is for a board that carries on another
+node's board under yours, for example after that one was closed; leave it
+empty for a board of your own.
+
+#### Who may post on a linked board
+
+On a Linked board this node originated, the board's screen has
+<kbd>W</kbd> **Who posts**, which steps through three settings that every node
+carrying the board follows:
+
+| Setting | Use |
+| --- | --- |
+| **anyone** (the default) | Every node's callers post, each node's own write level holding its own callers |
+| **the origin's callers start threads; anyone replies** | Announcements people can answer |
+| **the origin's callers only** | Announcements nobody else writes in |
+
+- A post from another node that the setting does not allow is not shown
+  anywhere, and callers on other nodes are not offered <kbd>P</kbd> **Post**
+  (or <kbd>R</kbd> **Reply**) where it would be refused; the board tells them
+  why.
+- The setting reaches other nodes with the next sync pass. Every board's
+  screen shows it as **Who posts**.
+- Your own write level still holds your own callers: an announcements board
+  is write level 255 here and "origin's callers only" everywhere.
+- A closed board takes no new post from any node.
+
+#### Link mail
 
 Asynchronous delivery can continue after a peer reconnects. Live chat and
 private messages require a working live session; a failed live message is not
 silently converted to mail. Link mail is encrypted to the recipient's home
 node for ordinary accounts; the home-node operator can read it.
 
-Link mail follows node trust. Once you establish a node -- **Establish** on
-its screen under **Link status → Peers**, or under **Settings → Policy trust →
-Subjects** -- mail from all its callers is delivered here, even from callers still on probation;
-their posts still wait in the approval queue. Mail from a node you have not
-established yet, or from a caller or node you quarantined or blocked, is
-refused and bounced back to its sender. The same holds the other way: your
-callers cannot address mail to a node you have not established, and are told
-so as they type the address. An address is written as its name is displayed,
-capitals included. An account from before the username rules whose name has
-a space or other punctuation cannot send Link mail, because no reply could
-reach it; rename it if its owner needs to. Mail already waiting in the **Outbox** for a
-node goes out on the next Link pass after you establish it, and expires if
-the node is not established before its retries run out.
+Link mail follows node trust:
 
-**Operations → Mail** shows the other side: mail other nodes sent here that
+- Once you establish a node -- <kbd>E</kbd> **Establish** on its screen under
+  **Link status ▸ Peers**, or under **Settings ▸ Policy trust ▸ Subjects** --
+  mail from all its callers is delivered here, even from callers still on
+  probation; their posts still wait in the approval queue.
+- Mail from a node you have not established yet, or from a caller or node you
+  quarantined or blocked, is refused and bounced back to its sender.
+- The same holds the other way: your callers cannot address mail to a node you
+  have not established, and are told so as they type the address.
+- Mail already waiting in the **Outbox** for a node goes out on the next Link
+  pass after you establish it, and expires if the node is not established
+  before its retries run out.
+
+An address is written as its name is displayed, capitals included. An account
+from before the username rules whose name has a space or other punctuation
+cannot send Link mail, because no reply could reach it; rename it if its owner
+needs to.
+
+#### Mail screens
+
+**Operations ▸ Mail** shows the other side: mail other nodes sent here that
 this node refused, and how full your callers' mailboxes are.
 
-- **Refused Link mail** lists each refused letter with its sender, the reason
-  in plain words (its node is still on probation here, the sender or node is
-  blocked, no such account, a mailbox full of unread mail, ...), when it was
-  last refused and how many times its sender tried. **Open** one to see its
-  node's and its sender's trust here, and **Node trust** or **User trust**
-  takes you to that subject's trust screen to establish or block it. A letter
-  refused because its node is on probation is the common case: establish the
-  node, and the sender's next attempt is delivered. The list keeps the 500 most
-  recent refusals, and no more than 50 from any one node.
-- **Mailboxes** lists every account with mail, fullest first (**Order**
-  switches to by name): letters, unread, read, kept (in the caller's Kept
-  folder), notices from the BBS itself, and how much of the 500-letter cap
-  the Inbox takes. Kept letters are part of Letters but not of the cap: Kept
-  has its own limit of 100 per caller, and the Kept column is flagged when
-  one is full (the caller cannot keep another until they move some back or
-  delete some). So each caller holds at most 600 letters. A full inbox makes
-  room by dropping its oldest read letter; an inbox full of unread mail
-  refuses new mail, and a Link sender gets a "mailbox full" bounce. Callers
-  see the same count in their own Inbox header, a warning from 450, and a
-  main-menu line when old read mail was removed to make room.
-- In **Refused Link mail**, "the recipient's account is disabled or still
-  awaiting approval" is mail for an account that takes none at the moment.
-- **[W]rite to all callers** sends one letter to every account on this BBS
-  that takes mail, from your own account: it is signed like your other mail,
-  sits in your **Sent** as one letter, and callers can reply to you.
-  **[N]otice to all callers** sends it from the BBS itself, as **System**:
-  unsigned, not in your Sent, and no one can reply to it; it reaches your own
-  Inbox too. Both open the ordinary compose screens -- Subject, your editor,
-  the review screen -- and keep a draft of their own. The review screen says
-  how many accounts it will reach. The guest account, disabled accounts and
-  signups awaiting approval are left out, and so is anyone whose mailbox is
-  full of unread mail: each caller gets their own copy, under the
-  same 500-letter cap as any letter. After Send you are told how many callers
-  it reached, whose mailbox turned it away (by name), and how many accounts
-  were left out. It is local only: callers on linked BBSes are not written
-  to. A letter already sent is never sent twice, even if you send its draft
-  again after a dropped connection. **[A]ttach file** on the review screen
-  points it at files in your file areas, as any letter can; a caller who may
-  not open one of those file areas is skipped, and named after Send, like a
-  full mailbox.
+<kbd>R</kbd> **Refused Link mail** lists each refused letter with its sender,
+the reason in plain words (its node is still on probation here, the sender or
+node is blocked, no such account, a mailbox full of unread mail, ...), when it
+was last refused and how many times its sender tried.
 
-These screens never show what a letter says. Mail is private: you see counts,
-account names, senders and reasons, never a subject or a body, and a refused
-letter does not even record whom it was for. Keep in mind that Link mail is
-encrypted to the recipient's *node*, not to the person, so a SysOp with access
-to the database could read it there; NetBBS gives you no screen for doing so.
+- Open one to see its node's and its sender's trust here.
+  <kbd>N</kbd> **Node trust** or <kbd>U</kbd> **User trust** takes you to that
+  subject's trust screen to establish or block it.
+- A letter refused because its node is on probation is the common case:
+  establish the node, and the sender's next attempt is delivered.
+- "The recipient's account is disabled or still awaiting approval" is mail for
+  an account that takes none at the moment.
+- The list keeps the 500 most recent refusals, and no more than 50 from any one
+  node.
+
+<kbd>M</kbd> **Mailboxes** lists every account with mail, fullest first
+(<kbd>O</kbd> **Order** switches to by name): letters, unread, read, kept (in
+the caller's Kept folder), notices from the BBS itself, and how much of the
+500-letter cap the Inbox takes.
+
+- Kept letters are part of Letters but not of the cap: Kept has its own limit
+  of 100 per caller, and the Kept column is flagged when one is full (the
+  caller cannot keep another until they move some back or delete some). So
+  each caller holds at most 600 letters.
+- A full inbox makes room by dropping its oldest read letter; an inbox full of
+  unread mail refuses new mail, and a Link sender gets a "mailbox full"
+  bounce.
+- Callers see the same count in their own Inbox header, a warning from 450,
+  and a main-menu line when old read mail was removed to make room.
+
+> [!NOTE]
+> These screens never show what a letter says. Mail is private: you see
+> counts, account names, senders and reasons, never a subject or a body, and a
+> refused letter does not even record whom it was for. Keep in mind that Link
+> mail is encrypted to the recipient's *node*, not to the person, so a SysOp
+> with access to the database could read it there; NetBBS gives you no screen
+> for doing so.
+
+#### Write to every caller
+
+Two entries on the same screen send one letter to every account on this BBS
+that takes mail:
+
+| Entry | Sent as |
+| --- | --- |
+| <kbd>W</kbd> **Write to all callers** | From your own account: signed like your other mail, it sits in your **Sent** as one letter, and callers can reply to you |
+| <kbd>N</kbd> **Notice to all callers** | From the BBS itself, as **System**: unsigned, not in your Sent, and no one can reply to it; it reaches your own Inbox too |
+
+- Both open the ordinary compose screens -- Subject, your editor, the review
+  screen -- and keep a draft of their own. The review screen says how many
+  accounts it will reach.
+- The guest account, disabled accounts and signups awaiting approval are left
+  out, and so is anyone whose mailbox is full of unread mail: each caller gets
+  their own copy, under the same 500-letter cap as any letter.
+- After Send you are told how many callers it reached, whose mailbox turned it
+  away (by name), and how many accounts were left out.
+- It is local only: callers on linked BBSes are not written to.
+- A letter already sent is never sent twice, even if you send its draft again
+  after a dropped connection.
+- <kbd>A</kbd> **Attach file** on the review screen points it at files in your
+  file areas, as any letter can; a caller who may not open one of those file
+  areas is skipped, and named after Send, like a full mailbox.
+
+#### What callers see of their Link mail
 
 Your callers see each Link message's state in their **Sent** mail: pending,
-with relay, delivered, bounced (with the other node's reason in plain words)
-or expired. A caller whose mail bounces or expires is told once at their next
-main menu.
+with relay, delivered, bounced (with the other node's reason in plain words) or
+expired. A caller whose mail bounces or expires is told once at their next main
+menu.
 
 "With relay" is mail your node left at a relay because the recipient's node
 cannot be dialed directly. The relay is not the recipient, and one refusal
-never comes back as a bounce: mail for a node that has *your* node
-quarantined or blocked, which sends yours nothing. So if no answer comes back
-within 14 days of the handoff, the letter expires and its sender is told that
-no answer came back, so it may not have arrived. An answer that arrives later
-still counts: the letter turns delivered, or bounced. A relay keeps a letter
-well past those 14 days, so a recipient that is only slow to collect still
-answers in time. Replaying an expired delivery from the **Outbox** puts it
-back to pending, with its full retry schedule again. When the recipient is gone
-for good, **Delete** it there instead: the work item goes, the letter stays
-expired, and Link stops reporting it as needing attention.
+never comes back as a bounce: mail for a node that has *your* node quarantined
+or blocked, which sends yours nothing. So:
 
-Mail arriving here is checked the way your own callers' mail is: a sender
-name that is not a valid address, a blank or oversized subject, or an
-oversized body is bounced as malformed, and a letter this node cannot decrypt
-is bounced as such rather than as "no such user". A received letter shows the
-date its sender wrote it, unless that date is before 2000 or more than five minutes ahead of
-your clock, when it shows the arrival time instead. The inbox lists mail in
-the order it arrived, so a letter that took days to get here is still at the
-top.
+- If no answer comes back within 14 days of the handoff, the letter expires
+  and its sender is told that no answer came back, so it may not have arrived.
+- An answer that arrives later still counts: the letter turns delivered, or
+  bounced.
+- A relay keeps a letter well past those 14 days, so a recipient that is only
+  slow to collect still answers in time.
+
+In the **Operations ▸ Outbox**, <kbd>R</kbd> **Replay now** on an expired
+delivery puts it back to pending, with its full retry schedule again. When the
+recipient is gone for good, <kbd>D</kbd> **Delete** it there instead: the work
+item goes, the letter stays expired, and Link stops reporting it as needing
+attention.
+
+#### Mail arriving here
+
+Mail arriving here is checked the way your own callers' mail is:
+
+- A sender name that is not a valid address, a blank or oversized subject, or
+  an oversized body is bounced as malformed.
+- A letter this node cannot decrypt is bounced as such rather than as "no such
+  user".
+- A received letter shows the date its sender wrote it, unless that date is
+  before 2000 or more than five minutes ahead of your clock, when it shows the
+  arrival time instead.
+- The inbox lists mail in the order it arrived, so a letter that took days to
+  get here is still at the top.
 
 ### Behind an HTTP proxy
 
@@ -1312,10 +1402,13 @@ for example `tunnel refused: 407 Proxy Authentication Required`, or
 `tunnel opened, handshake failed` for an inspecting proxy. A change of outcome
 is also written to the log once.
 
-**MANUAL — outside NetBBS, for reliable-node operators:** many corporate
-proxies allow `CONNECT` only to port 443. To be reachable live from such
-networks, advertise the real-time port as 443 and forward it to the real-time
-listener:
+#### Reachable through corporate proxies (reliable-node operators)
+
+> [!IMPORTANT]
+> **Manual, outside NetBBS, for reliable-node operators:** many corporate
+> proxies allow `CONNECT` only to port 443. To be reachable live from such
+> networks, advertise the real-time port as 443 and forward it to the
+> real-time listener.
 
 ```toml
 [link]
@@ -1328,140 +1421,219 @@ use a second address, or a protocol demultiplexer in front of both.
 
 ### Trust and recovery
 
-Use **Link status** for peers and relay state, **Outbox** for pending or failed
-work, and **Diagnostics / Watch log** for explanations.
+| Look at | For |
+| --- | --- |
+| **Operations ▸ Link status** | Peers and relay state |
+| **Operations ▸ Outbox** | Pending or failed work |
+| **Operations ▸ Diagnostics** / **Operations ▸ Watch log** | Explanations |
+
+#### End probation
+
+Every node starts on probation with every other, in both directions:
+
+- A peer on probation here sends nothing this node accepts, and this node
+  sends it nothing of yours.
+- Your node is on probation at each peer the same way until that peer's SysOp
+  establishes it.
+
+Automatic graduation takes at least 30 days, three days of contact and vouches
+from two trust domains, so on a node with no trusted reporters only
+**Establish** ends it.
+
+1. Establish a peer once you know who runs it.
+2. Ask its SysOp to establish yours.
+
+**Link status** counts the peers on probation here and says whether the peers
+your node dials still hold yours on probation; the SysOp console's LINK line
+counts them too.
+
+#### The Waiting list
 
 Some things Link cannot use or deliver are put off for an hour rather than
-retried every pass: content held back because its sender is on probation here
-or not yet known, your node's content a peer refused because its author is on
-probation there, a node no carrier could introduce, and trust objects a relay
-refused. **Link status → Waiting** lists each with when it is next tried; the
-section is absent when nothing waits. These are waits, not failures. Once you
-have fixed the cause -- established a node, asked a peer's SysOp to establish
-yours, named a reporter -- press **[R]etry now**: it ends every wait and runs a
-sync pass at once. A trust decision in **Settings → Policy trust** already
-retries what it concerns and starts a pass by itself, and a change made with
+retried every pass:
+
+- content held back because its sender is on probation here or not yet known;
+- your node's content a peer refused because its author is on probation
+  there;
+- a node no carrier could introduce;
+- trust objects a relay refused.
+
+**Link status ▸ Waiting** lists each with when it is next tried; the section is
+absent when nothing waits. These are waits, not failures. Once you have fixed
+the cause -- established a node, asked a peer's SysOp to establish yours, named
+a reporter -- press <kbd>R</kbd> **Retry now**: it ends every wait and runs a
+sync pass at once.
+
+A trust decision in **Settings ▸ Policy trust** already retries what it
+concerns and starts a pass by itself, and a change made with
 `python -m netbbs.admin` is picked up by the running node on its next pass.
 
-Every node starts on probation with every other, in both directions. A peer
-on probation here sends nothing this node accepts, and this node sends it
-nothing of yours; your node is on probation at each peer the same way until
-that peer's SysOp establishes it. Automatic graduation takes at least 30 days,
-three days of contact and vouches from two trust domains, so on a node with no
-trusted reporters only **Establish** ends it. Establish a peer once you know who
-runs it, and ask its SysOp to establish yours. **Link status** counts the peers
-on probation here and says whether the peers your node dials still hold yours
-on probation; the SysOp console's LINK line counts them too.
+#### The node map (Peers)
 
-**Link status → Peers** is the node map: every node this one knows, as callers
-see it under **Directory → Node map** ("Nodes known to" your board), plus what
-callers do not see. A node on probation here says when probation could end
-by itself and what is still missing; its **Exchange** rows say what is held
-back from it and whether it takes what yours sends. Peer-list candidates are marked unverified and "never heard
-from"; nodes you quarantine or block in any trust dimension are marked, with
-each dimension's state, because callers do not see them at all. Each node's
-screen adds its Link addresses, relay roles and reliability. Last heard is your
-own last contact with the node, or the time its newest descriptor says it was
-signed, never later than when you first stored it; a node not heard of for 30
-days is marked stale, not removed.
+**Link status ▸ Peers** is the node map: every node this one knows, as callers
+see it under **Directory ▸ Node map** ("Nodes known to" your board), plus what
+callers do not see.
 
-**Link status** also shows what your node holds as a relay. When it relays
-for outgoing-only nodes, mail and delivery answers for them wait here until
-they dial in and collect them. The **Relay mailbox** line counts what is held,
-and a table below it lists each node held for, with how many envelopes it has
-(at most 50) and how long the oldest has waited, oldest first. Anything left
-uncollected for 30 days is dropped on the next sync pass, and the diagnostic
-log gets a warning naming the node and how many went. Neither end is told by
-your node, which cannot read or sign that mail; the sender's own node gives up
-on a letter handed to a relay after 14 days and tells its writer that no
-answer came back. A node whose count stays at 50 for weeks is most likely not
-coming back; the time limit clears it without you doing anything.
+- A node on probation here says when probation could end by itself and what is
+  still missing; its **Exchange** rows say what is held back from it and
+  whether it takes what yours sends.
+- Peer-list candidates are marked unverified and "never heard from".
+- Nodes you quarantine or block in any trust dimension are marked, with each
+  dimension's state, because callers do not see them at all.
+- Each node's screen adds its Link addresses, relay roles and reliability.
+- Last heard is your own last contact with the node, or the time its newest
+  descriptor says it was signed, never later than when you first stored it.
+- A node not heard of for 30 days is marked stale, not removed.
+
+#### Act on a node's trust
 
 A node's screen also acts on its trust, when it is a trust subject here (every
 node that has exchanged a hello with yours, or been introduced to it; not a
-peer-list candidate): **Establish** and **Deny** (a block) open the override editor with
-all three dimensions and the state already chosen, so you only give a reason
-and save; **Clear override** removes one override, or all of them at once;
-**Trust details** opens the node's full trust screen from Policy trust. The same
-**Establish** and **Deny** are on every subject's screen under **Settings →
-Policy trust → Subjects**, and **Override**'s **Dimension** offers **All
-three**.
+peer-list candidate):
 
-**Link status → Dial-in** sets the addresses other nodes show callers on their
+- <kbd>E</kbd> **Establish** and <kbd>D</kbd> **Deny** (a block) open the
+  override editor with all three dimensions and the state already chosen, so
+  you only give a reason and save.
+- <kbd>C</kbd> **Clear override** removes one override, or all of them at
+  once.
+- <kbd>T</kbd> **Trust details** opens the node's full trust screen from Policy
+  trust.
+
+The same **Establish** and **Deny** are on every subject's screen under
+**Settings ▸ Policy trust ▸ Subjects**, and <kbd>O</kbd> **Override**'s
+**Dimension** offers <kbd>A</kbd> **All three**.
+
+#### Relay mailbox
+
+**Link status** also shows what your node holds as a relay. When it relays for
+outgoing-only nodes, mail and delivery answers for them wait here until they
+dial in and collect them.
+
+- The **Relay mailbox** line counts what is held, and a table below it lists
+  each node held for, with how many envelopes it has (at most 50) and how long
+  the oldest has waited, oldest first.
+- Anything left uncollected for 30 days is dropped on the next sync pass, and
+  the diagnostic log gets a warning naming the node and how many went.
+- Neither end is told by your node, which cannot read or sign that mail; the
+  sender's own node gives up on a letter handed to a relay after 14 days and
+  tells its writer that no answer came back.
+
+> [!TIP]
+> A node whose count stays at 50 for weeks is most likely not coming back; the
+> time limit clears it without you doing anything.
+
+#### Dial-in addresses
+
+**Link status ▸ Dial-in** sets the addresses other nodes show callers on their
 node maps: up to four, each `telnet://host:port`, `ssh://host:port` or an
-`https://` URL (plain `http://` is refused). **Use suggestions** fills the
-draft from your DNS name, your enabled Telnet and SSH listeners and an
-`https://` `[web] public_url`; nothing is saved until **Save**, and peers get
-the list with the next hello. Until you save a list, the node publishes
-`[web] public_url` when it is `https://` and the web listener was on at the
-last start. Saving an empty list publishes nothing. The **Dial-in** row on
-Link status shows what is published now and where it came from.
+`https://` URL (plain `http://` is refused).
 
-Policy trust settings
-separate identity integrity, resource behavior, and content conduct: a complaint
-about content should not be treated as proof of a forged identity.
+1. Choose the **Suggested** row to fill the draft from your DNS name, your
+   enabled Telnet and SSH listeners and an `https://` `[web] public_url`.
+2. Adjust the addresses.
+3. Press <kbd>S</kbd> **Save**. Nothing is saved until then, and peers get the
+   list with the next hello.
 
-Under **Settings → Policy trust**, inspect a subject's effective state and
-history before applying an override. Domains, anchors, and reporters determine
-whose signals count; multiple identities from one trust domain do not become
-independent votes. Quarantine restricts exchange; it does not erase previously
-accepted content. A sole-authority exception deliberately weakens the usual
-multi-source policy and is marked as a safety deviation.
+Until you save a list, the node publishes `[web] public_url` when it is
+`https://` and the web listener was on at the last start. Saving an empty list
+publishes nothing. The **Dial-in** row on Link status shows what is published
+now and where it came from.
 
-Your node will carry content from nodes it has never spoken to. Two nodes
-that share a board through the same seed usually never contact each other, and
-two outgoing-only nodes cannot. Your node learns who such an author's node is
-from the node that carried the post, checks that identity for itself, and
-lists it under **Settings → Policy trust → Subjects**, where its screen says
-which node it was learned from. Like every new identity it starts on
-probation, so its content is withheld until you set both its identity
-integrity and its resource behavior to established with **Override**. Its
-callers are subjects of their own and start on probation too, so their first
-posts then arrive in the board's approval queue. If a board looks quieter
-than you expect, look in both places. Such a node never leaves probation by
-itself, because your node has no direct dealings with it to judge. A name you
-recognise under a different technical identity is flagged, and when the name
-belongs to a node yours has met, the warning falls on the other one.
+#### Policy trust
+
+Policy trust settings separate identity integrity, resource behavior, and
+content conduct: a complaint about content should not be treated as proof of a
+forged identity.
+
+Under **Settings ▸ Policy trust**, inspect a subject's effective state and
+history before applying an override.
+
+- Domains, anchors, and reporters determine whose signals count; multiple
+  identities from one trust domain do not become independent votes.
+- Quarantine restricts exchange; it does not erase previously accepted
+  content.
+- A sole-authority exception deliberately weakens the usual multi-source
+  policy and is marked as a safety deviation.
+
+#### Nodes you have never spoken to
+
+Your node will carry content from nodes it has never spoken to. Two nodes that
+share a board through the same seed usually never contact each other, and two
+outgoing-only nodes cannot. Your node learns who such an author's node is from
+the node that carried the post, checks that identity for itself, and lists it
+under **Settings ▸ Policy trust ▸ Subjects**, where its screen says which node
+it was learned from.
+
+- Like every new identity it starts on probation, so its content is withheld
+  until you set both its identity integrity and its resource behavior to
+  established with <kbd>O</kbd> **Override**.
+- Its callers are subjects of their own and start on probation too, so their
+  first posts then arrive in the board's approval queue.
+- Such a node never leaves probation by itself, because your node has no
+  direct dealings with it to judge.
+- A name you recognise under a different technical identity is flagged, and
+  when the name belongs to a node yours has met, the warning falls on the other
+  one.
+
+> [!TIP]
+> If a board looks quieter than you expect, look in both places: the subject's
+> override and the board's approval queue.
+
+#### Vouch for an identity
+
+To stand behind an identity for the benefit of other nodes:
+
+1. Open it under **Settings ▸ Policy trust ▸ Subjects**.
+2. Press <kbd>V</kbd> **Vouch** and give a reason, which is published with the
+   vouch.
+3. Confirm once.
+
+Your node signs the vouch and serves it to nodes that have named yours a
+trusted reporter, where it counts toward ending that identity's probation. It
+changes nothing on your own node; to establish an identity locally, use
+**Override**.
+
+- The other side of that: naming a node a trusted reporter is not enough for
+  its vouches to reach you. Your node pulls and counts a reporter only once
+  that reporter is established here, by override or by graduating from
+  probation.
+- **Policy trust ▸ Vouches** lists everything your node vouches for and
+  withdraws any of it.
+- Vouches renew themselves.
+- If you quarantine or block an identity, your node stops vouching for it on
+  its own and resumes if you lift the restriction.
+- Your node cannot vouch for itself or for its own callers.
 
 If nobody can dial your node, which is the ordinary case behind a home
 connection, what it vouches for is handed to the nodes that relay for it and
-fetched from there; the vouch screen says how many those are, warns when
-there are none, in which case a vouch reaches nobody yet, and warns when one
-of them did not take your vouches at the last attempt, which the Link log
-explains. A node that names
-yours a trusted reporter needs to have met one of your relays. Verified ages
-and names travel differently, sealed to each recipient (below), so they reach
-recipients whether or not anyone can dial your node.
+fetched from there. The vouch screen says how many those are, warns when there
+are none, in which case a vouch reaches nobody yet, and warns when one of them
+did not take your vouches at the last attempt, which the Link log explains. A
+node that names yours a trusted reporter needs to have met one of your relays.
+Verified ages and names travel differently, sealed to each recipient
+([below](#share-verified-ages-and-names)), so they reach recipients whether or
+not anyone can dial your node.
 
-To stand behind an identity for the benefit of other nodes, open it under
-**Settings → Policy trust → Subjects** and choose **Vouch**. You give a reason,
-which is published with the vouch, and confirm once. Your node signs the vouch
-and serves it to nodes that have named yours a trusted reporter, where it
-counts toward ending that identity's probation. It changes nothing on your own
-node; to establish an identity locally, use **Override**. The other side of
-that: naming a node a trusted reporter is not enough for its vouches to reach
-you. Your node pulls and counts a reporter only once that reporter is
-established here, by override or by graduating from probation. **Policy trust →
-Vouches** lists everything your node vouches for and withdraws any of it.
-Vouches renew themselves. If you quarantine or block an identity, your node
-stops vouching for it on its own and resumes if you lift the restriction. Your
-node cannot vouch for itself or for its own callers.
+#### Equivocation
 
-**Equivocation.** When your node sees another node sign two different objects
-into the same place in one chain -- two edits of the same version of a post,
-two successors of one key change, two closures of one board -- it keeps both,
-quarantines that node's identity integrity on yours, and logs it. Unless you
-turn it off, it also signs a short signal saying so, with both objects
-attached, for the nodes that name yours a trusted reporter. They check the
-proof themselves, and it counts there only together with a report from a
-second, independent trust domain. **Policy trust → Conflict signals** lists what your
-node published, turns automatic signals off (which also withdraws the
-published ones) or back on, and revokes one signal while keeping the evidence.
-At most five are signed a day, and never about your own node.
+When your node sees another node sign two different objects into the same
+place in one chain -- two edits of the same version of a post, two successors
+of one key change, two closures of one board -- it keeps both, quarantines that
+node's identity integrity on yours, and logs it.
 
-The quarantine does not lift on its own when the evidence expires: open the
-node under **Subjects**, look at **Observed here**, and choose **Clear
-evidence**. That also revokes your node's signal about it.
+Unless you turn it off, it also signs a short signal saying so, with both
+objects attached, for the nodes that name yours a trusted reporter. They check
+the proof themselves, and it counts there only together with a report from a
+second, independent trust domain. **Policy trust ▸ Conflict signals** lists
+what your node published, turns automatic signals off (which also withdraws
+the published ones) or back on, and revokes one signal while keeping the
+evidence. At most five are signed a day, and never about your own node.
+
+> [!IMPORTANT]
+> The quarantine does not lift on its own when the evidence expires: open the
+> node under **Subjects**, look at **Observed here**, and press
+> <kbd>R</kbd> **Remove evidence**. That also revokes your node's signal about
+> it.
 
 Honest nodes fork too. A node restored from an older backup, or a copied VM
 running with the same identity, will sign things its earlier self already
@@ -1469,50 +1641,74 @@ signed. If another node quarantines yours for equivocation, that is usually
 what happened: make sure only one copy of your node runs, then ask that node's
 SysOp to clear the evidence.
 
-Verified ages and names cross the Link only when three people agree. The
-caller switches sharing on in their Profile. You name the receiving node under
-**Settings → Policy trust → Published identity → Recipients**; the list starts
-empty, and until you add a node nothing leaves yours whatever callers have
-switched on. The other SysOp names your node under **Identity authorities** on
-their side. Your node then sends each recipient one sealed snapshot of
-everything it should hold from you: directly if the recipient can be dialed,
-otherwise through the relays that recipient names. Only the recipient can open
-it; a relay sees that your node sent it something, roughly how large, and
-when. A changed snapshot goes out on the next Link sync pass, and an unchanged
-one again every week. **Published identity** lists each recipient with how it
-was last reached, when, and whether that was the current snapshot, or why the
-last attempt failed (for example, a recipient nobody can dial that names no
-relay your node has met). A recipient running NetBBS v7.14.0 or earlier
-receives nothing from yours until its SysOp upgrades; its row says it needs a
-newer NetBBS. Each caller sees how many nodes hold their own value, never
-which.
+#### Share verified ages and names
 
-If you have named an authority and nothing arrives, its SysOp has probably
-not added your node as a recipient yet, or your node runs a NetBBS too old to
-receive sealed snapshots; ask them which.
-Removing a recipient takes back what it holds: your node sends it a final,
-empty snapshot, and a node running NetBBS forgets everything it had from
-yours. **Published identity** shows it as retracting until that is delivered,
-for up to 90 days. When a caller switches sharing off, your node stops
-sending the value, deletes its signed copy, and its recipients forget it with
-the next snapshot. Backups you took while it was shared still contain it.
+Verified ages and names cross the Link only when three people agree:
+
+1. The caller switches sharing on in their Profile.
+2. You name the receiving node under
+   **Settings ▸ Policy trust ▸ Published identity ▸ Recipients**. The list
+   starts empty, and until you add a node nothing leaves yours whatever callers
+   have switched on.
+3. The other SysOp names your node under **Identity authorities** on their
+   side.
+
+Your node then sends each recipient one sealed snapshot of everything it should
+hold from you: directly if the recipient can be dialed, otherwise through the
+relays that recipient names. Only the recipient can open it; a relay sees that
+your node sent it something, roughly how large, and when.
+
+- A changed snapshot goes out on the next Link sync pass, and an unchanged one
+  again every week.
+- **Published identity** lists each recipient with how it was last reached,
+  when, and whether that was the current snapshot, or why the last attempt
+  failed (for example, a recipient nobody can dial that names no relay your
+  node has met).
+- A recipient running NetBBS v7.14.0 or earlier receives nothing from yours
+  until its SysOp upgrades; its row says it needs a newer NetBBS.
+- Each caller sees how many nodes hold their own value, never which.
+
+> [!TIP]
+> If you have named an authority and nothing arrives, its SysOp has probably
+> not added your node as a recipient yet, or your node runs a NetBBS too old to
+> receive sealed snapshots; ask them which.
+
+Taking it back:
+
+- Removing a recipient takes back what it holds: your node sends it a final,
+  empty snapshot, and a node running NetBBS forgets everything it had from
+  yours. **Published identity** shows it as retracting until that is
+  delivered, for up to 90 days.
+- When a caller switches sharing off, your node stops sending the value,
+  deletes its signed copy, and its recipients forget it with the next
+  snapshot. Backups you took while it was shared still contain it.
+
+#### Identity warnings
 
 A familiar name attached to a new fingerprint produces an identity warning.
-Confirm the full **Technical identity** with the other operator before trusting
-it; renaming a node does not transfer its reputation. Managed DNS changes and
-node display-name changes are separate. Use the DNS screen's staged rename
-and recovery controls; do not release and re-register a name as a rename shortcut.
+Confirm the full **Technical identity** with the other operator before
+trusting it; renaming a node does not transfer its reputation.
+
+#### Managed names
+
+Managed DNS changes and node display-name changes are separate.
+
+> [!WARNING]
+> Use the **DNS** screen's staged rename and recovery controls; do not release
+> and re-register a name as a rename shortcut.
 
 A managed name stays yours while this node keeps checking in with the service,
 which it does every 15 minutes on its own; the **Dynamic IP** choice only
-decides whether the published record follows your address. A node the service
-has not heard from for about a week has its record taken out of DNS and the
-name held for it; the node reclaims the name by itself once it is back, and
-the DNS screen shows the last attempt's outcome under the ABANDONED badge
-until it succeeds. **Give up name** (a release) is the one exit the node never undoes, and a
-name the service operator has **revoked** on a complaint is the other: the
-screen says so, names the operator's contact channel, and a different name
-can be registered as usual.
+decides whether the published record follows your address.
+
+- A node the service has not heard from for about a week has its record taken
+  out of DNS and the name held for it. The node reclaims the name by itself
+  once it is back, and the DNS screen shows the last attempt's outcome under
+  the ABANDONED badge until it succeeds.
+- <kbd>G</kbd> **Give up name** (a release) is the one exit the node never
+  undoes, and a name the service operator has **revoked** on a complaint is
+  the other: the screen says so, names the operator's contact channel, and a
+  different name can be registered as usual.
 
 Registering sends the first check-in at once and tells you if it failed. From
 then on the DNS screen shows **Last contact** (or *never*) and, whenever the
@@ -1521,62 +1717,76 @@ the service directly, never through an HTTP proxy, because the service
 publishes the address they arrive from; a node whose only way out is a proxy
 can register a name but cannot keep one.
 
-Callers reach a managed name on the standard ports (SSH 22, Telnet 23, HTTPS
-443); the record itself carries no port. NetBBS listens on 2222/2323/8080 by
-default, so a bare `myboard.netbbs.org` reaches your board only through a
-port-forward or proxy in front of it. The DNS screen states this against your
-configured listeners; the service cannot check it for you.
+> [!NOTE]
+> Callers reach a managed name on the standard ports (SSH 22, Telnet 23, HTTPS
+> 443); the record itself carries no port. NetBBS listens on 2222/2323/8080 by
+> default, so a bare `myboard.netbbs.org` reaches your board only through a
+> port-forward or proxy in front of it. The DNS screen states this against
+> your configured listeners; the service cannot check it for you.
+
+##### The public node page
 
 A node with a managed name also gets a public page at
-`https://www.netbbs.org/~<name>` once Reliable Link has met it: its name, the
-dial-in addresses it publishes, when the name was registered, how long Reliable
-Link has known it and when it was last heard. It also shows which NetBBS
-release you run, as major.minor (7.17, never the patch level), and the Linked
-boards your guest account may read; with guest login off, no boards are
-listed. Nothing on it is more than a caller on Reliable Link can see, and
-never the address the DNS service sees.
-The DNS screen's **[W]eb page** steps through the three settings: shown but
-hidden from search engines (the default), shown and indexed, or off. Your node
-signs the choice into what it sends Reliable Link, so a change takes effect at
-the next contact. Giving up or releasing the name does not take the page down:
-it stays, marked as left, and **[W]eb page** is still there to turn it off.
+`https://www.netbbs.org/~<name>` once Reliable Link has met it:
+
+- its name, the dial-in addresses it publishes, when the name was registered,
+  how long Reliable Link has known it and when it was last heard;
+- which NetBBS release you run, as major.minor (7.17, never the patch level);
+- the Linked boards your guest account may read; with guest login off, no
+  boards are listed.
+
+Nothing on it is more than a caller on Reliable Link can see, and never the
+address the DNS service sees.
+
+The DNS screen's <kbd>W</kbd> **Web page** steps through the three settings:
+shown but hidden from search engines (the default), shown and indexed, or off.
+Your node signs the choice into what it sends Reliable Link, so a change takes
+effect at the next contact. Giving up or releasing the name does not take the
+page down: it stays, marked as left, and **Web page** is still there to turn
+it off.
 
 `python -m netbbs.admin export-node-map [--output FILE]` prints your own node
 map as your callers see it, as JSON: the same document Reliable Link builds the
 pages from. It reads the node's fingerprint from `--identity-dir` (default
 `netbbs_identity`), needs no passphrase, and is safe while the node runs.
 
+##### Running the managed-DNS service
+
 If you also run the managed-DNS service itself, `[managed_dns] admin_token` in
-`netbbs.toml` adds **[A]dminister service** to the DNS screen: the service's
-registrations as a table, each in full, and revocation with a reason and a
-typed-name confirmation. `services/managed_dns/README.md` §8 is the runbook.
+`netbbs.toml` adds <kbd>A</kbd> **Administer service** to the DNS screen: the
+service's registrations as a table, each in full, and revocation with a reason
+and a typed-name confirmation. `services/managed_dns/README.md` §8 is the
+runbook.
 
 ### Node keys
 
 Your node's **Technical identity** is its root key and never changes. Day to
 day it signs with an operational *signing key* and connects live with a
 *transport key*, and either can be replaced without changing the node's
-address or reputation. **Link status → Keys** shows both keys and their
-history. **Signing key** and **Transport key** each offer two ways to
-replace the key:
+address or reputation. **Link status ▸ Keys** shows both keys and their
+history. <kbd>S</kbd> **Signing key** and <kbd>T</kbd> **Transport key** each
+offer two ways to replace the key:
 
-- **Rotate** retires the old key. Everything it signed stays valid, so peers
-  notice nothing except that new content carries the new key. Use this for
-  routine replacement.
-- **Compromised** is for a key you believe someone else holds. Peers stop
-  trusting anything that key ever signed, and your node signs its own boards,
-  posts, files and mail again under the new key. Nodes that already copied
-  your content keep their copies. A node fetching your older content from one
-  of them skips it and gets it from yours instead.
+| Choice | When | Effect |
+| --- | --- | --- |
+| <kbd>R</kbd> **Rotate** | Routine replacement | Retires the old key. Everything it signed stays valid, so peers notice nothing except that new content carries the new key. |
+| <kbd>C</kbd> **Compromised** | You believe someone else holds the key | Peers stop trusting anything that key ever signed, and your node signs its own boards, posts, files and mail again under the new key. Nodes that already copied your content keep their copies. A node fetching your older content from one of them skips it and gets it from yours instead. |
 
 Replacing the transport key ends every live chat session at once. Peers
 reconnect on their own, but a caller watching a channel linked from another
 node is told the live link dropped and gets it back by re-entering the
-channel. To act with the node stopped, run `python -m
-netbbs.admin rotate-key signing` (or `transport`), adding `--compromised`
-where it applies and `--identity-dir` if yours is not the default. It refuses
-while the node is running. Back up the node after a rotation: an older backup
-restores the old key.
+channel.
+
+To act with the node stopped, run this; add `--compromised` where it applies
+and `--identity-dir` if yours is not the default. It refuses while the node is
+running.
+
+```sh
+python -m netbbs.admin rotate-key signing      # or: rotate-key transport
+```
+
+> [!IMPORTANT]
+> Back up the node after a rotation: an older backup restores the old key.
 
 ## Chat bot policy
 
