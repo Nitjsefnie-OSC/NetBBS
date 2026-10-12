@@ -63,7 +63,7 @@ things in different places. A few keys mean the same on every screen:
 | <kbd>B</kbd> or <kbd>Esc</kbd> | Back, one level up: from a board to the list you picked it from, and from there to the menu. <kbd>Esc</kbd> first clears a highlighted row, if there is one |
 | <kbd>&lt;</kbd> <kbd>&gt;</kbd> | The previous or next page of a list or a long text; <kbd>PgUp</kbd>/<kbd>PgDn</kbd> do the same, and so do <kbd>Left</kbd>/<kbd>Right</kbd> on a list |
 | <kbd>/</kbd> | Find, wherever a list can be searched |
-| <kbd>?</kbd> | Help for the screen you are on; <kbd>F1</kbd> and <kbd>Ctrl+H</kbd> do the same |
+| <kbd>?</kbd> | Help for the screen you are on; <kbd>F1</kbd> and <kbd>Ctrl-H</kbd> do the same |
 
 > [!TIP]
 > **Help** (<kbd>?</kbd>) on the main menu sums up how the board works and
