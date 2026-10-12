@@ -621,72 +621,132 @@ Your SysOp controls the time allowed and can help with a missing or locked save.
 
 ## Preferences and help
 
-Use **Profile** for display, editor, and chat preferences, your SSH keys, and
-your password. **Profile → Character set** sets the characters NetBBS sends
-your terminal:
+| At a glance | |
+| --- | --- |
+| **Where** | <kbd>P</kbd> **Profile** on the main menu |
+| **Try first** | **Profile ▸ Character set**, if lines or arrows look wrong |
+| **Finish** | <kbd>L</kbd> **Logoff** on the main menu |
 
-- **Auto**, the default, follows what your terminal reports when you connect.
-- **Unicode** suits modern terminals and the browser.
-- **CP437** suits classic BBS terminals such as SyncTERM, and shows ANSI art as
-  it was drawn. SyncTERM's Home, End, Page Up, Page Down, Insert and Delete
-  keys work as they do in other terminals. SyncTERM's Backspace key sends the
-  same code as Ctrl-H, so in SyncTERM it stays Backspace, and **F1** opens a
-  screen's help instead. NetBBS names F1 where other terminals see Ctrl-H.
-- **ASCII** is plain text that any terminal shows.
+In this chapter: [Your terminal](#your-terminal) ·
+[Banners](#banners) · [Calling as a guest](#calling-as-a-guest) ·
+[Access requirements](#access-requirements) ·
+[Verified age and name](#verified-age-and-name) ·
+[Logging off and reporting problems](#logging-off-and-reporting-problems)
+
+Use <kbd>P</kbd> **Profile** for display, editor, and chat preferences, your
+SSH keys, and your password.
+
+#### Your terminal
+
+**Profile ▸ Character set** sets the characters NetBBS sends your terminal:
+
+| Setting | Suits |
+| --- | --- |
+| **Auto** | The default. Follows what your terminal reports when you connect. |
+| **Unicode** | Modern terminals and the browser. |
+| **CP437** | Classic BBS terminals such as SyncTERM. Shows ANSI art as it was drawn. |
+| **ASCII** | Plain text that any terminal shows. |
+
+If your terminal did not say which it is, NetBBS asks once after you log in
+which of two sample lines looks right.
+
+- If lines and arrows look wrong later, change this setting.
+- If colors are poor, change the color preference.
+- <kbd>Ctrl</kbd>+<kbd>L</kbd> redraws ordinary NetBBS screens after a display
+  problem. Games may use different controls.
+
+<details>
+<summary>SyncTERM's keys</summary>
+
+With CP437, SyncTERM's Home, End, Page Up, Page Down, Insert and Delete keys
+work as they do in other terminals. SyncTERM's Backspace key sends the same
+code as <kbd>Ctrl</kbd>+<kbd>H</kbd>, so in SyncTERM it stays Backspace, and
+<kbd>F1</kbd> opens a screen's help instead. NetBBS names F1 where other
+terminals see Ctrl-H.
+
+</details>
+
+#### Banners
 
 Some nodes draw their welcome art or main-menu art slowly, at the speed of an
 old modem. Press any key to draw the rest at once; that key is used up, so it
-doesn't also act at the next prompt. **Profile → Banner animations**
-set to quick draws every banner after you sign in at once. The welcome banner
-comes before you sign in, so it plays at the node's speed whatever you chose;
-any key still draws the rest.
+doesn't also act at the next prompt.
 
-Signed in as the board's guest, you share one account with every other
-guest, so Profile won't change anything other callers see of it: the bio,
-signature, name and details, who it blocks, whether it takes messages, or its
-MRC settings. Each of those says so when you press it, and so do `/nick` and
-`/mrc register`, `identify` or `send` in chat and **[S]ender blocked** in Who's online. Display
-settings still change, for this call only: character set, color depth, redraw
-style, banners, editor, colors and sort orders go back to the account's own
-the next time anyone signs in as the guest. Register an account of your own to
-keep them.
+**Profile ▸ Banner animations** set to quick draws every banner after you sign
+in at once. The welcome banner comes before you sign in, so it plays at the
+node's speed whatever you chose; any key still draws the rest.
 
-The same goes for what you leave behind. As a guest, your unfinished posts and
-file descriptions are kept only until you hang up, and you can edit, withdraw
-or describe only what you wrote during this call; posts other guests wrote
-under the account can't be changed. The bundled games play normally, but your
-progress lasts for the call only, and your scores and callsign don't reach the
-Hall of Fame or the War Dialer world.
+#### Calling as a guest
 
-If your terminal did not say which it is, NetBBS asks once after you log in
-which of two sample lines looks right. If lines and arrows look wrong later,
-change this setting. If colors are poor, change the color preference. **Ctrl+L** redraws ordinary NetBBS screens after a display problem.
-Games may use different controls.
+Signed in as the board's guest, you share one account with every other guest.
 
-Some resources require an account level, verified age, or verified name.
-When you open one, a **Requires:** line under its title says what it asks,
-for example `Requires: age 18+ verified · level 20+ to post`. A requirement
-you don't meet is shown in red, or followed by `(not met)` if you use plain
-ASCII, so the same line tells you why you can read a board but not post.
-A name requirement may also disclose the verified name beside contributions
-in that resource. Ask the SysOp what is required before sharing identity
+**What stays the same for everyone.** Profile won't change anything other
+callers see of the guest account:
+
+- the bio, signature, name and details;
+- who it blocks;
+- whether it takes messages;
+- its MRC settings.
+
+Each of those says so when you press it, and so do `/nick` and
+`/mrc register`, `identify` or `send` in chat, and **Sender blocked**
+(<kbd>S</kbd>) in <kbd>W</kbd> **Who's online**.
+
+**What changes for this call only.** Display settings still change: character
+set, color depth, redraw style, banners, editor, colors and sort orders. They
+go back to the account's own the next time anyone signs in as the guest.
+
+**What you leave behind.**
+
+- Your unfinished posts and file descriptions are kept only until you hang up.
+- You can edit, withdraw or describe only what you wrote during this call;
+  posts other guests wrote under the account can't be changed.
+- The bundled games play normally, but your progress lasts for the call only,
+  and your scores and callsign don't reach the Hall of Fame or the War Dialer
+  world.
+
+> [!TIP]
+> Register an account of your own to keep your settings.
+
+#### Access requirements
+
+Some resources require an account level, verified age, or verified name. When
+you open one, a **Requires:** line under its title says what it asks, for
+example `Requires: age 18+ verified · level 20+ to post`. A requirement you
+don't meet is shown in red, or followed by `(not met)` if you use plain ASCII,
+so the same line tells you why you can read a board but not post.
+
+A name requirement may also disclose the verified name beside contributions in
+that resource. Ask the SysOp what is required before sharing identity
 information. You cannot grant yourself access by editing your profile.
+
+#### Verified age and name
 
 An entry marked **needs verification** asks for a verified name, or for a
 verified age when the birthdate in your profile is old enough but nobody has
-verified it. Opening it tells you which; the SysOp, or someone on the **Staff
-list** who verifies identity, can verify it for you. Your birthdate goes in
-**Your profile › Name & details**. That screen shows what this BBS verified
-("Verified by this node: born …") apart from what you entered yourself. Your
-display name, location and birthdate open for editing with the current value
-in the line: Enter saves, an empty line clears it, and Esc leaves it as it was.
-A verified value stays until whoever verified it revokes it.
+verified it. Opening it tells you which. The SysOp, or someone your SysOp
+allows to verify identity, can verify it for you.
 
-A SysOp-verified age or name stays on this BBS unless you switch on sharing
-over Link for it under **Profile**. Shared, it goes only to the other BBSes
-your SysOp has chosen, and the number shown beside "on" is how many that is
-now. Switching it off makes this BBS stop giving it out and tells those BBSes
-to forget it. One that already copied it cannot be forced to.
+Your birthdate goes in **Your profile ▸ Name & details**. That screen shows
+what this BBS verified ("Verified by this node: born …") apart from what you
+entered yourself.
 
-To finish, return to the main menu and choose **Log off**. When reporting
-a problem, tell the SysOp which screen, connection method, and action caused it.
+- Your display name, location and birthdate open for editing with the current
+  value in the line: <kbd>Enter</kbd> saves, an empty line clears it, and
+  <kbd>Esc</kbd> leaves it as it was.
+- A verified value stays until whoever verified it revokes it.
+
+**Sharing over Link.** A SysOp-verified age or name stays on this BBS unless
+you switch on sharing over Link for it under **Profile** (**Share verified age
+over Link**, **Share verified name over Link**).
+
+- Shared, it goes only to the other BBSes your SysOp has chosen, and the number
+  shown beside "on" is how many that is now.
+- Switching it off makes this BBS stop giving it out and tells those BBSes to
+  forget it. One that already copied it cannot be forced to.
+
+#### Logging off and reporting problems
+
+To finish, return to the main menu and choose <kbd>L</kbd> **Logoff**. When
+reporting a problem, tell the SysOp which screen, connection method, and
+action caused it.
