@@ -72,8 +72,8 @@ A deploy backs up each page it replaces, outside the web-served directory. The
 icon files go the same way as the pages, each to its own name at the site's
 top level; they change only when the picture does.
 
-Verify the **full SHA-256 chain** every time — local, the `/tmp` copy, the
-docroot copy, and a `curl` of the live URL must all be the same hash. Then:
+Verify the **full SHA-256 chain** every time — local, each copy made during
+the deploy, and a `curl` of the live URL must all be the same hash. Then:
 
 ```sh
 PYTHONPATH=src python scripts/website_check_pages.py     # exits non-zero on a problem
