@@ -199,7 +199,7 @@
         </div>
         <div class="t-item active">
           <div class="t-head"><h3>Live NetBBS Link chat</h3><span class="badge active">Available</span></div>
-          <p>Authenticated live chat, presence, recent scrollback on joining, and private messages across nodes, including live relay paths. Lines go both ways: a subscriber node&#8217;s callers reach the chat channel&#8217;s origin live, and the origin relays them to its other subscribers. Cross-node invitation chats and simultaneous background chat-channel memberships remain outside the current scope.</p>
+          <p>Authenticated live chat, presence, recent scrollback on joining, and private messages across nodes, including live relay paths. Lines go both ways: a subscriber node&#8217;s callers reach the chat channel&#8217;s origin live, and the origin relays them to its other subscribers. Since v7.22.0 presence does too, so every node&#8217;s <code>/who</code> lists the callers on every other node in the chat channel. Cross-node invitation chats and simultaneous background chat-channel memberships remain outside the current scope.</p>
         </div>
         <div class="t-item active">
           <div class="t-head"><h3>Chat bots</h3><span class="badge active">Available</span></div>
@@ -244,7 +244,7 @@
         <div class="cat">
           <h3>Real-time</h3>
           <ul>
-            <li><b>Chat channels</b> — scrollback, private messages, <code>/nick</code>, <code>/away</code>.</li>
+            <li><b>Chat channels</b> — scrollback, private messages, <code>/nick</code>, <code>/away</code>, and <code>/who</code> and <code>/list</code> that count everyone in a chat channel, on linked nodes and on MRC.</li>
             <li><b>Moderation</b> — mute/ban/kick and moderated-content approval queues.</li>
             <li><b>Node-wide presence</b> — who's online, across every linked node.</li>
             <li><b>Inter-BBS chat</b> — chat channels bridged to rooms on the public MRC network, or any room opened on demand.</li>

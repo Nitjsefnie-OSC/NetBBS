@@ -261,9 +261,10 @@ async def shot_who(node: Node) -> str:
         await until(lambda: "bring snacks" in on_screen(session), 10, "the MRC lines")
         await asyncio.sleep(1.5)
         session.inputs.put_nowait("/who")
-        # Only the roster says "(on MRC)"; the chat lines above name the same
-        # people, and the typed "/who" is never echoed to look for.
-        await until(lambda: "(on MRC)" in on_screen(session), 10, "the /who roster")
+        # Only the roster block is titled "Who's in"; the chat lines above name
+        # the same people, and the typed "/who" is never echoed to look for.
+        await until(lambda: "on MRC" in on_screen(session).rpartition("Who's in #lobby")[2],
+                    10, "the /who roster")
         await asyncio.sleep(0.5)
         return "".join(session.written)
     finally:
