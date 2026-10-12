@@ -1235,7 +1235,7 @@ carrying the board follows:
   is write level 255 here and "origin's callers only" everywhere.
 - A closed board takes no new post from any node.
 
-#### Link mail
+### Link mail
 
 Asynchronous delivery can continue after a peer reconnects. Live chat and
 private messages require a working live session; a failed live message is not
@@ -1689,7 +1689,7 @@ A familiar name attached to a new fingerprint produces an identity warning.
 Confirm the full **Technical identity** with the other operator before
 trusting it; renaming a node does not transfer its reputation.
 
-#### Managed names
+### Managed names
 
 Managed DNS changes and node display-name changes are separate.
 
@@ -1724,7 +1724,7 @@ can register a name but cannot keep one.
 > port-forward or proxy in front of it. The DNS screen states this against
 > your configured listeners; the service cannot check it for you.
 
-##### The public node page
+#### The public node page
 
 A node with a managed name also gets a public page at
 `https://www.netbbs.org/~<name>` once Reliable Link has met it:
@@ -1750,7 +1750,7 @@ map as your callers see it, as JSON: the same document Reliable Link builds the
 pages from. It reads the node's fingerprint from `--identity-dir` (default
 `netbbs_identity`), needs no passphrase, and is safe while the node runs.
 
-##### Running the managed-DNS service
+#### Running the managed-DNS service
 
 If you also run the managed-DNS service itself, `[managed_dns] admin_token` in
 `netbbs.toml` adds <kbd>A</kbd> **Administer service** to the DNS screen: the
