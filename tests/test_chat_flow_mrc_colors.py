@@ -125,8 +125,14 @@ def test_mrc_subcommands_ask_the_hub_and_show_the_reply_to_the_asker_only(db, la
             session.inputs.put_nowait("/quit")
             await asyncio.wait_for(task, timeout=4)
             text = _text(session)
-            assert "[MRC] LIST reply line 1" in text and "[MRC] LIST reply line 2" in text
-            assert "[MRC] CONNECTED reply line 2 phenom" in text
+            # One titled block per answer, even with the second asked
+            # before the first went quiet, its lines indented under it
+            # without a badge of their own.
+            assert "MRC hub · /mrc rooms" in text and "MRC hub · /mrc bbses phenom" in text
+            lines = text.splitlines()
+            assert " LIST reply line 1" in lines and " LIST reply line 2" in lines
+            assert " CONNECTED reply line 2 phenom" in lines
+            assert "[MRC] LIST reply line" not in text
             assert text.count("Usage: /mrc") == 3
             assert "Unknown /mrc subcommand: bogus" in text
             # Carol, in the same channel, saw none of the replies.
@@ -222,3 +228,91 @@ def test_mrc_speaker_is_badged_and_its_site_has_its_own_color(db, channel, alice
     assert colored("[MRC] ", fg_color=MUTED_COLOR) in rendered
     assert colored("@", fg_color=MUTED_COLOR) + colored("Other", fg_color=MRC_SITE_COLOR) in rendered
     assert colored("Other", fg_color=NODE_COLOR) not in rendered
+
+
+def test_a_long_hub_answer_is_paged_and_an_empty_enter_turns_the_page(db, lane, hub, presence, channel, alice):
+    from netbbs.timeutil import utc_now_iso
+
+    async def scenario():
+        rig = await _rig(db, lane, hub, channel)
+        try:
+            session = _QueueSession()
+            session.terminal_width, session.terminal_height = 80, 12  # pages of six rows
+            task = asyncio.create_task(
+                chat_flow._chat_loop(
+                    session, lane, hub, presence, MessageMailbox(), InputHistory(), channel, alice,
+                    mrc_bridge=rig.bridge,
+                )
+            )
+            await rig.fake.wait_for(lambda p: p.body == "NEWROOM::lobby" and p.from_user == "alice")
+            session.inputs.put_nowait("/mrc bbses")
+            await rig.fake.wait_for(lambda p: p.body == "CONNECTED")
+            [participant] = hub.participants_for_username(channel.name, "alice")
+            for index in range(20):
+                await hub.send_to(channel.name, participant, MrcNotice(f"board {index:02}", utc_now_iso(), kind="reply"))
+            assert await eventually(lambda: "Enter shows more" in _text(session))
+            text = _text(session)
+            assert "MRC hub · /mrc bbses" in text and "page 1 of 4" in text
+            assert " board 05" in text.splitlines() and "board 06" not in text
+            assert "[MRC] board" not in text
+            session.inputs.put_nowait("")
+            assert await eventually(lambda: "board 11" in _text(session))
+            text = _text(session)
+            assert "2/4" in text and "page 2 of 4" in text and "board 12" not in text
+            shown = text.count("board ")
+            # Any other line drops the pages still held.
+            session.inputs.put_nowait("hello")
+            await rig.fake.wait_for(lambda p: "hello" in p.body)
+            session.inputs.put_nowait("")
+            await asyncio.sleep(0.3)
+            assert _text(session).count("board ") == shown
+            session.inputs.put_nowait("/quit")
+            await asyncio.wait_for(task, timeout=4)
+        finally:
+            await rig.close()
+    asyncio.run(scenario())
+
+
+def test_an_answer_completing_behind_a_pager_waits_for_its_pages(db, lane, hub, presence, channel, alice):
+    # Review of #1257: one shared pager slot let a second answer overwrite
+    # the first's unread pages. The second now waits, and says so.
+    from netbbs.timeutil import utc_now_iso
+
+    async def scenario():
+        rig = await _rig(db, lane, hub, channel)
+        try:
+            session = _QueueSession()
+            session.terminal_width, session.terminal_height = 80, 12  # pages of six rows
+            task = asyncio.create_task(
+                chat_flow._chat_loop(
+                    session, lane, hub, presence, MessageMailbox(), InputHistory(), channel, alice,
+                    mrc_bridge=rig.bridge,
+                )
+            )
+            await rig.fake.wait_for(lambda p: p.body == "NEWROOM::lobby" and p.from_user == "alice")
+            session.inputs.put_nowait("/mrc bbses")
+            await rig.fake.wait_for(lambda p: p.body == "CONNECTED")
+            [participant] = hub.participants_for_username(channel.name, "alice")
+            for index in range(10):
+                await hub.send_to(channel.name, participant, MrcNotice(f"board {index:02}", utc_now_iso(), kind="reply"))
+            # Every row collected (the queue drained, the last one rendered),
+            # then asked again well inside the first answer's quiet second.
+            assert await eventually(lambda: hub._channels[channel.name][participant].empty())
+            await asyncio.sleep(0.2)
+            session.inputs.put_nowait("/mrc motd")
+            await rig.fake.wait_for(lambda p: p.body == "MOTD")
+            assert await eventually(lambda: "the hub answered /mrc motd" in _text(session))
+            text = _text(session)
+            assert "page 1 of 2" in text and "MOTD reply line 1" not in text
+            session.inputs.put_nowait("")
+            assert await eventually(lambda: "board 09" in _text(session))
+            assert "page 2 of 2 · Enter shows the answer to /mrc motd" in _text(session)
+            assert "MOTD reply line 1" not in _text(session)
+            session.inputs.put_nowait("")
+            assert await eventually(lambda: "MRC hub · /mrc motd" in _text(session))
+            assert " MOTD reply line 1" in _text(session).splitlines()
+            session.inputs.put_nowait("/quit")
+            await asyncio.wait_for(task, timeout=4)
+        finally:
+            await rig.close()
+    asyncio.run(scenario())

@@ -388,6 +388,14 @@ class LiveChannelBridge:
         holders.add(holder)
         return first
 
+    def has_local_interest(self, channel_id: str) -> bool:
+        """Whether some local caller holds a live subscription to
+        `channel_id` right now -- the only time `remote_channel_presence`
+        is being kept current. The roster is not cleared on unsubscribe
+        (only when the peer's session closes), so a reader that wants a
+        count, not just the last roster seen, checks this first."""
+        return bool(self._local_interest.get(channel_id))
+
     def release_local_interest(self, channel_id: str, holder: int) -> bool:
         """Record that `holder` no longer wants live delivery for
         `channel_id`. Returns whether `holder` was the *last* local

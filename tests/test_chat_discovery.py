@@ -11,6 +11,7 @@ already established in tests/test_chat_flow_moderation.py and friends.
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -68,6 +69,13 @@ def channel(db, alice):
 
 def _written_text(session: FakeSession) -> str:
     return "\n".join(session.written)
+
+
+def _rows(session: FakeSession) -> list[str]:
+    """Every screen line with colors gone and runs of spaces collapsed, so a
+    reply block's aligned row reads as `alice here`."""
+    plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[78]", "", "".join(session.written))
+    return [" ".join(line.split()) for line in plain.replace("\r", "").split("\n")]
 
 
 async def _run(lane, hub, presence, channel, user, lines):
@@ -175,14 +183,12 @@ def test_who_shows_away_indicator(lane, hub, presence, alice, bob, channel):
         return asker
 
     asker = asyncio.run(scenario())
-    assert "alice (away: gone to lunch)" in _written_text(asker)
+    assert "alice here · away: gone to lunch" in _rows(asker)
 
 
 def test_who_shows_no_suffix_when_not_away(lane, hub, presence, alice, channel):
     session = asyncio.run(_run(lane, hub, presence, channel, alice, ["/who", "/quit"]))
-    output = _written_text(session)
-    who_line = next(line for line in output.splitlines() if line.strip() == "alice")
-    assert who_line == "alice"
+    assert "alice here" in _rows(session)
 
 
 # -- /list --------------------------------------------------------------
@@ -192,7 +198,7 @@ def test_list_shows_visible_channels_with_online_count(lane, hub, presence, alic
     session = asyncio.run(_run(lane, hub, presence, channel, alice, ["/list", "/quit"]))
     output = _written_text(session)
     assert "#general" in output
-    assert "online" in output
+    assert any(row.startswith("#general 1 here") for row in _rows(session))
 
 
 def test_list_excludes_channels_above_the_users_level(db, lane, hub, presence, alice, bob, channel):
@@ -212,7 +218,7 @@ def test_whois_shows_online_status(lane, hub, presence, alice, bob, channel):
     session = asyncio.run(_run(lane, hub, presence, channel, alice, ["/whois bob", "/quit"]))
     output = _written_text(session)
     assert "bob" in output
-    assert "Status: offline" in output
+    assert "Status offline" in _rows(session)
 
 
 def test_whois_shows_online_when_target_is_present(lane, hub, presence, alice, bob, channel):
@@ -237,16 +243,15 @@ def test_whois_shows_online_when_target_is_present(lane, hub, presence, alice, b
         return asker
 
     asker = asyncio.run(scenario())
-    output = _written_text(asker)
-    assert "Status: online" in output
-    assert "#general" in output  # channel-membership line
+    assert "Status online" in _rows(asker)
+    assert "Channels #general" in _rows(asker)
 
 
 def test_whois_shows_away_status(lane, hub, presence, alice, bob, channel):
     presence.enter("bob")
     presence.set_away("bob", "brb")
     session = asyncio.run(_run(lane, hub, presence, channel, alice, ["/whois bob", "/quit"]))
-    assert "Away: brb" in _written_text(session)
+    assert "Away brb" in _rows(session)
 
 
 def test_whois_shows_public_bio(db, lane, hub, presence, alice, bob, channel):

@@ -381,6 +381,7 @@ Choose a chat channel to join the conversation. Type a line and press
 | Command | Use |
 | --- | --- |
 | `/who` | See who's online |
+| `/list` | List the channels, with how many are in each, here and on MRC or a linked BBS |
 | `/join channel` | Switch to another channel |
 | `/leave` | Return to the channel picker |
 | `/quit` | Leave chat |
@@ -829,6 +830,12 @@ Channels marked **MRC** connect to a separate public chat network.
 
 A line from MRC starts with **[MRC]**, and its sender reads `nick@theirBBS`,
 with their BBS in a color of its own.
+
+The network's answer to an `/mrc` question, such as `/rooms` or `/mrc bbses`,
+appears a moment after it finishes arriving, as one block headed
+`MRC hub · /mrc bbses`. A long answer comes a page at a time: press
+<kbd>Enter</kbd> on an empty line for the next page. Typing anything else skips
+the rest of it.
 
 #### Stylized MRC names
 

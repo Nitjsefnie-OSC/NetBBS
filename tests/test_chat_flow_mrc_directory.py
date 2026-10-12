@@ -138,8 +138,8 @@ def test_a_listing_kept_from_another_hub_or_too_long_ago_is_not_shown(db, lane, 
             assert second.directory_details("chess") is None and "chess" not in second.observed_rooms()
             await second.close()
             save_directory_snapshot(db, identity, [
-                DirectoryEntry("ancient", 4, "t", _stamp(hours_ago=24 * 8)),
-                DirectoryEntry("recent", 2, "t", _stamp(hours_ago=24 * 2)),
+                DirectoryEntry("ancient", 4, "t", _stamp(hours_ago=24 * 31)),
+                DirectoryEntry("recent", 2, "t", _stamp(hours_ago=24 * 20)),
             ])
             second = await _second_run(lane, hub)
             assert second.directory_details("ancient") is None

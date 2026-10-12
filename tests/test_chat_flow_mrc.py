@@ -312,10 +312,12 @@ def test_who_names_and_mrc_show_the_hub_roster_and_link_state(db, lane, hub, pre
             text = _text(session)
             assert "bob@other (on MRC)" in text
             assert "carol@third (on MRC)" in text
-            assert "bob@other (on MRC), carol@third (on MRC)" in text
-            assert "MRC room #lobby via 127.0.0.1:" in text
-            assert "CONNECTED" in text
-            assert "2 MRC users here: bob@other, carol@third" in text
+            assert "bob@other (on MRC), carol@third (on MRC)" in text  # /names
+            rows = [" ".join(line.split()) for line in text.splitlines()]
+            assert "bob@other on MRC" in rows and "carol@third on MRC" in rows  # /who
+            assert "Room #lobby" in rows and "Link CONNECTED" in rows  # /mrc
+            assert any(row.startswith("Hub 127.0.0.1:") for row in rows)
+            assert "Users 2 on MRC: bob@other, carol@third" in rows
         finally:
             await rig.close()
     asyncio.run(scenario())
@@ -330,7 +332,9 @@ def test_paused_bridge_is_honest_in_mrc_and_status_line(db, lane, hub, presence,
             session, _ = await _run(lane, hub, presence, channel, alice, ["hi", "/mrc", "/quit"], mrc_bridge=rig.bridge)
             text = _text(session)
             assert "bridged to MRC room" not in text  # no opt-in banner while paused
-            assert "Bridge paused by the SysOp" in text
+            assert "Link paused by the SysOp -- nothing is relayed either way" in [
+                " ".join(line.split()) for line in text.splitlines()
+            ]
             await asyncio.sleep(0.1)
             assert not rig.fake.packets(body_prefix="hi")
             groups = chat_flow._render_chat_status_line(db, hub, presence, channel, alice)

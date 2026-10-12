@@ -61,7 +61,7 @@ def test_msg_is_refused_until_the_caller_opts_in(db, lane, hub, presence, channe
                 lane, hub, presence, channel, alice, ["/mrc", "/mrc msg bob hi", "/mrc r hi", "/quit"], mrc_bridge=rig.bridge,
             )
             text = _text(session)
-            assert "Private MRC messages: off (Profile > Communication)" in text
+            assert "Private off (Profile > Communication)" in [" ".join(line.split()) for line in text.splitlines()]
             assert "(not sent to MRC: you have not opted in to private MRC messages (Profile))" in text
             assert "Nobody on MRC has messaged you privately yet." in text
             assert NOTE not in text
@@ -87,7 +87,7 @@ def test_msg_sends_echoes_and_notes_once(db, lane, hub, presence, channel, alice
                 mrc_bridge=rig.bridge, while_joined=lambda: asyncio.sleep(1.5),
             )
             text = _text(session)
-            assert "Private MRC messages: on (Profile > Communication)" in text
+            assert "Private on (Profile > Communication)" in [" ".join(line.split()) for line in text.splitlines()]
             assert text.count(NOTE) == 1
             assert "(that line was too long for MRC -- only its first part was sent)" in text
             assert text.count("Usage: /mrc") == 2
