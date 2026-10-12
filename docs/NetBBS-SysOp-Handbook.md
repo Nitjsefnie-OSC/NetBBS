@@ -2323,54 +2323,209 @@ DNS registration, or backups is a separate, deliberate operator action.
 
 ## Troubleshooting
 
-| Symptom | Check and next action |
+| At a glance | |
 | --- | --- |
-| Service will not start | Read service output; check config paths, file permissions, selected interpreter, extras, and port conflicts. Do not treat a zero exit status alone as a working listener. |
-| A caller forgot their password, or you are locked out | Set a new password from the account's detail screen (**Password**), or run `python -m netbbs.admin reset-password USERNAME` on the host. Nothing recovers the old one. |
-| You think `signing.identity` or `transport.identity` leaked | Replace that key as **Compromised** under **Link status → Keys**, or with `python -m netbbs.admin rotate-key signing --compromised` while the node is stopped. The address and reputation stay; see [Node keys](#node-keys). If `root.identity` leaked too, as it does with a whole copied identity directory or backup, rotation is no remedy: the holder can authorize keys of their own, and only a new node identity ends that. |
-| SSH import fails on NetBSD | Check pkgsrc libraries and `LD_LIBRARY_PATH`; see installation above. |
-| An SSH client cannot connect, e.g. SyncTERM says "Error -20 activating session" or "Error -30 activating session" | "Error -30" with "an excessive number of consecutive no-op packets" means the node is older than the fix for issue #964; upgrade it. For "Error -20": the node offers an Ed25519 host key and, for clients without Ed25519 such as older SyncTERM builds, an RSA one (`netbbs_ssh_host_key_rsa`, created at the first start that lacks it). Make sure the node was restarted after upgrading so the RSA key exists. A caller who connected before sees a new fingerprint only if their client picks the RSA key. |
-| The log says an SSH host key "was readable by other accounts" | The key file was created before NetBBS restricted it, or restored from a backup taken then. NetBBS has already made it owner-only (0600). If other people have accounts on the host, assume they could have copied it: stop the node, delete `netbbs_ssh_host_key` and `netbbs_ssh_host_key_rsa`, and start it again to get new keys. Callers' SSH clients will then warn that the host key changed, so tell them first. On a host only you can log in to, no action is needed. |
-| Caller cannot log in | Check maintenance mode, pending approval, disabled account, and login throttling before resetting credentials. |
-| Caller can read but cannot contribute | Check write/join gates, age/name attestations, moderator grants, and inherited Community settings. |
-| Browser terminal or upload fails | Check HTTPS proxy/WebSocket forwarding, upload limits, web listener, and `public_url`. |
-| Callers or peers cannot reach the address you expect | Compare **Settings → Operating limits → Node configuration** (the configuration the node resolved at its last start, the addresses it advertises, and where each value came from; a listener whose optional extra is missing is listed but was not started, and the service output says so) with your TOML file and the service's command line. |
-| Terminal offers no file-transfer link | Enable/configure the web listener and its public URL, or use a Zmodem-capable client. |
-| Link will not start | Check the `web` extra, effective participation setting, and a non-placeholder node name. |
-| **Find** misses content callers can open, or lists removed content | **Operations → Search indexes**: check, then **Rebuild** if it reports drift. |
-| Peers connect but content is missing | Check **Link status → Offered** and **Excluded**, trust state, Outbox, and Diagnostics. Use Repair carried posts only for local materialization repair. |
-| Game is busy, fails, or loses state | Check its session limit, Compatibility setup, Last diagnostic, service state, and actual persistent paths. |
-| Backup says `Voidrunner: NOT CAPTURED` | The node has not started since v7.4.1, so it has recorded no save directory and the CLI fell back to your shell's home. Start the node once, or rerun with explicit `--voidrunner-save-dir`. |
-| Backup says `Voidrunner: no saves at ...` | The node named that directory itself and there is nothing in it -- nobody has played. Nothing to do. |
-| Startup refuses the database version | Install a compatible release or restore the matching pre-upgrade backup. Do not edit the schema number. |
+| **Where** | **Operations ▸ Error log**, **Operations ▸ Diagnostics**, **Operations ▸ Audit log** |
+| **From the shell** | `journalctl -u netbbs` (Linux), `netbbs.service.log` (NetBSD), `python -m netbbs.admin` |
+| **Start with** | The symptom below, then [the logs](#reading-the-logs) |
 
-On Linux, start with `journalctl -u netbbs`. On NetBSD, the example service's
-capture file is `netbbs.service.log` in the state directory; it catches failures
-before the application's rotating log opens. That service capture is not
-self-rotating, so arrange rotation or an appropriate output policy yourself.
-The application's `netbbs.log` rotates at 10 MiB with five retained backups
-(up to about 60 MiB including the active file).
+| Area | Symptoms |
+| --- | --- |
+| [Starting the node](#starting-the-node) | [Service will not start](#service-will-not-start) · [Startup refuses the database version](#startup-refuses-the-database-version) · [Link will not start](#link-will-not-start) |
+| [Callers and accounts](#callers-and-accounts) | [Caller cannot log in](#caller-cannot-log-in) · [Forgotten password or locked out](#forgotten-password-or-locked-out) · [Caller can read but cannot contribute](#caller-can-read-but-cannot-contribute) |
+| [Connections](#connections) | [SSH import fails on NetBSD](#ssh-import-fails-on-netbsd) · [SSH client cannot connect](#ssh-client-cannot-connect) · [SSH host key was readable by other accounts](#ssh-host-key-was-readable-by-other-accounts) · [Browser terminal or upload fails](#browser-terminal-or-upload-fails) · [No file-transfer link](#no-file-transfer-link) · [Callers or peers cannot reach your address](#callers-or-peers-cannot-reach-your-address) |
+| [Content, Link and games](#content-link-and-games) | [Find misses or lists the wrong content](#find-misses-or-lists-the-wrong-content) · [Peers connect but content is missing](#peers-connect-but-content-is-missing) · [Game is busy, fails, or loses state](#game-is-busy-fails-or-loses-state) |
+| [Keys and backups](#keys-and-backups) | [A node key may have leaked](#a-node-key-may-have-leaked) · [Voidrunner: NOT CAPTURED](#voidrunner-not-captured) · [Voidrunner: no saves at](#voidrunner-no-saves-at) |
 
-Some lines are routine and need nothing from you. A caller who hangs up is one
-`INFO` line naming their address. Every node yours meets on NetBBS Link starts
-on probation here, and the log says once per node, since the node started,
-that its content is held back. Your node is on probation at each peer in the
-same way, and the log says once per peer when one does not take what yours
-sends yet. A relay candidate that cannot be reached is also mentioned once. A `WARNING` or `ERROR` line, and any traceback, is worth
-reading.
+### Starting the node
 
-**Operations → Error log** reads that file from inside NetBBS, including from
-`python -m netbbs.admin` while the node is stopped. That console runs outside
-the node, so its health panel has no live controls; it says whether the node
-is running. It shows the newest 512 KiB,
-topped up from `netbbs.log.1` after a rotation, and says when older lines exist
-that it does not show. It cannot show failures from before the log opened; for
-those, use the service manager's output above.
+#### Service will not start
 
-Link Diagnostics is a bounded warning/error log, not a transcript of all
-content. The administrative Audit log answers who changed a setting or moderated
-an item. Inspect those before attempting filesystem repairs.
+- **Check:** read the service output; check config paths, file permissions,
+  selected interpreter, extras, and port conflicts.
+- Do not treat a zero exit status alone as a working listener.
+
+#### Startup refuses the database version
+
+- **Fix:** install a compatible release or restore the matching pre-upgrade
+  backup.
+- Do not edit the schema number.
+
+#### Link will not start
+
+- **Check:** the `web` extra, the effective participation setting, and a
+  non-placeholder node name.
+
+### Callers and accounts
+
+#### Caller cannot log in
+
+- **Check:** maintenance mode, pending approval, disabled account, and login
+  throttling before resetting credentials.
+
+#### Forgotten password or locked out
+
+A caller forgot their password, or you are locked out:
+
+- **Fix:** set a new password from the account's detail screen
+  (<kbd>P</kbd> **Password**), or run
+  `python -m netbbs.admin reset-password USERNAME` on the host.
+- Nothing recovers the old one.
+
+#### Caller can read but cannot contribute
+
+- **Check:** write/join gates, age/name attestations, moderator grants, and
+  inherited Community settings.
+
+### Connections
+
+#### SSH import fails on NetBSD
+
+- **Check:** pkgsrc libraries and `LD_LIBRARY_PATH`; see
+  [installation](#installing-netbbs).
+
+#### SSH client cannot connect
+
+For example, SyncTERM says "Error -20 activating session" or "Error -30
+activating session".
+
+- **"Error -30"** with "an excessive number of consecutive no-op packets"
+  means the node is older than the fix for issue #964; upgrade it.
+- **"Error -20":** the node offers an Ed25519 host key and, for clients
+  without Ed25519 such as older SyncTERM builds, an RSA one
+  (`netbbs_ssh_host_key_rsa`, created at the first start that lacks it). Make
+  sure the node was restarted after upgrading so the RSA key exists. A caller
+  who connected before sees a new fingerprint only if their client picks the
+  RSA key.
+
+#### SSH host key was readable by other accounts
+
+The log says an SSH host key "was readable by other accounts". The key file
+was created before NetBBS restricted it, or restored from a backup taken then.
+NetBBS has already made it owner-only (0600).
+
+- **On a host only you can log in to:** no action is needed.
+- **If other people have accounts on the host,** assume they could have copied
+  it:
+  1. Tell callers first: their SSH clients will warn that the host key
+     changed.
+  2. Stop the node.
+  3. Delete `netbbs_ssh_host_key` and `netbbs_ssh_host_key_rsa`.
+  4. Start it again to get new keys.
+
+#### Browser terminal or upload fails
+
+- **Check:** HTTPS proxy/WebSocket forwarding, upload limits, the web
+  listener, and `public_url`.
+
+#### No file-transfer link
+
+The terminal offers no file-transfer link.
+
+- **Fix:** enable/configure the web listener and its public URL, or use a
+  Zmodem-capable client.
+
+#### Callers or peers cannot reach your address
+
+Callers or peers cannot reach the address you expect.
+
+- **Check:** compare
+  **Settings ▸ Operating limits ▸ Node configuration** with your TOML file and
+  the service's command line. That screen shows the configuration the node
+  resolved at its last start, the addresses it advertises, and where each
+  value came from.
+- A listener whose optional extra is missing is listed there but was not
+  started, and the service output says so.
+
+### Content, Link and games
+
+#### Find misses or lists the wrong content
+
+**Find** misses content callers can open, or lists removed content.
+
+- **Fix:** open **Operations ▸ Search indexes**, which checks them, then press
+  <kbd>R</kbd> **Rebuild** if it reports drift.
+
+#### Peers connect but content is missing
+
+- **Check:** **Link status ▸ Offered** and **Link status ▸ Excluded**, trust
+  state, **Outbox**, and **Diagnostics**.
+- Use **Repair carried posts** only for local materialization repair.
+
+#### Game is busy, fails, or loses state
+
+- **Check:** its session limit, <kbd>C</kbd> **Compatibility** setup,
+  <kbd>L</kbd> **Last diagnostic**, service state, and actual persistent
+  paths.
+
+### Keys and backups
+
+#### A node key may have leaked
+
+You think `signing.identity` or `transport.identity` leaked.
+
+- **Fix:** replace that key as **Compromised** under **Link status ▸ Keys**,
+  or with `python -m netbbs.admin rotate-key signing --compromised` while the
+  node is stopped. The address and reputation stay; see
+  [Node keys](#node-keys).
+
+> [!CAUTION]
+> If `root.identity` leaked too, as it does with a whole copied identity
+> directory or backup, rotation is no remedy: the holder can authorize keys
+> of their own, and only a new node identity ends that.
+
+#### Voidrunner: NOT CAPTURED
+
+Backup says `Voidrunner: NOT CAPTURED`. The node has not started since
+v7.4.1, so it has recorded no save directory and the CLI fell back to your
+shell's home.
+
+- **Fix:** start the node once, or rerun with explicit
+  `--voidrunner-save-dir`.
+
+#### Voidrunner: no saves at
+
+Backup says `Voidrunner: no saves at ...`. The node named that directory
+itself and there is nothing in it -- nobody has played. Nothing to do.
+
+### Reading the logs
+
+| Where | What |
+| --- | --- |
+| Linux | Start with `journalctl -u netbbs`. |
+| NetBSD | The example service's capture file is `netbbs.service.log` in the state directory; it catches failures before the application's rotating log opens. That service capture is not self-rotating, so arrange rotation or an appropriate output policy yourself. |
+| `netbbs.log` | The application's log rotates at 10 MiB with five retained backups (up to about 60 MiB including the active file). |
+
+**Operations ▸ Error log** reads that file from inside NetBBS, including from
+`python -m netbbs.admin` while the node is stopped.
+
+- That console runs outside the node, so its health panel has no live
+  controls; it says whether the node is running.
+- It shows the newest 512 KiB, topped up from `netbbs.log.1` after a
+  rotation, and says when older lines exist that it does not show.
+- It cannot show failures from before the log opened; for those, use the
+  service manager's output above.
+
+Some lines are routine and need nothing from you:
+
+- A caller who hangs up is one `INFO` line naming their address.
+- Every node yours meets on NetBBS Link starts on probation here, and the log
+  says once per node, since the node started, that its content is held back.
+- Your node is on probation at each peer in the same way, and the log says
+  once per peer when one does not take what yours sends yet.
+- A relay candidate that cannot be reached is also mentioned once.
+
+A `WARNING` or `ERROR` line, and any traceback, is worth reading.
+
+Link **Diagnostics** is a bounded warning/error log, not a transcript of all
+content. The administrative **Audit log** answers who changed a setting or
+moderated an item. Inspect those before attempting filesystem repairs.
+
+### Filing an issue
 
 For unresolved problems, [file an issue](https://github.com/Thiesi/NetBBS/issues)
 with the release, operating system, transport, steps, and relevant error text.
-Remove passwords, private keys, tokens, personal data, and transfer URLs.
+
+> [!WARNING]
+> Remove passwords, private keys, tokens, personal data, and transfer URLs
+> before you post.
