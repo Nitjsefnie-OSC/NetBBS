@@ -939,93 +939,143 @@ records it.
 
 ## Content and Communities
 
-Create resources under **Content**, or use **Create** in a resource picker.
-An empty picker remains usable for creating the first resource. Review the
-draft and save it explicitly.
+| At a glance | |
+| --- | --- |
+| **Where** | **Content** in the SysOp console |
+| **Callers find it under** | <kbd>M</kbd> **Message boards**, <kbd>C</kbd> **Chat**, <kbd>F</kbd> **Files**, <kbd>G</kbd> **Games** and <kbd>T</kbd> **Topics** on the main menu |
+| **Decide first** | Whether you need categories or Communities at all; a node with a handful of boards needs neither |
 
-**A resource's screen is its editor.** Choosing a Community, category,
-message board, file area, chat channel or door opens it on its own fields,
-with the cursor on the first: type a field's number, or move with Up and
-Down and press Enter (or Space), to change it, and Left and Right step a
-choice. A line above the
-fields says what the screen is about: a board's posts and latest activity, its
-place in the list and whether it is Linked; a channel's MRC room; a door's
-compatibility. Longer details follow the fields: a Linked board's or area's
-**NetBBS Link** section, a channel's **Sharing**, a door's companion service.
-When the screen is paged with **<** **>** or PgUp/PgDn, they are on the last
-page. The
-resource's actions keep their letters (**Up**, **Down**, **Remove**, **Pending
-posts**, **History**, **Link**, **Restrictions**, **Compatibility**, the
-service controls and the rest) and are offered while nothing waits to be
-saved. Once a field has changed, only **Save** and **Back** are offered, and
-**Back** asks before discarding the change. Creating a resource uses the same
-screen, empty and without actions.
+In this chapter: [Create and edit resources](#create-and-edit-resources) ·
+[Each kind of resource](#each-kind-of-resource) ·
+[Where callers find it](#where-callers-find-it) ·
+[Categories and Communities](#categories-and-communities) ·
+[Moderators and grants](#moderators-and-grants)
 
-- **Message boards:** set read/write levels, moderation, retention, and gates.
-  Pending posts remain in an approval queue. Edits retain revision identity.
-- **File areas:** set access, upload policy, size/retention rules, and moderation.
-  Uploads may include a description extracted from `FILE_ID.DIZ`. A remote
-  catalogue entry is metadata; fetching its bytes is a separate action.
-  Posts and letters can point at files in your areas, and readers download
-  them from here: deleting or expiring a file turns those into "no longer
-  available", and raising an area's read level hides the file's and area's
-  names from readers it now shuts out.
-- **Order of boards and file areas:** callers' lists follow your order, not
-  the latest activity, so the number a caller remembers keeps its board. A
-  new board or area goes last. **Up** and **Down** on its screen move it among
-  the others in the same category and Community; pinned ones stay first and
-  move among themselves. **Remove** deletes it. A caller can still sort a list by
-  activity with **[O]rder**.
-- **Chat channels:** set join gates, visibility, invitations, and moderation.
-  Hidden or invite-only channels need more than a sufficient account level.
-- **Communities:** group related resources and provide inherited defaults.
-  Inspect effective gates on child resources before changing a shared default.
-  A Community is not an automatic grant to every resource inside it.
-  Callers see Communities in your order: a new one goes last, and **Up** and
-  **Down** on its screen move it. **Remove** deletes it; its resources stay,
-  without a Community.
-- **Doors:** attach registered games to a Community, or to none.
+### Create and edit resources
 
-**Where callers find it.** The main menu's **Message boards**, **Chat** and
-**Files** list everything of that kind on the node, whichever Community it
-belongs to; a resource with no Community is simply listed there, so you do
-not need a Community to make a board easy to find. **Games** appears for a
-caller once a registered door is open to their level. **Communities** (key **O**) appears once one exists and
-shows each Community's description and what it holds; give each a
-description, because that is what callers read first.
-
-**Categories and Communities are different things.** A category groups the
-list of one kind (board categories group boards) and shows up as a folder in
-that list. A Community is a topic that holds every kind at once. A resource
-can have both. Create categories under **Content → Categories** and pick one
-in a board's, area's or channel's **Category** field; Communities are under
-**Content → Topics**. Ctrl-H on the Categories screen says the same. A
-node with a handful of boards needs neither.
+Create resources under **Content**, or use <kbd>C</kbd> **Create** in a
+resource picker. An empty picker remains usable for creating the first
+resource. Review the draft and save it explicitly.
 
 Until the node has a board, chat channel or file area, your own main menu
 shows where to create one.
 
+**A resource's screen is its editor.** Choosing a Community, category,
+message board, file area, chat channel or door opens it on its own fields,
+with the cursor on the first.
+
+- To change a field, type its number, or move with <kbd>Up</kbd> and
+  <kbd>Down</kbd> and press <kbd>Enter</kbd> (or <kbd>Space</kbd>).
+  <kbd>Left</kbd> and <kbd>Right</kbd> step a choice.
+- A line above the fields says what the screen is about: a board's posts and
+  latest activity, its place in the list and whether it is Linked; a
+  channel's MRC room; a door's compatibility.
+- Longer details follow the fields: a Linked board's or area's
+  **NetBBS Link** section, a channel's **Sharing**, a door's companion
+  service. When the screen is paged with <kbd>&lt;</kbd> <kbd>&gt;</kbd> or
+  <kbd>PgUp</kbd>/<kbd>PgDn</kbd>, they are on the last page.
+- The resource's actions keep their letters (**Up**, **Down**, **Remove**,
+  **Pending posts**, **History**, **Link**, **Restrictions**,
+  **Compatibility**, the service controls and the rest) and are offered while
+  nothing waits to be saved.
+- Once a field has changed, only **Save** and **Back** are offered, and
+  **Back** asks before discarding the change.
+
+Creating a resource uses the same screen, empty and without actions.
+
+### Each kind of resource
+
+| Resource | What you set and how it behaves |
+| --- | --- |
+| **Message boards** | Set read/write levels, moderation, retention, and gates. Pending posts remain in an approval queue. Edits retain revision identity. |
+| **File areas** | Set access, upload policy, size/retention rules, and moderation. Uploads may include a description extracted from `FILE_ID.DIZ`. A remote catalogue entry is metadata; fetching its bytes is a separate action. |
+| **Chat channels** | Set join gates, visibility, invitations, and moderation. Hidden or invite-only channels need more than a sufficient account level. |
+| **Communities** | Group related resources and provide inherited defaults. A Community is not an automatic grant to every resource inside it. |
+| **Doors** | Attach registered games to a Community, or to none. See [Door games](#door-games). |
+
+Posts and letters can point at files in your areas, and readers download them
+from here:
+
+- deleting or expiring a file turns those into "no longer available";
+- raising an area's read level hides the file's and area's names from readers
+  it now shuts out.
+
+> [!TIP]
+> Inspect effective gates on child resources before changing a Community's
+> shared default.
+
+#### Order boards, file areas and Communities
+
+Callers' lists follow your order, not the latest activity, so the number a
+caller remembers keeps its board.
+
+- A new board, area or Community goes last.
+- <kbd>U</kbd> **Up** and <kbd>D</kbd> **Down** on its screen move it. A board
+  or area moves among the others in the same category and Community; pinned
+  ones stay first and move among themselves.
+- <kbd>R</kbd> **Remove** deletes it. A removed Community's resources stay,
+  without a Community.
+- A caller can still sort a list by activity with <kbd>O</kbd> **Order**.
+
+### Where callers find it
+
+- The main menu's <kbd>M</kbd> **Message boards**, <kbd>C</kbd> **Chat** and
+  <kbd>F</kbd> **Files** list everything of that kind on the node, whichever
+  Community it belongs to. A resource with no Community is simply listed
+  there, so you do not need a Community to make a board easy to find.
+- <kbd>G</kbd> **Games** appears for a caller once a registered door is open
+  to their level.
+- <kbd>T</kbd> **Topics** appears once a Community exists and shows each
+  Community's description and what it holds. Give each a description,
+  because that is what callers read first.
+
+The [user handbook](NetBBS-User-Handbook.md) covers posting, drafts, follows,
+search, mail, and everyday chat. **New scan** and **Find** only show content
+the caller can access on this node, including carried linked content.
+
+### Categories and Communities
+
+They are different things, and a resource can have both:
+
+| | Category | Community |
+| --- | --- | --- |
+| **Groups** | The list of one kind (board categories group boards) | Every kind at once, around a topic |
+| **Shows up as** | A folder in that list | An entry under **Topics** |
+| **Create under** | **Content ▸ Categories** | **Content ▸ Topics** |
+
+Pick a category in a board's, area's or channel's **Category** field.
+<kbd>Ctrl</kbd>+<kbd>H</kbd> on the Categories screen says the same. A node
+with a handful of boards needs neither.
+
+### Moderators and grants
+
 Moderator grants belong to a resource or Community. Membership alone does not
 make someone a moderator. Grant only the scope required; use approval queues
-and the audit log to review actions. When a moderator rejects a post, its
-author gets a mail from **System** -- the BBS, not the moderator's own
-account -- with the reason, who decided, and the text; it cannot be
-replied to. Such a notice counts toward the author's mailbox limit but is
-the first read mail removed to make room. Chat moderation commands are used inside
+and the audit log to review actions. Chat moderation commands are used inside
 the channel by someone with the appropriate authority.
+
+When a moderator rejects a post, its author gets a mail from **System** --
+the BBS, not the moderator's own account -- with the reason, who decided, and
+the text.
+
+- It cannot be replied to.
+- It counts toward the author's mailbox limit but is the first read mail
+  removed to make room.
+
+#### Let a helper past a level
 
 A read or write grant on a board or file area lets its holder past that
 resource's minimum read or write level. To let a helper post on an
-announcements board whose write level is 255, grant them the **Read and post**
-preset on that board rather than raising their level (**Read only** opens
-reading alone). A grant opens only what its scope covers: one board or area,
-or, with a blanket scope, every board or area of that kind on the node or in
-one Community, so pick the scope with care. The minimum age and
-verified-name requirements still apply.
+announcements board whose write level is 255, grant them the
+**Read and post** preset on that board rather than raising their level
+(**Read only** opens reading alone).
 
-The [user handbook](NetBBS-User-Handbook.md) covers posting, drafts, follows,
-search, mail, and everyday chat. **New scan** and **Find** only show content the
-caller can access on this node, including carried linked content.
+> [!WARNING]
+> A grant opens only what its scope covers: one board or area, or, with a
+> blanket scope, every board or area of that kind on the node or in one
+> Community. Pick the scope with care.
+
+The minimum age and verified-name requirements still apply.
 
 ## Door games
 
