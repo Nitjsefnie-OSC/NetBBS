@@ -443,30 +443,59 @@ live networking. Its Backup screen is status-only; use the backup CLI there.
 
 ## Accounts, permissions, and identity
 
-Choose registration mode under **Users → Registration**:
+| At a glance | |
+| --- | --- |
+| **Where** | **Users** in the SysOp console |
+| **From the shell** | `python -m netbbs.admin last` (levels), `python -m netbbs.admin reset-password` |
+| **Decide first** | Who may sign up, and whether you need any level above 0 at all |
 
-- **Open:** new accounts can log in immediately.
-- **Approval required:** approve a pending account from its detail screen,
-  or turn it down there with **Decline**, which removes it after a yes/no.
-  Until you approve it, the account cannot log in at all, not even to look
-  around; when the caller tries, they are told it is waiting for your
-  approval. **Question** sets an optional question new callers answer
-  when they sign up ("What do you write with?"). The answer shows on the
-  pending account and is deleted once you approve it.
-- **Closed:** only SysOps create accounts.
+In this chapter: [Registration](#registration) · [Levels](#levels) ·
+[Account lifecycle](#account-lifecycle) ·
+[Sharing the work](#sharing-the-work-staff-permissions) ·
+[Verified age and names](#verified-age-and-names)
 
-A caller cannot register a reserved name (`sysop`, `admin`, `root`,
-`moderator`, `guest` and a few more), a name containing "sysop", or a name
-that reads like a SysOp's own (`lnkwell` for `InkWell`). You can still create
-such an account yourself under **Users → Create user**.
+### Registration
+
+Choose who may sign up under **Users ▸ Registration**:
+
+| Mode | What happens |
+| --- | --- |
+| <kbd>O</kbd> **Open** | New accounts can log in immediately. |
+| <kbd>A</kbd> **Approval required** | New accounts wait for you and cannot log in until you approve them. |
+| <kbd>C</kbd> **Closed** | Only SysOps create accounts. |
+
+With approval required:
+
+- Open a pending account under **Users ▸ User list** and press
+  <kbd>A</kbd> **Approve**, or <kbd>D</kbd> **Decline** to remove it after a
+  yes/no.
+- Until you approve it, the account cannot log in at all, not even to look
+  around. When the caller tries, they are told it is waiting for your
+  approval.
+- <kbd>Q</kbd> **Question** sets an optional question new callers answer when
+  they sign up ("What do you write with?"). The answer shows on the pending
+  account and is deleted once you approve it.
+
+A caller cannot register:
+
+- a reserved name (`sysop`, `admin`, `root`, `moderator`, `guest` and a few
+  more);
+- a name containing "sysop";
+- a name that reads like a SysOp's own (`lnkwell` for `InkWell`).
+
+You can still create such an account yourself under **Users ▸ Create user**.
 
 ### Levels
 
-Every account has a level from 0 to 255. A new account starts at **0**,
-whether a caller signed up or you created it, and approving a pending account
-leaves it at 0. **255** is SysOp: the whole console and power over every
-account. Levels 1 to 254 grant nothing by themselves. They matter only where
-you set a minimum, and every minimum starts at 0:
+Every account has a level from 0 to 255:
+
+| Level | Meaning |
+| --- | --- |
+| **0** | Where every account starts, whether a caller signed up or you created it. Approving a pending account leaves it at 0. |
+| **1–254** | Grant nothing by themselves. They matter only where you set a minimum. |
+| **255** | SysOp: the whole console and power over every account. |
+
+Every minimum starts at 0. You can set one on:
 
 - a message board's or file area's **Min read level** and **Min write
   level**, which a Community can supply as defaults;
@@ -475,89 +504,11 @@ you set a minimum, and every minimum starts at 0:
 - node-wide minimums under **Settings**, such as the Mail level and the Node
   map level.
 
-A channel's and a door's level are always set on the channel or door itself,
-never inherited from a Community. Raise an account's level from its detail
-screen under **Users**: press `L`, type the new level (0 to 255), and NetBBS
-shows what the change opens and closes for that account before it is made:
+> [!NOTE]
+> A channel's and a door's level are always set on the channel or door
+> itself, never inherited from a Community.
 
-- **Gains:** each board to read or post on, file area to download from or
-  upload to, channel, door and node-wide feature (node map, mail, opening MRC
-  rooms, the SysOp console) the new level lets them into.
-- **Loses:** what the new level takes away.
-- **Still blocked:** what the new level opens, but another gate still keeps
-  this account out of, such as an age or verified-name requirement or a
-  members-only channel.
-
-The preview counts the account's own read and write grants, so a helper who
-can post on a board through a grant does not "lose" it in a demotion. Press
-`A` to apply the change, or `B` to leave the level as it was. A change that
-opens and closes nothing is applied straight away, and the line under the
-screen says so.
-
-New callers can also move up on their own. Under **Users ▸ Auto-promotion
-rules**, `C` creates a rule: accounts at one level are raised to a higher
-one once they are old enough (hours since signup), have logged in often
-enough, and optionally have posted enough here. A common first rule is
-`0 → 10` after 24 hours and 2 logins. Each row shows what an account needs,
-how many accounts would be promoted at their next login (**ready**), and
-what the step opens. Rules are checked when a caller logs in; the caller
-starts that session at the new level and is told so. One rule applies per
-login, and only one rule can start from each level. A rule never raises
-anyone to 255.
-
-The rules never touch the guest account, staff, SysOps, or pending and
-disabled accounts. They also leave alone any account whose level you set by
-hand, so a caller you demote stays demoted. The account screen shows
-**Auto promotion: on**, **off (level set by hand)**, or **on, but skipped**
-with the reason (a pending account, for example); `U` (**Use promotion rules**)
-turns it on or off.
-Each automatic promotion appears in the moderation log as **(system)**,
-naming the rule.
-
-#### Level Admin SysOp Tool (LAST)
-
-To see what every level opens in one place, open **Users ▸ [L]evels (LAST)**. Each
-row is a level that matters on your node: one some board, file area,
-channel, door or setting is gated at, or one an account holds. The row shows
-how many enabled accounts hold exactly that level and what it adds to the
-levels below it, for example `2 read · 1 post · 1 door · Mail`. Pick a level
-to see its gates one by one, each with what it is (a board, file area,
-channel, door, or a node-wide feature such as mail) and where its level comes
-from: set on the resource itself, inherited from a Community, the default of
-0, or a setting.
-`V` steps the list through what is new at this level, everything it opens,
-what stays closed to it, and what it opens while another gate (an age or
-verified-name requirement, a members-only channel) still applies. Picking a
-board, file area, channel or door there opens its own screen, where you can
-change its levels. `G` on the level list shows any level, in use or not.
-
-You can name a level, for example "Member" for 10: in LAST,
-press `N` (**Name**) on its row and type the name, or a blank line to clear
-it. 255 is always "SysOp". From then on the console shows that level as
-`10 (Member)`, and the level prompt on a user's screen and `G` in LAST
-take `member` as well as `10`. A name is only a label: renaming or
-clearing it changes nobody's access. It can be up to 12 characters, needs at
-least one letter, and no two levels can share one.
-
-The same overview is available from the shell, without opening the console:
-
-```sh
-python -m netbbs.admin last                          # every level in use
-python -m netbbs.admin last member                   # what one level opens
-python -m netbbs.admin last --user alice --to 50     # one account's change, previewed
-```
-
-Add `--json` to any of them for scripts. The command only reads; it changes
-nothing.
-
-Every level field in an editor also says what its value means. Next to the
-level it shows how many enabled accounts that level lets in, for example
-`10 · 41 users`, and the count follows what you type before you save. A
-board or file area level left to inherit shows what it inherits and from
-where, for example `none: 10 from Community Market · 41 users`. A
-Community's default levels show how many boards and file areas inherit them.
-The count goes by level only: an age or verified-name requirement can still
-keep some of those accounts out.
+#### A level plan for a small club
 
 A small club rarely needs more than this:
 
@@ -567,186 +518,376 @@ A small club rarely needs more than this:
 | 10 | Members you know | A members' lounge board with read and write level 10, and a members' channel with Min level 10 |
 | 255 | You | An announcements board with read level 0 and write level 255 |
 
-Be careful with 255 as a minimum. An announcements board with write level
-255 shuts out everyone who is not a full SysOp, including a helper you trust
-later. Do not raise that helper to 255, which hands them the whole node,
-your own account included. Give them a **Read and post** grant on that board
-instead ([Content and Communities](#content-and-communities)), and staff
-permissions for account work ([Sharing the work](#sharing-the-work-staff-permissions)).
+> [!WARNING]
+> Be careful with 255 as a minimum. An announcements board with write level
+> 255 shuts out everyone who is not a full SysOp, including a helper you
+> trust later. Do not raise that helper to 255, which hands them the whole
+> node, your own account included. Give them a **Read and post** grant on
+> that board instead ([Content and Communities](#content-and-communities)),
+> and staff permissions for account work
+> ([Sharing the work](#sharing-the-work-staff-permissions)).
 
-NetBBS refuses an account change that would leave no enabled, approved
-SysOp. Disabling an account revokes its access; deletion is permanent and
-requires its exact name. Existing content retains its recorded author label.
+#### Change an account's level
+
+1. Open the account under **Users ▸ User list**.
+2. Press <kbd>L</kbd> **Level** and type the new level (0 to 255).
+3. Read the preview of what the change opens and closes for that account:
+   - **Gains:** each board to read or post on, file area to download from or
+     upload to, channel, door and node-wide feature (node map, mail, opening
+     MRC rooms, the SysOp console) the new level lets them into.
+   - **Loses:** what the new level takes away.
+   - **Still blocked:** what the new level opens, but another gate still
+     keeps this account out of, such as an age or verified-name requirement
+     or a members-only channel.
+4. Press <kbd>A</kbd> **Apply**, or <kbd>B</kbd> **Back** to leave the level
+   as it was.
+
+The preview counts the account's own read and write grants, so a helper who
+can post on a board through a grant does not "lose" it in a demotion. A
+change that opens and closes nothing is applied straight away, and the line
+under the screen says so.
+
+#### Promote new callers automatically
+
+Under **Users ▸ Auto-promotion rules**, <kbd>C</kbd> **Create** makes a rule:
+accounts at one level are raised to a higher one once they
+
+- are old enough (hours since signup),
+- have logged in often enough, and
+- optionally, have posted enough here.
+
+> [!TIP]
+> A common first rule is `0 → 10` after 24 hours and 2 logins.
+
+Each row shows what an account needs, how many accounts would be promoted at
+their next login (**ready**), and what the step opens. How the rules apply:
+
+- Rules are checked when a caller logs in. The caller starts that session at
+  the new level and is told so.
+- One rule applies per login, and only one rule can start from each level.
+- A rule never raises anyone to 255.
+- The rules never touch the guest account, staff, SysOps, or pending and
+  disabled accounts.
+- They leave alone any account whose level you set by hand, so a caller you
+  demote stays demoted.
+- Each automatic promotion appears in the moderation log as **(system)**,
+  naming the rule.
+
+The account screen shows **Auto promotion: on**, **off (level set by hand)**,
+or **on, but skipped** with the reason (a pending account, for example).
+<kbd>U</kbd> **Use promotion rules** turns it on or off.
+
+#### See what every level opens (LAST)
+
+The Level Admin SysOp Tool, **Users ▸ Levels (LAST)**, lists each level that
+matters on your node: one some board, file area, channel, door or setting is
+gated at, or one an account holds. A row shows how many enabled accounts hold
+exactly that level and what it adds to the levels below it, for example
+`2 read · 1 post · 1 door · Mail`.
+
+Pick a level to see its gates one by one, each with what it is (a board, file
+area, channel, door, or a node-wide feature such as mail) and where its level
+comes from: set on the resource itself, inherited from a Community, the
+default of 0, or a setting. There:
+
+- <kbd>V</kbd> **View** steps the list through what is new at this level,
+  everything it opens, what stays closed to it, and what it opens while
+  another gate (an age or verified-name requirement, a members-only channel)
+  still applies.
+- Picking a board, file area, channel or door opens its own screen, where you
+  can change its levels.
+
+On the level list, <kbd>G</kbd> **Go to level** shows any level, in use or
+not.
+
+**Name a level**, for example "Member" for 10: in LAST, press
+<kbd>N</kbd> **Name** on its row and type the name, or a blank line to clear
+it. From then on the console shows that level as `10 (Member)`, and the level
+prompt on a user's screen and **Go to level** in LAST take `member` as well as
+`10`.
+
+- 255 is always "SysOp".
+- A name is up to 12 characters, needs at least one letter, and no two levels
+  can share one.
+- A name is only a label: renaming or clearing it changes nobody's access.
+
+The same overview is available from the shell, without opening the console.
+The command only reads; it changes nothing. Add `--json` to any of them for
+scripts.
+
+```sh
+python -m netbbs.admin last                          # every level in use
+python -m netbbs.admin last member                   # what one level opens
+python -m netbbs.admin last --user alice --to 50     # one account's change, previewed
+```
+
+#### Level fields in editors
+
+Every level field in an editor also says what its value means:
+
+- Next to the level it shows how many enabled accounts that level lets in,
+  for example `10 · 41 users`, and the count follows what you type before you
+  save.
+- A board or file area level left to inherit shows what it inherits and from
+  where, for example `none: 10 from Community Market · 41 users`.
+- A Community's default levels show how many boards and file areas inherit
+  them.
+
+The count goes by level only: an age or verified-name requirement can still
+keep some of those accounts out.
 
 ### Account lifecycle
 
-A caller sets their own display name and birthdate under **Your profile → Name
-& details**. If one needs correcting, a typo or a display name that has to go,
-open the account under **Users** and use **[N]ame** or **[W]hen born**.
-The value opens in the line to edit; a blank line clears it, Esc keeps it. The
-same rules apply as for the caller's own change. The account's **History**
-records each edit with your name, the old and new display name, and for a
-birthdate only that it changed. A verified age or real name is a separate
-record that these never change, and the screen says so when one is on record.
-Staff with **Manage accounts** can do the same for accounts within their reach.
+Open an account under **Users ▸ User list**. Its detail screen lists what you
+can change in one column, in the order the arrow keys walk it: level, status,
+blocklist, display name, birthdate, public key, password, staff permissions,
+the identity-verifier permission and automatic promotion. Below that, under
+**Record**, is what you can't change there: when the account was created, how
+many admin actions it has, and every moderator grant it holds, such as
+`board "News": approve`.
 
-Everything else a member sets for themselves is under **[E]dit profile** on the
-same screen. It opens their own **Profile**, acting on their account: bio,
-signature, location, who they block, and their display, mail and chat
-settings, with the same help they see. Your own screen settings stay as they
-are while you work there, and a character set you pick is theirs, not yours.
-Each change goes into the account's **History** with your name: a setting with
-its new value, and their bio, signature, location or blocks only as changed,
-never what they say. Whether a verified age or name is shared over Link stays
-their own choice, and only you, not staff, can change an account's SSH keys.
-The username can't be changed. A member who is signed in sees some display
-changes only when they next sign in. Staff with **Manage accounts** get
-**[E]dit profile** too, for accounts within their reach; nobody gets it on
-their own account. On the guest account only you get it, and it sets the
-**guest defaults** (see **Guest access** below).
+> [!IMPORTANT]
+> NetBBS refuses an account change that would leave no enabled, approved
+> SysOp.
 
-To take a verification back, use **[V]erification: revoke** on the same
-screen; it appears only while the account has a verified age or real name.
-With both on record it asks which, then asks you to confirm, and the account's
-**History** records it. Anything that asks for a verified age or name refuses
-the caller again (a SysOp excepted). Anyone allowed to verify can also revoke,
-from **[R]evoke** on the main menu's **[V]erify** screen. A verification the
-caller shared over Link is withdrawn there at the next sync.
+#### Correct a display name or birthdate
 
-A disabled account, and a signup still awaiting approval, receive no mail:
-callers here are told so at the To prompt, and Link mail bounces with "that
-account is not taking mail at the moment", which does not tell the other node
-the account is disabled. Mail already in a disabled account stays there until
-you enable it again. Deleting an account removes its own mail, but letters it
-sent or received stay in the other person's Sent or Inbox; their Sent shows
-the deleted recipient as, for example, `bob (deleted account)`.
+A caller sets their own display name and birthdate under
+**Your profile ▸ Name & details**. If one needs correcting, a typo or a
+display name that has to go, use <kbd>N</kbd> **Name** or
+<kbd>W</kbd> **When born** on the account's screen.
+
+- The value opens in the line to edit; a blank line clears it,
+  <kbd>Esc</kbd> keeps it. The same rules apply as for the caller's own
+  change.
+- The account's **History** records each edit with your name, the old and new
+  display name, and for a birthdate only that it changed.
+- A verified age or real name is a separate record that these never change,
+  and the screen says so when one is on record.
+
+Staff with **Manage accounts** can do the same for accounts within their
+reach.
+
+#### Edit a member's profile
+
+Everything else a member sets for themselves is under
+<kbd>E</kbd> **Edit profile** on the same screen. It opens their own
+**Profile**, acting on their account: bio, signature, location, who they
+block, and their display, mail and chat settings, with the same help they see.
+
+- Your own screen settings stay as they are while you work there, and a
+  character set you pick is theirs, not yours.
+- Each change goes into the account's **History** with your name: a setting
+  with its new value, and their bio, signature, location or blocks only as
+  changed, never what they say.
+- A member who is signed in sees some display changes only when they next
+  sign in.
+
+Some things stay as they are:
+
+- Whether a verified age or name is shared over Link stays their own choice.
+- Only you, not staff, can change an account's SSH keys.
+- The username can't be changed.
+
+Staff with **Manage accounts** get **Edit profile** too, for accounts within
+their reach; nobody gets it on their own account. On the guest account only
+you get it, and it sets the **guest defaults** (see
+**Settings ▸ Guest access**).
+
+#### Reset a password
+
+A caller who forgot their password cannot recover it themselves: NetBBS has
+no e-mail or other out-of-band channel.
+
+- **For a caller:** press <kbd>P</kbd> **Password** on the account's screen
+  and set a new one. The old password is neither shown nor needed.
+- **For your own SysOp account, if you are locked out:** run this on the host:
+
+  ```sh
+  python -m netbbs.admin reset-password YOURNAME --db /path/to/netbbs.db
+  ```
+
+Both routes are audit-logged with your name. An account that also has an SSH
+key can have its password removed from the same screen, which leaves key
+login as its only way in.
+
+#### Disable or delete an account
+
+<kbd>T</kbd> **Toggle enable/disabled** revokes or restores an account's
+access. Deleting one, under **Users ▸ Delete user**, is permanent and
+requires the account's exact name. Existing
+content retains its recorded author label.
+
+Mail and a disabled or pending account:
+
+- A disabled account, and a signup still awaiting approval, receive no mail.
+  Callers here are told so at the To prompt, and Link mail bounces with "that
+  account is not taking mail at the moment", which does not tell the other
+  node the account is disabled.
+- Mail already in a disabled account stays there until you enable it again.
+- Deleting an account removes its own mail, but letters it sent or received
+  stay in the other person's Sent or Inbox. Their Sent shows the deleted
+  recipient as, for example, `bob (deleted account)`.
+
+> [!CAUTION]
+> Once your node has run NetBBS Link, deleting an account also **retires its
+> username**: nobody can register it again. The one exception is a
+> registration you decline while it is still awaiting approval, unless
+> someone on another node had already sent it Link mail. Callers who try a
+> retired name are told only that it is unavailable. To free one, for a deleted test
+> account or a removed caller who has come back, use
+> **Users ▸ Held names** ▸ <kbd>R</kbd> **Release**; the release is
+> audit-logged.
+
+<details>
+<summary>Why NetBBS holds deleted names</summary>
+
+On the Link a username is the account's identity, so whoever took a freed
+name would receive Link mail written to the previous holder and inherit the
+authorship of their carried posts and whatever other nodes had recorded about
+them. A node that has never run Link keeps reusable names.
+
+</details>
+
+#### Changes reach callers who are online
 
 A level change, a granted or revoked identity-verifier permission, or a change
 to staff permissions reaches a caller who is already logged in without them
-reconnecting. This also applies to a change made with `python -m
-netbbs.admin`, within a few seconds. A raised
-level shows on their main menu. A lowered one takes them out of whatever they
-were doing, a door game included, and back to the main menu with a line naming
-their new level. Text they were composing is kept as a draft.
+reconnecting. This also applies to a change made with
+`python -m netbbs.admin`, within a few seconds.
 
-Once your node has run NetBBS Link, deleting an account also retires its
-username: nobody can register it again. The one exception is a registration
-you decline while it is still awaiting approval, unless someone on another
-node had already sent it Link mail. On the Link a username is the
-account's identity, so whoever took a freed name would receive Link mail
-written to the previous holder and inherit the authorship of their carried
-posts and whatever other nodes had recorded about them. Callers who try a
-retired name are told only that it is unavailable. If you deleted a test
-account, or a caller you removed has come back, release the name under
-**Users → Held names**; the release is audit-logged. A node that has never
-run Link keeps reusable names.
+- A raised level shows on their main menu.
+- A lowered one takes them out of whatever they were doing, a door game
+  included, and back to the main menu with a line naming their new level.
+  Text they were composing is kept as a draft.
 
-A caller who forgot their password cannot recover it themselves: NetBBS has no
-e-mail or other out-of-band channel. Open the account's detail screen and
-choose **Password** to set a new one; the old password is neither shown nor
-needed. If you are locked out of your own SysOp account, run
-`python -m netbbs.admin reset-password YOURNAME --db /path/to/netbbs.db` on
-the host. Both routes are audit-logged with your name. An account that also
-has an SSH key can have its password removed from the same screen, which
-leaves key login as its only way in.
-
-Access can also depend on resource-specific grants, verified age, and verified
-name. Raising a level does not replace identity verification. When access looks
-wrong, inspect both the account and the resource's effective settings, including
-Community defaults.
+> [!TIP]
+> When access looks wrong, inspect both the account and the resource's
+> effective settings, including Community defaults. Access can also depend on
+> resource-specific grants, verified age, and verified name, and raising a
+> level does not replace identity verification.
 
 ### Sharing the work: staff permissions
 
 To hand someone the node's routine work without making them a second SysOp,
-give them **staff permissions** instead of level 255. Open their account
-under **Users** and choose **Staff**:
-
-| Permission | What it allows |
-| --- | --- |
-| Approve accounts | Approve or decline signups waiting under approval-required registration |
-| Manage accounts | Disable and re-enable accounts, reset passwords, set levels from 0 to 254 |
-| Moderate everything (**Global moderation** on the screen) | Act as moderator on every board, file area and chat channel, local and carried. It also lets them read and post on every board and file area whatever its level; age and verified-name gates still apply |
-
-**Co-SysOp** on the same screen sets all three in one step; **Verify identity**
-beside it gives or takes the right to verify identity. Every change asks
-for confirmation first and is audit-logged, and you can remove any permission
-on its own later. The account's level stays whatever it was.
-
-A staff member never acts on a level-255 account or on another staff member,
-so they cannot demote, disable or lock out you or each other, and they cannot
-widen their own permissions. They cannot raise anyone to 255, delete an
-account, grant staff permissions or moderator grants, or reach Settings, Link,
-Node, DNS or backups.
-
-An account's detail screen lists what you can change in one column, in the
-order the arrow keys walk it: level, status, blocklist, display name, birthdate,
-public key, password, staff permissions, the identity-verifier permission and
-automatic promotion. Below that, under **Record**, is what you can't change
-there: when the account was created, how many admin actions it has, and every
-moderator grant it holds, such as `board "News": approve`.
-
-A staff member sees **[S]taff** on their main menu instead of [S]ysOp. It
-opens a reduced console that counts what waits for them and offers only what
-their permissions reach: **Accounts waiting** with approve accounts,
-**Users** with manage accounts, and **Moderation** when they moderate
-anything. These are your own screens with fewer actions: a staff member can
-open your account or another staff member's, but only to look.
-
-Whoever can approve accounts, you included, is told on the main menu when
-signups are waiting ("2 accounts awaiting approval"). A moderator who may
-approve posts or uploads anywhere sees **Moderation (n)** on the main menu,
-with how many wait, and it opens one queue across every board and file area
-their grants cover. To make someone a moderator of everything local in one
-step, grant a moderator with the scope **Everything**: it
-writes the board, file area and channel grants together.
-
-Members find everyone who runs the node under **Operators** on their main
-menu: SysOps, staff members, and moderators with what they look after, each
-with the date of their last session. Being listed is the point, so a
-member's choice to stay off Recent callers does not hide them here. Guests
-don't see the list.
-
-Going away for a while? Choose **Time away** on your console's landing screen (it
-is on the Staff console too) and leave one short line, such as "At a pen
-show", with the date you expect to be back, or none if you don't know.
-**Operators** shows it beside your name. When everyone who can approve accounts
-is away, a caller waiting for approval is told who is expected back first.
-A notice with a date ends by itself after that day; one without a date stays
-until you end it, reads "away since" the day you set it, and your landing
-screen reminds you of it each time. Being away changes nobody's permissions.
+give them staff permissions instead of level 255.
 
 **Moderator, staff member or second SysOp?** Pick the smallest that does the
 job:
 
-- A **moderator grant** (**Content → Grant moderator**) covers one board,
-  file area or chat channel, or, with a blanket scope, every one of a kind in
-  a Community or on the node. On boards and file areas it can allow editing,
-  deleting and approving what callers post or upload; in a channel, changing
-  the topic, muting or banning, and managing an invite-only channel's
-  members. It opens no console, no accounts and no settings.
-- **Staff permissions** add account work: approving signups, and with
-  **Manage accounts**, disabling accounts, resetting passwords and setting
-  levels up to 254. A staff member can never touch your account.
-- A **second SysOp at level 255** can do everything you can, to your account
-  too: demote it, disable it, reset its password or delete it. The only
-  guard is that NetBBS never leaves the node without an enabled, approved
-  SysOp. Make someone a second SysOp only if you would hand them the node.
+| Role | Covers | Cannot |
+| --- | --- | --- |
+| **Moderator grant** | One board, file area or chat channel, or, with a blanket scope, every one of a kind in a Community or on the node. On boards and file areas it can allow editing, deleting and approving what callers post or upload; in a channel, changing the topic, muting or banning, and managing an invite-only channel's members. | Open a console, accounts or settings |
+| **Staff permissions** | Account work: approving signups, and with **Manage accounts**, disabling accounts, resetting passwords and setting levels up to 254. | Touch your account |
+| **Second SysOp (level 255)** | Everything you can do, to your account too: demote it, disable it, reset its password or delete it. | Leave the node without an enabled, approved SysOp; that is the only guard |
+
+> [!WARNING]
+> Make someone a second SysOp only if you would hand them the node.
+
+#### Give someone staff permissions
+
+Open their account under **Users ▸ User list** and press
+<kbd>S</kbd> **Staff**:
+
+| Permission | What it allows |
+| --- | --- |
+| <kbd>A</kbd> **Approve accounts** | Approve or decline signups waiting under approval-required registration |
+| <kbd>M</kbd> **Manage accounts** | Disable and re-enable accounts, reset passwords, set levels from 0 to 254 |
+| <kbd>G</kbd> **Global moderation** | Act as moderator on every board, file area and chat channel, local and carried. It also lets them read and post on every board and file area whatever its level; age and verified-name gates still apply |
+
+- <kbd>C</kbd> **Co-SysOp preset** sets all three in one step.
+- <kbd>V</kbd> **Verify identity** beside it gives or takes the right to
+  verify identity ([Verified age and names](#verified-age-and-names)).
+- <kbd>N</kbd> **None** removes every staff permission; you can also remove
+  any one on its own later.
+
+Every change asks for confirmation first and is audit-logged. The account's
+level stays whatever it was.
+
+A staff member never acts on a level-255 account or on another staff member,
+so they cannot demote, disable or lock out you or each other, and they cannot
+widen their own permissions. They also cannot:
+
+- raise anyone to 255;
+- delete an account;
+- grant staff permissions or moderator grants;
+- reach Settings, Link, Node, DNS or backups.
+
+#### What staff and moderators see
+
+A staff member sees <kbd>S</kbd> **Staff** on their main menu instead of
+**SysOp**. It opens a reduced console that counts what waits for them and
+offers only what their permissions reach:
+
+| Entry | With |
+| --- | --- |
+| <kbd>A</kbd> **Accounts waiting** | Approve accounts |
+| <kbd>U</kbd> **Users** | Manage accounts |
+| <kbd>M</kbd> **Moderation** | Global moderation or any moderator grant |
+
+These are your own screens with fewer actions: a staff member can open your
+account or another staff member's, but only to look.
+
+- Whoever can approve accounts, you included, is told on the main menu when
+  signups are waiting ("2 accounts awaiting approval").
+- A moderator who may approve posts or uploads anywhere sees
+  **Moderation (n)** on the main menu, with how many wait. It opens one queue
+  across every board and file area their grants cover.
+
+> [!TIP]
+> To make someone a moderator of everything local in one step, grant a
+> moderator under **Content ▸ Grant moderator** with the scope
+> <kbd>E</kbd> **Everything**: it writes the board, file area and channel
+> grants together.
+
+#### Operators and time away
+
+Members find everyone who runs the node under <kbd>O</kbd> **Operators** on
+their main menu: SysOps, staff members, and moderators with what they look
+after, each with the date of their last session. Being listed is the point,
+so a member's choice to stay off Recent callers does not hide them here.
+Guests don't see the list.
+
+Going away for a while? Choose <kbd>T</kbd> **Time away** on your console's
+landing screen (it is on the Staff console too) and leave one short line,
+such as "At a pen show", with the date you expect to be back, or none if you
+don't know.
+
+- **Operators** shows it beside your name.
+- When everyone who can approve accounts is away, a caller waiting for
+  approval is told who is expected back first.
+- A notice with a date ends by itself after that day. One without a date
+  stays until you end it, reads "away since" the day you set it, and your
+  landing screen reminds you of it each time.
+- Being away changes nobody's permissions.
 
 ### Verified age and names
 
-A SysOp, or an account explicitly granted **Identity verification**, records
-attestations through **Verify** on the main menu. As SysOp you can always
-verify; the account screen's **Can verify identity** row says so. For anyone
-else, switch it on with **[i]** on their account. It is separate from making
-someone a moderator, and the **Co-SysOp** preset does not include it: vouching
-for someone's age or name is a separate trust you give on its own. Besides **[i]**
-on the account, **Verify identity** on the staff screen switches it too, and
-applying the preset reminds you of it. Callers enter
-the birthdate you verify in **Your profile › Name & details**. Establish your own verification
-procedure outside NetBBS; the software records the attestation, not proof
-that a document or a person's claim is authentic.
+A SysOp, or an account explicitly granted the right, records attestations
+through <kbd>V</kbd> **Verify** on the main menu.
 
-Name requirements cycle through:
+> [!IMPORTANT]
+> Establish your own verification procedure outside NetBBS. The software
+> records the attestation, not proof that a document or a person's claim is
+> authentic.
+
+#### Who can verify
+
+- As SysOp you can always verify; the account screen's **Can verify
+  identity** row says so.
+- For anyone else, switch it on with <kbd>I</kbd> **Identity verification**
+  on their account, or <kbd>V</kbd> **Verify identity** on their staff
+  screen.
+
+The right is separate from making someone a moderator, and the
+**Co-SysOp preset** does not include it: vouching for someone's age or name is
+a separate trust you give on its own. Applying the preset reminds you of it.
+
+Callers enter the birthdate you verify in **Your profile ▸ Name & details**.
+
+#### Require a verified name
+
+A resource's name requirement cycles through:
 
 | Setting | Effect |
 | --- | --- |
@@ -754,23 +895,47 @@ Name requirements cycle through:
 | Verified | A name attestation is required; the name is not displayed by this setting |
 | Verified and displayed | Verification is required and the attested name is shown alongside contributions in that resource |
 
-A verified name does not replace the account's chosen display name. Tell callers
-about disclosure before requiring it. Age and name verification are separate;
-review the available attributes and expiry on the attestation screen.
+A verified name does not replace the account's chosen display name. Tell
+callers about disclosure before requiring it. Age and name verification are
+separate; review the available attributes and expiry on the attestation
+screen.
+
+#### Require a verified age
 
 A minimum age accepts the birthdate a caller entered in their profile when
-nobody has verified their age. To accept only a verified age, type the age with
-a **v** in the **Min age** field (`18v`); the field then reads
-`18, verified only`. A Community's default works the same way and is inherited.
-A caller who is old enough by their own birthdate still sees the board, area or
-channel, marked `needs verification`, and is told to ask you when they open it.
-Too young, or no birthdate at all, and it stays hidden.
+nobody has verified their age. To accept only a verified age, type the age
+with a **v** in the **Min age** field (`18v`); the field then reads
+`18, verified only`. A Community's default works the same way and is
+inherited.
 
-As a SysOp (level 255) you pass every minimum age, verified-age and
-verified-name requirement on your own node without verifying yourself, the same
-way you pass every level. Staff and other accounts do not: a helper you gave
-staff permissions still needs the age or name the resource asks for. Callers
-from other nodes are always held to their own verified age and name.
+| Caller | What they see |
+| --- | --- |
+| Old enough by their own birthdate, not verified | The board, area or channel, marked `needs verification`; opening it tells them to ask you |
+| Too young, or no birthdate at all | Nothing: it stays hidden |
+
+#### Who is held to it
+
+- As a SysOp (level 255) you pass every minimum age, verified-age and
+  verified-name requirement on your own node without verifying yourself, the
+  same way you pass every level.
+- Staff and other accounts do not: a helper you gave staff permissions still
+  needs the age or name the resource asks for.
+- Callers from other nodes are always held to their own verified age and
+  name.
+
+#### Revoke a verification
+
+Use <kbd>V</kbd> **Verification: revoke** on the account's screen; it appears
+only while the account has a verified age or real name. With both on record
+it asks which, then asks you to confirm, and the account's **History**
+records it.
+
+- Anything that asks for a verified age or name refuses the caller again (a
+  SysOp excepted).
+- Anyone allowed to verify can also revoke, from <kbd>R</kbd> **Revoke** on
+  the main menu's **Verify** screen.
+- A verification the caller shared over Link is withdrawn there at the next
+  sync.
 
 ## Content and Communities
 
