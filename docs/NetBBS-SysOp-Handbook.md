@@ -1100,7 +1100,9 @@ no answer came back, so it may not have arrived. An answer that arrives later
 still counts: the letter turns delivered, or bounced. A relay keeps a letter
 well past those 14 days, so a recipient that is only slow to collect still
 answers in time. Replaying an expired delivery from the **Outbox** puts it
-back to pending.
+back to pending, with its full retry schedule again. When the recipient is gone
+for good, **Delete** it there instead: the work item goes, the letter stays
+expired, and Link stops reporting it as needing attention.
 
 Mail arriving here is checked the way your own callers' mail is: a sender
 name that is not a valid address, a blank or oversized subject, or an
