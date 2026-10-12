@@ -130,6 +130,7 @@ from netbbs.net.chat_flow import NAME_GATE_NOTE
 from netbbs.net.node_theme import effective_accent_color_256, effective_header_color_256
 from netbbs.net.notices import announce, announce_styled, write_notices
 from netbbs.net.row_numbers import read_row_number, row_number_label, row_range_label
+from netbbs.net.location import crumbs, entered
 from netbbs.net.picker import pick_item
 from netbbs.net.prose_editor import EditorHeader, edit_prose
 from netbbs.gate_summary import gates_line, resource_gates, unmet_gates
@@ -227,16 +228,17 @@ async def browse_file_areas(
     *,
     community_id: int | None = None,
     community_scoped: bool = False,
-    title_prefix: str | None = None,
     link_context: LinkContext | None = None,
     transfers: TransferGrants | None = None,
 ) -> None:
-    """Entry point: browse from the top level (no category selected yet)."""
-    await _browse_areas_in_category(
-        session, lane, user, category_id=None,
-        community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
-        link_context=link_context, transfers=transfers,
-    )
+    """Entry point: browse from the top level (no category selected yet),
+    under "Files", the main menu's word (`netbbs.net.location`)."""
+    with entered(session, "Files"):
+        await _browse_areas_in_category(
+            session, lane, user, category_id=None,
+            community_id=community_id, community_scoped=community_scoped,
+            link_context=link_context, transfers=transfers,
+        )
 
 
 def visible_areas(
@@ -263,7 +265,6 @@ async def _browse_areas_in_category(
     category_id: int | None,
     community_id: int | None = None,
     community_scoped: bool = False,
-    title_prefix: str | None = None,
     link_context: LinkContext | None = None,
     transfers: TransferGrants | None = None,
 ) -> None:
@@ -272,8 +273,8 @@ async def _browse_areas_in_category(
     `netbbs.net.board_flow._browse_boards_in_category` exactly — same
     reasoning, same two-level cap, same category/item ID-namespace
     disambiguation trick (negated category IDs), and the same
-    `community_id`/`community_scoped`/`title_prefix` Community-filter
-    threading (design doc §16). See that function's docstring
+    `community_id`/`community_scoped` Community-filter threading (design
+    doc §16), and the same titles and breadcrumbs. See that function's docstring
     for the full rationale.
 
     Sort mode (design doc, dogfood feature request): like
@@ -378,8 +379,10 @@ async def _browse_areas_in_category(
     def _sort_label() -> str:
         return SORT_MODE_LABELS[mode_box["mode"]]
 
-    title = "File areas" if title_prefix is not None else "Available file areas"
-    picker_breadcrumb = (title_prefix,) if title_prefix is not None else ()
+    if category_name is not None:
+        title = sanitize_text(category_name)
+    else:
+        title = "File areas" if community_scoped else "Available file areas"
 
     # Back from an area or a category comes back to this list, on the row
     # left (issue #839), as the board list does.
@@ -424,7 +427,7 @@ async def _browse_areas_in_category(
                 stable_id_of=lambda a: a.id,
                 description_of=_area_about,
                 title=title,
-                breadcrumb=picker_breadcrumb,
+                own=True,
                 empty_message="No file areas are available to you yet.",
                 on_sort=on_sort_flat,
                 sort_label=_sort_label,
@@ -480,7 +483,7 @@ async def _browse_areas_in_category(
             sort_label=_sort_label,
             description_of=render_description,
             title=title,
-            breadcrumb=picker_breadcrumb,
+            own=True,
             empty_message="No file areas are available to you yet.",
             description_level=description_level,
             redraw_in_place=redraw_in_place,
@@ -503,11 +506,12 @@ async def _browse_areas_in_category(
         reopen_at = stable_id(selected)
 
         if isinstance(selected, FileAreaCategory):
-            await _browse_areas_in_category(
-                session, lane, user, category_id=selected.id,
-                community_id=community_id, community_scoped=community_scoped, title_prefix=title_prefix,
-                link_context=link_context, transfers=transfers,
-            )
+            with entered(session, sanitize_text(selected.name)):
+                await _browse_areas_in_category(
+                    session, lane, user, category_id=selected.id,
+                    community_id=community_id, community_scoped=community_scoped,
+                    link_context=link_context, transfers=transfers,
+                )
         else:
             await _show_area(session, lane, selected, user, link_context=link_context, transfers=transfers)
 
@@ -994,6 +998,25 @@ async def _show_area(
     link_context: LinkContext | None = None,
     transfers: TransferGrants | None = None,
 ) -> None:
+    """`area`'s screen, named after the area, so its transfers and the
+    remote catalogue are under it in the breadcrumb (`netbbs.net.location`)."""
+    with entered(session, sanitize_text(area.name)):
+        await _area_screen(
+            session, lane, area, user,
+            initial_cursor=initial_cursor, link_context=link_context, transfers=transfers,
+        )
+
+
+async def _area_screen(
+    session: Session,
+    lane: DatabaseLane,
+    area: FileArea,
+    user: User,
+    *,
+    initial_cursor: tuple[str, str] | None = None,
+    link_context: LinkContext | None = None,
+    transfers: TransferGrants | None = None,
+) -> None:
     """
     Show `area`, one bounded page of files at a time (design doc,
     issue #10's file-area follow-up to the board-post pagination) —
@@ -1265,7 +1288,7 @@ async def _show_area(
     if not page.entries:
         header_color = await lane.run(effective_header_color_256)
         heading = screen_title(
-            area_name, breadcrumb=(session.node_display_name, "Files"), width=session.terminal_width, clear=redraw_in_place,
+            area_name, breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place,
             unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
         node_name_gradient=session.node_name_gradient)
         await session.write_line(f"\r\n{heading}")
@@ -1694,6 +1717,14 @@ async def _show_area(
 async def _browse_remote_files(
     session: Session, lane: DatabaseLane, area: FileArea, user: User, link_context: LinkContext
 ) -> None:
+    """`[L]ink catalogue`, under "Remote catalogue" (`netbbs.net.location`)."""
+    with entered(session, "Remote catalogue"):
+        await _remote_catalogue(session, lane, area, user, link_context)
+
+
+async def _remote_catalogue(
+    session: Session, lane: DatabaseLane, area: FileArea, user: User, link_context: LinkContext
+) -> None:
     """
     `[L]ink catalogue` (design doc, issue #92): list every catalogued
     file for `area` -- both fetched and not -- and offer to fetch one
@@ -1716,7 +1747,7 @@ async def _browse_remote_files(
     if not remote_files:
         heading = screen_title(
             "Remote catalogue",
-            breadcrumb=(session.node_display_name, "Files", sanitize_text(area.name)),
+            breadcrumb=crumbs(session, own=True),
             width=session.terminal_width,
             clear=redraw_in_place,
             unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
@@ -1760,6 +1791,7 @@ async def _browse_remote_files(
         stable_id_of=lambda rf: rf.id,
         description_of=render_description,
         title=f"Remote catalogue: {sanitize_text(area.name)}",
+        own=True,
         empty_message="No remote catalogue entries.",
         description_level=await lane.run(menu_description_level, user),
         redraw_in_place=redraw_in_place,
@@ -1880,7 +1912,7 @@ async def _fetch_remote_file(
 
     heading = screen_title(
         "Fetching file",
-        breadcrumb=(session.node_display_name, "Files", "Link"),
+        breadcrumb=crumbs(session),
         subtitle=sanitize_text(remote_file.filename),
         width=session.terminal_width,
         clear=redraw_in_place,
@@ -1997,7 +2029,7 @@ async def _render_file_page(
     header_color = await lane.run(effective_header_color_256)
     header = screen_title(
         area_name,
-        breadcrumb=(session.node_display_name, "Files"),
+        breadcrumb=crumbs(session, own=True),
         subtitle=f"{len(page.entries)} file{'s' if len(page.entries) != 1 else ''} on this page",
         width=session.terminal_width,
         clear=redraw_in_place,
@@ -2383,7 +2415,7 @@ async def _handle_describe(
 
     heading = screen_title(
         "Describe",
-        breadcrumb=(session.node_display_name, "Files", sanitize_text(area.name)),
+        breadcrumb=crumbs(session),
         subtitle=sanitize_text(entry.filename),
         width=session.terminal_width,
         clear=await lane.run(redraw_in_place_enabled, user),
@@ -2780,7 +2812,7 @@ async def _transfer_link_screen(
     header_color = await lane.run(effective_header_color_256)
     heading = screen_title(
         "Browser transfer",
-        breadcrumb=(session.node_display_name, "Files", sanitize_text(area.name)),
+        breadcrumb=crumbs(session),
         subtitle="for a terminal without Zmodem",
         width=session.terminal_width,
         clear=await lane.run(redraw_in_place_enabled, user),
@@ -2907,7 +2939,7 @@ async def _handle_upload(
 
     heading = screen_title(
         "Upload",
-        breadcrumb=(session.node_display_name, "Files", sanitize_text(area.name)),
+        breadcrumb=crumbs(session),
         subtitle="Zmodem transfer",
         width=session.terminal_width,
         clear=await lane.run(redraw_in_place_enabled, user),
@@ -3098,7 +3130,7 @@ async def send_file_to_caller(
     entry_filename = sanitize_text(entry.filename)
     heading = screen_title(
         "Download",
-        breadcrumb=(session.node_display_name, "Files", sanitize_text(area.name)),
+        breadcrumb=crumbs(session),
         subtitle=f"{entry_filename} / {_format_size(entry.size_bytes)}",
         width=session.terminal_width,
         clear=await lane.run(redraw_in_place_enabled, user),

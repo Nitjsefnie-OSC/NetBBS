@@ -321,8 +321,9 @@ def test_community_scoped_board_browsing_shows_community_name_in_title(tmp_path)
     # without actually being one -- the whole string rendered in one
     # flat color. It's now a real breadcrumb ancestor segment, muted
     # like every other ancestor, with only "Message boards" itself in
-    # the current-location color.
-    assert "NetBBS › Vintage Computing › Message boards" in _visible_text(session)
+    # the current-location color -- under Communities, the way the
+    # caller came (issue #1246).
+    assert "NetBBS › Communities › Vintage Computing › Message boards" in _visible_text(session)
     db.close()
 
 

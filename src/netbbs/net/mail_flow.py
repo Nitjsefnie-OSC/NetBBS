@@ -174,6 +174,7 @@ from netbbs.net.help_overlay import show_help, show_menu_help
 from netbbs.net.post_color_preference import post_colors_enabled
 from netbbs.net.prose_editor import EditorHeader, edit_prose
 from netbbs.net.detail_view import show_detail
+from netbbs.net.location import crumbs, entered, located
 from netbbs.net.picker import pick_item
 from netbbs.net.mail_arrivals import NOTICE_COLOR as NEW_MAIL_COLOR, arrival_event, nudge
 from netbbs.net.mail_recipients import (
@@ -243,6 +244,7 @@ def _menu_row(entries: list[MenuEntry], *, width: int, height: int, description_
     return menu_grid([("", entries)], width=width, height=height, description_level=description_level)
 
 
+@located("Mail")
 async def browse_mail(
     session: Session,
     lane: DatabaseLane,
@@ -1393,7 +1395,7 @@ class _MailboxScreen:
         width = session.terminal_width
         header = screen_title(
             _FOLDER_TITLES[self.folder],
-            breadcrumb=(session.node_display_name, "Mail"),
+            breadcrumb=crumbs(session),
             subtitle=self._subtitle(),
             width=width,
             clear=self.redraw_in_place,
@@ -1544,15 +1546,16 @@ async def _message_view(
     and the body rows of one message, for `show_detail` to draw a page at a
     time (issue #679: a long message used to scroll its own header away)."""
     mailbox = "Sent" if to_label is not None else ("Kept" if message.kept_at is not None else "Inbox")
-    title = screen_title(
-        sanitize_text(message.subject),
-        breadcrumb=(session.node_display_name, "Mail", mailbox),
-        width=session.terminal_width,
-        clear=False,
-        unicode_style=unicode_style, collapsed=collapsed,
-        header_color=await lane.run(effective_header_color_256),
-        node_name_gradient=session.node_name_gradient,
-    )
+    with entered(session, mailbox):
+        title = screen_title(
+            sanitize_text(message.subject),
+            breadcrumb=crumbs(session),
+            width=session.terminal_width,
+            clear=False,
+            unicode_style=unicode_style, collapsed=collapsed,
+            header_color=await lane.run(effective_header_color_256),
+            node_name_gradient=session.node_name_gradient,
+        )
     accent = await lane.run(effective_accent_color_256)
     display_format, display_timezone = await lane.run(resolve_display_preferences)
     preamble: list[str] = []
@@ -1876,7 +1879,7 @@ async def _show_inbox_message(
             continue
         if choice == "g":
             await get_referenced_file(
-                session, lane, user, refs, noun="letter", breadcrumb=("Mail",),
+                session, lane, user, refs, noun="letter",
                 style=await _picker_style(lane, user), transfers=transfers,
             )
             continue
@@ -2224,7 +2227,6 @@ async def blocked_senders_screen(
             stable_id_of=lambda row: row.block.id,
             description_of=lambda row: row.where,
             title="Blocked people",
-            breadcrumb=("Profile",) if actor is None else (sanitize_text(user.username), "Profile"),
             empty_message=(
                 "You block no one. Mail and live messages from anyone reach you." if actor is None
                 else f"{sanitize_text(user.username)} blocks no one."
@@ -2695,7 +2697,7 @@ async def write_to_all_callers(
         return f"To all callers: {_count(len(recipients), 'account')} that take mail, {who}."
 
     await show_compose_screen(
-        session, title=title, breadcrumb=("SysOp", "Mail"), fields=[], hint=await audience(),
+        session, title=title, fields=[], hint=await audience(),
         redraw_in_place=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
         header_color=header_color, accent_color=accent_color,
     )
@@ -2741,21 +2743,22 @@ async def write_to_all_callers(
             announce(session, too_long, tone="error")
         announce(session, await audience(), tone="muted")
         review_places: dict[str, ReviewPlace] = {}
-        action = await review_composition(
-            session, places=review_places, recipient=None, subject=subject, body=body,
-            commit_key="s", commit_label="end", commit_brief="Send it to all callers",
-            description_level=description_level, redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style, collapsed=collapsed, accent_color=accent_color,
-            header_color=header_color, truecolor=truecolor, body_mode=body_mode, body_layout="lines",
-            breadcrumb=("SysOp", "Mail", title),
-            extra_rows=_file_rows(files, accent=accent_color, to_another_bbs=False),
-            extra_actions=file_actions(files, noun="letter"),
-        )
-        if isinstance(action, str):
-            files = await change_attached_files(
-                session, lane, user, files, action, noun="letter", breadcrumb=("SysOp", "Mail", title),
-                style=await _picker_style(lane, user),
+        with entered(session, title):
+            action = await review_composition(
+                session, places=review_places, recipient=None, subject=subject, body=body,
+                commit_key="s", commit_label="end", commit_brief="Send it to all callers",
+                description_level=description_level, redraw_in_place=redraw_in_place,
+                unicode_style=unicode_style, collapsed=collapsed, accent_color=accent_color,
+                header_color=header_color, truecolor=truecolor, body_mode=body_mode, body_layout="lines",
+                extra_rows=_file_rows(files, accent=accent_color, to_another_bbs=False),
+                extra_actions=file_actions(files, noun="letter"),
             )
+        if isinstance(action, str):
+            with entered(session, title):
+                files = await change_attached_files(
+                    session, lane, user, files, action, noun="letter",
+                    style=await _picker_style(lane, user),
+                )
             keep_fields()
             continue
         if action is ReviewAction.CANCEL:
@@ -3002,7 +3005,7 @@ async def _compose_mail(
 
     async def compose_screen(fields: list[tuple[str, str]], hint: str | None = None) -> None:
         await show_compose_screen(
-            session, title=title, breadcrumb=("Mail",), fields=fields, hint=hint,
+            session, title=title, fields=fields, hint=hint,
             redraw_in_place=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
             header_color=header_color, accent_color=accent_color,
         )
@@ -3237,34 +3240,35 @@ async def _compose_mail(
         if too_long is not None:
             announce(session, too_long, tone="error")
         review_places: dict[str, ReviewPlace] = {}
-        action = await review_composition(
-            session, places=review_places,
-            # The account's own name, not the text as typed (issue #813).
-            recipient=recipient_label,
-            subject=subject,
-            body=body,
-            commit_key="s",
-            commit_label="end",
-            commit_brief="Send this message",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            accent_color=accent_color,
-            header_color=header_color,
-            truecolor=truecolor,
-            # Previewed as its reader will see it, lines kept (issue #809).
-            body_mode=body_mode,
-            body_layout="lines",
-            breadcrumb=("Mail", title),
-            extra_rows=_file_rows(files, accent=accent_color, to_another_bbs=to_another_bbs),
-            extra_actions=file_actions(files, noun="letter"),
-        )
-        if isinstance(action, str):
-            files = await change_attached_files(
-                session, lane, user, files, action, noun="letter", breadcrumb=("Mail", title),
-                style=picker_style(),
+        with entered(session, title):
+            action = await review_composition(
+                session, places=review_places,
+                # The account's own name, not the text as typed (issue #813).
+                recipient=recipient_label,
+                subject=subject,
+                body=body,
+                commit_key="s",
+                commit_label="end",
+                commit_brief="Send this message",
+                description_level=description_level,
+                redraw_in_place=redraw_in_place,
+                unicode_style=unicode_style,
+                collapsed=collapsed,
+                accent_color=accent_color,
+                header_color=header_color,
+                truecolor=truecolor,
+                # Previewed as its reader will see it, lines kept (issue #809).
+                body_mode=body_mode,
+                body_layout="lines",
+                extra_rows=_file_rows(files, accent=accent_color, to_another_bbs=to_another_bbs),
+                extra_actions=file_actions(files, noun="letter"),
             )
+        if isinstance(action, str):
+            with entered(session, title):
+                files = await change_attached_files(
+                    session, lane, user, files, action, noun="letter",
+                    style=picker_style(),
+                )
             keep_fields()
             continue
         if action is ReviewAction.CANCEL:

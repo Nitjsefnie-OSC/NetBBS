@@ -19,6 +19,7 @@ from netbbs.boards.posts import create_post, list_posts_page
 from netbbs.communities import create_community
 from netbbs.net import board_flow
 from netbbs.net.char_input import EditorKey, EditorKeyKind
+from netbbs.net.location import entered
 from netbbs.net.redraw_preference import set_redraw_in_place_enabled
 from netbbs.net.session import Session
 from netbbs.rendering import LINKED_COLOR, fg
@@ -294,11 +295,13 @@ def test_the_breadcrumb_carries_the_community_the_caller_came_through(db, alice,
     create_post(db, board, alice, "Hi", "x")
     session = FakeSession(["0", "1", "b", "b"])
 
-    asyncio.run(board_flow._browse_boards(
-        session, db, alice, community_id=community.id, community_scoped=True, title_prefix="Retro",
-    ))
+    # Where the Communities list and the Community's page put the caller.
+    with entered(session, "Communities"), entered(session, "Retro"):
+        asyncio.run(board_flow._browse_boards(
+            session, db, alice, community_id=community.id, community_scoped=True,
+        ))
 
-    assert "NetBBS › Retro › Message boards › hardware" in session.visible()
+    assert "NetBBS › Communities › Retro › Message boards › hardware" in session.visible()
 
 
 # -- the board picker ----------------------------------------------------------

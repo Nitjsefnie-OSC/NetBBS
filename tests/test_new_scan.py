@@ -352,7 +352,8 @@ def test_mark_read_keeps_each_row_where_it_was(db, lane, alice, monkeypatch):
     text = _visible_text(session)
     marked = re.search(r"(\S+-board): every post marked read\.", text).group(1)
     # Row 1 is opened after the reload: the board just marked, not the other.
-    assert f"Message boards › {marked}" in text or f"Message boards > {marked}" in text
+    # It opens under New scan, the way it was reached (issue #1246).
+    assert f"New scan › {marked}" in text
 
 
 def test_with_nothing_to_list_the_replies_summary_still_shows(db, lane, alice):

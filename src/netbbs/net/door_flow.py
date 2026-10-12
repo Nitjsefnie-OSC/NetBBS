@@ -28,6 +28,7 @@ from netbbs.net.breadcrumb_preference import breadcrumb_collapsed_enabled
 from netbbs.net.menu_description_preference import menu_description_level
 from netbbs.net.node_theme import effective_accent_color_256, effective_header_color_256
 from netbbs.net.notices import announce
+from netbbs.net.location import located
 from netbbs.net.picker import pick_item
 from netbbs.net.redraw_preference import redraw_in_place_enabled
 from netbbs.net.session import Session, physical_terminal_width
@@ -85,6 +86,7 @@ def chat_fanout(hub, link_context):
 
 
 @records_activity("Doors")
+@located("Games")
 async def browse_doors(
     session: Session,
     lane: DatabaseLane,
@@ -92,7 +94,6 @@ async def browse_doors(
     *,
     community_id: int | None = None,
     community_scoped: bool = False,
-    title_prefix: str | None = None,
     door_services=None,
     presence=None,
     link_context=None,
@@ -101,9 +102,8 @@ async def browse_doors(
     """Pick a door and play it, looping back to the picker afterward so a
     caller can play another without re-entering the menu -- same
     "loop, not one-shot" shape `browse_channels`/`browse_file_areas`
-    both use."""
-    title = "Doors" if title_prefix is not None else "Available doors"
-    breadcrumb = (title_prefix,) if title_prefix is not None else ()
+    both use. Under "Games", the main menu's word (`netbbs.net.location`)."""
+    title = "Doors" if community_scoped else "Available doors"
 
     while True:
         doors = await lane.run(_visible_doors, user, community_id=community_id, community_scoped=community_scoped)
@@ -120,7 +120,7 @@ async def browse_doors(
             stable_id_of=lambda d: d.id,
             description_of=lambda d: d.description,
             title=title,
-            breadcrumb=breadcrumb,
+            own=True,
             empty_message="No doors are available to you yet.",
             description_level=description_level,
             redraw_in_place=redraw_in_place,

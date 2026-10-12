@@ -29,6 +29,7 @@ from netbbs.chat.nick import set_nick
 from netbbs.chat.presence import PresenceRegistry
 from netbbs.moderation import ChannelPermission, grant_permissions
 from netbbs.net import chat_flow
+from netbbs.net.location import entered
 from netbbs.net.char_input import InputHistory
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
@@ -109,12 +110,14 @@ def _plain(groups) -> str:
 async def _run(lane, hub, presence, mailbox, channel, user, lines, *, session_registry=None):
     session = FakeSession(lines)
     history = InputHistory()
-    action = await asyncio.wait_for(
-        chat_flow._chat_loop(
-            session, lane, hub, presence, mailbox, history, channel, user, session_registry=session_registry
-        ),
-        timeout=2,
-    )
+    # Where the channel picker puts a caller (issue #1246).
+    with entered(session, "Chat"):
+        action = await asyncio.wait_for(
+            chat_flow._chat_loop(
+                session, lane, hub, presence, mailbox, history, channel, user, session_registry=session_registry
+            ),
+            timeout=2,
+        )
     return session, action
 
 

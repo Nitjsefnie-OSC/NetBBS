@@ -189,6 +189,7 @@ def test_upload_via_show_area_streams_to_storage_with_no_leftover_temp_file(db, 
     client_session = _ClientSession(read_pipe=server_to_client, write_pipe=client_to_server)
 
     async def scenario():
+        server_session.location = ("Files",)  # where the area list puts a caller
         server_task = asyncio.create_task(file_flow._show_area(server_session, lane, area, alice))
         client_task = asyncio.create_task(zmodem.send_file(client_session, "upload.bin", payload))
         await asyncio.wait_for(server_task, timeout=5)
@@ -225,6 +226,7 @@ def test_upload_exceeding_the_node_limit_leaves_no_temp_file_and_no_entry(db, la
     client_session = _ClientSession(read_pipe=server_to_client, write_pipe=client_to_server)
 
     async def scenario():
+        server_session.location = ("Files",)  # where the area list puts a caller
         server_task = asyncio.create_task(file_flow._show_area(server_session, lane, area, alice))
         client_task = asyncio.create_task(zmodem.send_file(client_session, "toobig.bin", payload))
         await asyncio.wait_for(server_task, timeout=5)
@@ -258,6 +260,7 @@ def test_uploading_a_zip_with_file_id_diz_describes_it(db, lane, alice):
     client_session = _ClientSession(read_pipe=server_to_client, write_pipe=client_to_server)
 
     async def scenario():
+        server_session.location = ("Files",)  # where the area list puts a caller
         server_task = asyncio.create_task(file_flow._show_area(server_session, lane, area, alice))
         client_task = asyncio.create_task(zmodem.send_file(client_session, "game.zip", payload))
         await asyncio.wait_for(server_task, timeout=5)
@@ -284,6 +287,7 @@ def test_uploading_a_file_with_no_diz_says_so_and_points_at_the_editor(db, lane,
     client_session = _ClientSession(read_pipe=server_to_client, write_pipe=client_to_server)
 
     async def scenario():
+        server_session.location = ("Files",)  # where the area list puts a caller
         server_task = asyncio.create_task(file_flow._show_area(server_session, lane, area, alice))
         client_task = asyncio.create_task(zmodem.send_file(client_session, "notes.txt", payload))
         await asyncio.wait_for(server_task, timeout=5)
@@ -438,6 +442,7 @@ def test_a_finished_upload_stays_on_the_listing_with_the_new_file_in_it(db, lane
     client_session = _ClientSession(read_pipe=server_to_client, write_pipe=client_to_server)
 
     async def scenario():
+        server_session.location = ("Files",)  # where the area list puts a caller
         server_task = asyncio.create_task(file_flow._show_area(server_session, lane, area, alice))
         client_task = asyncio.create_task(zmodem.send_file(client_session, "fresh.txt", payload))
         await asyncio.wait_for(server_task, timeout=5)

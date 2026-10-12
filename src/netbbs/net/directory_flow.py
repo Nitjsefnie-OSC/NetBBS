@@ -39,6 +39,7 @@ from netbbs.net.node_map_flow import (
 )
 from netbbs.net.node_theme import effective_accent_color, effective_header_color
 from netbbs.net.notices import announce, announce_line, announce_styled, write_notices
+from netbbs.net.location import crumbs, located
 from netbbs.net.picker import pick_item
 from netbbs.net.redraw_preference import redraw_in_place_enabled
 from netbbs.net.session import Session, write_prompt
@@ -70,6 +71,7 @@ from netbbs.timeutil import format_for_display
 # -- user directory & vCard/finger (design doc) ------
 
 
+@located("Directory")
 async def _browse_directory(
     session: Session, db: Database, user: User, *,
     lane: DatabaseLane | None = None, link_context: LinkContext | None = None,
@@ -112,6 +114,7 @@ async def _browse_directory(
             start_stable_id=last_id,
             description_of=lambda u: _directory_description(db, u),
             title="User directory",
+            own=True,
             empty_message="No registered users yet.",
             live_keys=live_keys,
             live_nav=live_nav,
@@ -219,7 +222,7 @@ async def _draw_vcard(session: Session, db: Database, target: User, requesting_u
     await session.write_line(
         "\r\n" + screen_title(
             username,
-            breadcrumb=(session.node_display_name, "Directory"),
+            breadcrumb=crumbs(session),
             subtitle="Member profile",
             width=session.terminal_width,
             clear=redraw_in_place_enabled(db, requesting_user),
@@ -359,6 +362,7 @@ def _mrc_network_masthead(node_controls: NodeControls) -> str:
     return colored(f"MRC: {status.network_summary} ({when})", fg_color=MUTED_COLOR)
 
 
+@located("Who's online")
 async def _caller_who_screen(
     session: Session,
     db: Database,
@@ -520,7 +524,7 @@ async def _caller_who_screen(
                 await session.write_line(
                     "\r\n" + screen_title(
                         link_address_label(sanitize_text(selected.username), sanitize_text(node_label)),
-                        breadcrumb=(session.node_display_name, "Who's online"),
+                        breadcrumb=crumbs(session),
                         subtitle=(
                             "Connected to a different linked node -- a live one-off message is available."
                             if live else "Connected to a different linked node."
@@ -614,7 +618,7 @@ async def _caller_who_screen(
             await session.write_line(
                 "\r\n" + screen_title(
                     target.username,
-                    breadcrumb=(session.node_display_name, "Who's online"),
+                    breadcrumb=crumbs(session),
                     subtitle=subtitle,
                     width=session.terminal_width,
                     clear=redraw_in_place_enabled(db, user),
@@ -701,6 +705,7 @@ async def _caller_who_screen(
             stable_id_of=_stable_id,
             description_of=lambda e: _who_entry_description(db, e, presence, playable),
             title="Who's online",
+            own=True,
             empty_message="No one else is online right now.",
             # Issue #304: the network beyond this node, when the MRC
             # bridge knows its size -- company a caller can go and find.

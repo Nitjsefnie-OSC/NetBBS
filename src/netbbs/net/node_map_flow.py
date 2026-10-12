@@ -40,6 +40,7 @@ from netbbs.net.chat_flow import _may_enter_quietly, _visible_channels_for
 from netbbs.net.detail_view import show_detail
 from netbbs.net.node_theme import effective_accent_color, effective_header_color
 from netbbs.net.notices import take_notices
+from netbbs.net.location import crumbs, entered
 from netbbs.net.picker import ListColumn, pick_item
 from netbbs.net.redraw_preference import redraw_in_place_enabled
 from netbbs.net.session import Session
@@ -454,7 +455,6 @@ async def node_map_screen(
             columns=NODE_MAP_COLUMNS,
             column_values_of=lambda entry: row_cells(entry, now=now),
             title=title,
-            breadcrumb=("Directory",),
             empty_message="No other nodes are known here yet.",
             start_stable_id=reopen_at,
             redraw_in_place=state["redraw"],
@@ -467,25 +467,26 @@ async def node_map_screen(
             return
         reopen_at = stable_id(selected)
         carried = await lane.run(openable_carried_names, user, selected.fingerprint)
-        await show_detail(
-            session,
-            title=screen_title(
-                sanitize_text(selected.friendly_name),
-                breadcrumb=(session.node_display_name, "Directory", title),
-                width=session.terminal_width,
-                clear=False,
-                unicode_style=state["unicode"], collapsed=state["collapsed"],
-                header_color=state["header"],
-                node_name_gradient=session.node_name_gradient,
-            ),
-            sections=node_sections(selected, carried=carried, now=now, sysop=False),
-            actions=[("b", menu_key("B", "ack"))],
-            redraw_in_place=state["redraw"],
-            unicode_style=state["unicode"],
-            message="\r\n".join(take_notices(session)) or None,
-            help_title="Linked BBS help",
-            help_about=(
-                "One BBS on the Link network: how this board knows it, when it was last heard "
-                "from, and what of it you can open here."
-            ),
-        )
+        with entered(session, title):
+            await show_detail(
+                session,
+                title=screen_title(
+                    sanitize_text(selected.friendly_name),
+                    breadcrumb=crumbs(session),
+                    width=session.terminal_width,
+                    clear=False,
+                    unicode_style=state["unicode"], collapsed=state["collapsed"],
+                    header_color=state["header"],
+                    node_name_gradient=session.node_name_gradient,
+                ),
+                sections=node_sections(selected, carried=carried, now=now, sysop=False),
+                actions=[("b", menu_key("B", "ack"))],
+                redraw_in_place=state["redraw"],
+                unicode_style=state["unicode"],
+                message="\r\n".join(take_notices(session)) or None,
+                help_title="Linked BBS help",
+                help_about=(
+                    "One BBS on the Link network: how this board knows it, when it was last heard "
+                    "from, and what of it you can open here."
+                ),
+            )

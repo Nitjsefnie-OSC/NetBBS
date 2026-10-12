@@ -413,7 +413,7 @@ def test_sysop_menu_reaches_trust_domain_configuration(db, lane, sysop):
     domains = list_trust_domains(db)
     assert [(item.domain_id, item.weight) for item in domains] == [("friends", 0.75)]
     text = _written_text(session)
-    assert "NetBBS › Settings › Policy trust" in _visible(text)
+    assert "NetBBS › SysOp › Settings › Policy trust" in _visible(text)
     assert "Trust domain saved and audited." in text
 
 
@@ -663,7 +663,8 @@ def test_sysop_can_clear_a_trust_override_and_view_decision_history_through_real
     assert "Override cleared; recovery policy was recomputed." in text
     # A held, titled table screen now (no "heading:" line, no raw print).
     visible = _visible(text)
-    screen = visible[visible.index("Subjects › Trust decision history"):]
+    # The full path is wider than 80 columns, so it collapses to the title.
+    screen = visible[visible.index("\r\nTrust decision history\r\n"):]
     history = _normalized_visible(screen)
     # An audit kind alone can be 33 columns, which leaves a details column no
     # room on an 80-column terminal: each entry is a record of labelled fields
@@ -8231,10 +8232,11 @@ def test_managed_dns_status_pauses_after_register_message_before_redraw(db, lane
     # held and drawn on the *redrawn* status screen, directly above its
     # prompt, rather than under the clear that redraw starts with.
     text = _visible(_written_text(session))
-    redraw = text[text.rindex("Settings › Managed DNS"):]
-    assert text.count("Settings › Managed DNS") == 2
+    # [D] is the console's own shortcut, so the path is the one taken.
+    redraw = text[text.rindex("SysOp › Managed DNS"):]
+    assert text.count("SysOp › Managed DNS") == 2
     assert redraw.index("[R]egister") < redraw.index("isn't running yet") < redraw.index("Choice: ")
-    assert "isn't running yet" not in text[: text.rindex("Settings › Managed DNS")]
+    assert "isn't running yet" not in text[: text.rindex("SysOp › Managed DNS")]
 
 
 def test_managed_dns_status_rejects_the_release_hotkey_when_not_active(db, lane, sysop):

@@ -90,6 +90,7 @@ from netbbs.net.node_theme import (
     effective_header_color_256,
 )
 from netbbs.net.mail_flow import blocked_senders_screen
+from netbbs.net.location import crumbs, located
 from netbbs.net.picker import pick_item
 from netbbs.net.prose_editor import EditorHeader, edit_prose
 from netbbs.net.animation_preference import animations_enabled, set_animations_enabled
@@ -557,6 +558,7 @@ def _previous_caller_mail_target(
     return target
 
 
+@located("Recent callers")
 async def _previous_callers_screen(
     session: Session,
     db: Database,
@@ -603,7 +605,7 @@ async def _previous_callers_screen(
         await session.write_line(
             "\r\n" + screen_title(
                 "Recent callers",
-                breadcrumb=(session.node_display_name,),
+                breadcrumb=crumbs(session, own=True),
                 width=session.terminal_width,
                 clear=redraw_in_place_enabled(db, user),
                 unicode_style=unicode_style_enabled(db, user),
@@ -893,7 +895,7 @@ async def _last_sessions_screen(session: Session, db: Database, user: User) -> N
     await session.write_line(
         "\r\n" + screen_title(
             "Your sessions",
-            breadcrumb=(session.node_display_name,),
+            breadcrumb=crumbs(session),
             width=session.terminal_width,
             clear=redraw_in_place_enabled(db, user),
             unicode_style=unicode_style_enabled(db, user),
@@ -1200,6 +1202,7 @@ def _possessive(user: User) -> str:
     return f"{sanitize_text(user.username)}'s"
 
 
+@located("Profile")
 async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, actor: User | None = None) -> None:
     """
     Edit your own vCard and caller preferences (design doc) --
@@ -1825,12 +1828,12 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
         ),
     ]
 
-    title, subtitle, breadcrumb = "Your profile", "Your public identity and caller preferences.", ()
+    title, subtitle = "Your profile", "Your public identity and caller preferences."
     if actor is not None:
         # Every field, refusable: a permission taken away while this screen
         # is open stops the next change and says so.
         fields = [dataclasses.replace(field, prompt=refusable(field.prompt)) for field in fields]
-        title, breadcrumb = "Profile", (sanitize_text(user.username),)
+        title = "Profile"
         # Short enough for one row: a subtitle is cut, not wrapped.
         subtitle = f"{_possessive(user)} profile. Every change is logged."
         if guest_defaults:
@@ -1841,7 +1844,7 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
         session, lane,
         title=title,
         subtitle=subtitle,
-        breadcrumb=breadcrumb,
+        own=True,
         fields=fields,
         draft=draft,
         back_menu_text=menu_key("B", "ack"),
@@ -2424,14 +2427,11 @@ async def _identity_details_screen(
         ),
     ]
 
-    breadcrumb: tuple[str, ...] = ()
     if actor is not None:
         fields = [dataclasses.replace(field, prompt=refusable(field.prompt)) for field in fields]
-        breadcrumb = (sanitize_text(user.username), "Profile")
     await edit_resource_draft(
         session, lane,
         title="Name & details",
-        breadcrumb=breadcrumb,
         fields=fields,
         draft=draft,
         back_menu_text=menu_key("B", "ack"),
@@ -2448,6 +2448,7 @@ async def _identity_details_screen(
 # -- identity attestation: the [V]erify main-menu screen (design doc §18) --
 
 
+@located("Verify")
 async def _verify_identity_menu(session: Session, db: Database, verifier: User) -> None:
     """
     Conditionally-visible main-menu entry for users with
@@ -2463,6 +2464,7 @@ async def _verify_identity_menu(session: Session, db: Database, verifier: User) 
         stable_id_of=lambda u: u.id,
         description_of=lambda u: _verification_status_description(db, u),
         title="Verify a user's identity",
+        own=True,
         empty_message="No other users to verify.",
         redraw_in_place=redraw_in_place_enabled(db, verifier),
         unicode_style=unicode_style_enabled(db, verifier),
@@ -2558,7 +2560,7 @@ async def _verify_user(session: Session, db: Database, verifier: User, subject: 
         await session.write_line(
             "\r\n" + screen_title(
                 f"Verifying {sanitize_text(subject.username)}",
-                breadcrumb=(session.node_display_name, "Verify identity"),
+                breadcrumb=crumbs(session),
                 width=session.terminal_width,
                 clear=redraw_in_place,
                 unicode_style=unicode_style, collapsed=collapsed,

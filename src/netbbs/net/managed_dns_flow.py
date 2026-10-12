@@ -56,6 +56,7 @@ from netbbs.managed_dns.state import (
 from netbbs.auth.users import User
 from netbbs.net.breadcrumb_preference import breadcrumb_collapsed_enabled
 from netbbs.net.confirm import prompt_yes_no
+from netbbs.net.location import crumbs, located
 from netbbs.net.picker import ListColumn, pick_item
 from netbbs.net.notices import announce
 from netbbs.net.menu_description_preference import menu_description_level
@@ -778,6 +779,7 @@ _ADMIN_COLUMNS = [
 ]
 
 
+@located("Service administration")
 async def administer_service(session: Session, lane: DatabaseLane, actor: User) -> None:
     """The SysOp console's end of design doc §16 Decision 4, for the one
     node whose operator also runs the service: every registration the
@@ -882,8 +884,7 @@ async def administer_service(session: Session, lane: DatabaseLane, actor: User) 
             description_of=describe,
             columns=_ADMIN_COLUMNS,
             column_values_of=columns_of,
-            title="Managed DNS service administration",
-            breadcrumb=("Settings", "Managed DNS"),
+            title="Managed DNS service administration", own=True,
             empty_message="The service holds no registrations.",
             refresh=reload,
             **presentation,
@@ -941,7 +942,7 @@ async def _registration_detail(session: Session, lane: DatabaseLane, row, *, bas
             "\r\n"
             + screen_title(
                 f"{row.name}.netbbs.org",
-                breadcrumb=(session.node_display_name, "Settings", "Managed DNS", "Service administration"),
+                breadcrumb=crumbs(session),
                 subtitle="This registration as the service holds it.",
                 width=session.terminal_width,
                 clear=presentation["redraw_in_place"],

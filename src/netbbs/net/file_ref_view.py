@@ -81,7 +81,7 @@ async def open_refs(lane: DatabaseLane, user: User, refs: list[FileRef]) -> list
 
 
 async def choose_file_to_attach(
-    session: Session, lane: DatabaseLane, user: User, *, breadcrumb: tuple[str, ...], **style,
+    session: Session, lane: DatabaseLane, user: User, **style,
 ) -> FileRef | None:
     """Pick a file area, then a file in it, to point a letter at: the
     areas `user` may read, and the files in each they can download. `None`
@@ -96,7 +96,6 @@ async def choose_file_to_attach(
             stable_id_of=lambda item: item.id,
             description_of=lambda item: item.description,
             title="Attach a file: choose its file area",
-            breadcrumb=breadcrumb,
             empty_message="There are no file areas you can open.",
             start_stable_id=area_start,
             **style,
@@ -116,7 +115,6 @@ async def choose_file_to_attach(
             description_of=lambda item: f"{file_size_text(item.size_bytes)}"
             + (f" -- {item.description.splitlines()[0]}" if item.description else ""),
             title=f"Attach a file from {sanitize_text(area.name)}",
-            breadcrumb=breadcrumb,
             empty_message=f"{area.name} has no files to attach.",
             **style,
         )
@@ -174,7 +172,7 @@ def file_actions(files: list[FileRef], *, noun: str) -> list[tuple[str, str, str
 
 async def change_attached_files(
     session: Session, lane: DatabaseLane, user: User, files: list[FileRef], key: str, *,
-    noun: str, breadcrumb: tuple[str, ...], style: dict,
+    noun: str, style: dict,
 ) -> list[FileRef]:
     """`[A]ttach file` or `[R]emove file` on a review screen: the files
     afterwards, with what happened announced for the review screen."""
@@ -182,7 +180,7 @@ async def change_attached_files(
         if len(files) >= MAX_FILE_REFS:
             announce(session, f"A {noun} can point at {MAX_FILE_REFS} files at most.", tone="error")
             return files
-        ref = await choose_file_to_attach(session, lane, user, breadcrumb=breadcrumb, **style)
+        ref = await choose_file_to_attach(session, lane, user, **style)
         if ref is None:
             return files
         if any(attached.file_id == ref.file_id for attached in files):
@@ -200,7 +198,6 @@ async def change_attached_files(
             stable_id_of=lambda item: files.index(item),
             description_of=lambda item: f"in {item.area_name}",
             title="Remove which file?",
-            breadcrumb=breadcrumb,
             empty_message="No files are attached.",
             **style,
         )
@@ -213,7 +210,7 @@ async def change_attached_files(
 
 async def get_referenced_file(
     session: Session, lane: DatabaseLane, user: User, refs: list[FileRef], *,
-    noun: str, breadcrumb: tuple[str, ...], style: dict, transfers: TransferGrants | None,
+    noun: str, style: dict, transfers: TransferGrants | None,
 ) -> None:
     """`[G]et file`: download the file `refs` point at, or with several, the
     one the reader picks. Only a file they can open now is offered."""
@@ -230,7 +227,6 @@ async def get_referenced_file(
             stable_id_of=lambda item: available.index(item),
             description_of=lambda item: f"in {item.area_name}",
             title="Download which file?",
-            breadcrumb=breadcrumb,
             empty_message=f"None of the files in this {noun} is available to you.",
             **style,
         )

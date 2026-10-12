@@ -25,6 +25,7 @@ from netbbs.directory import get_bio
 from netbbs.net import board_flow, login_flow, main_menu, profile_flow
 from netbbs.net.char_input import EditorKey, EditorKeyKind, InputHistory
 from netbbs.net.editor_preference import fullscreen_editor_enabled, set_fullscreen_editor_enabled
+from netbbs.net.location import entered
 from netbbs.net.session import Session
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
@@ -878,7 +879,8 @@ def test_a_new_post_opens_on_its_own_screen_and_the_editor_names_it(db, alice):
     set_fullscreen_editor_enabled(db, alice, True)
     board = create_board(db, "general", creator=alice)
     session = FakeSession(["p", "Hello"] + _type("Body") + ["CTRL+O", "p", "b"])
-    asyncio.run(board_flow._show_board(session, db, board, alice, breadcrumb=("Message boards",)))
+    with entered(session, "Message boards"):
+        asyncio.run(board_flow._show_board(session, db, board, alice))
 
     text = _visible(session)
     assert re.search(r"Message boards \W general \W New post", text)

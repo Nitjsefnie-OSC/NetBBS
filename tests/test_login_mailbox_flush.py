@@ -139,7 +139,7 @@ def test_a_second_pending_message_delivered_after_returning_to_the_menu(db, monk
         # screen entirely. Delivered by `session` (GitHub issue #27) --
         # the exact object passed in here is the same one _main_menu is
         # about to flush() by. **kwargs absorbs the community_id/
-        # community_scoped/title_prefix keywords the main menu passes
+        # community_scoped keywords the main menu passes
         # through (design doc §16) -- irrelevant here.
         mailbox.deliver(session, "*** Private message from bob: while you were away", _T)
 

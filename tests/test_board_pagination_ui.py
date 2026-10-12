@@ -18,6 +18,7 @@ from netbbs.auth.users import create_user
 from netbbs.boards import posts as posts_module
 from netbbs.boards.boards import create_board
 from netbbs.boards.posts import create_post, edit_post
+from netbbs.net.location import entered
 from netbbs.net.board_flow import _show_board
 from netbbs.storage.database import Database
 
@@ -233,7 +234,8 @@ def test_board_page_has_location_post_count_and_actions(tmp_path, monkeypatch):
     board, user = _make_board_with_posts(db, count=2, monkeypatch=monkeypatch)
     session = FakeSession(keys=["b"])
 
-    asyncio.run(_show_board(session, db, board, user))
+    with entered(session, "Message boards"):
+        asyncio.run(_show_board(session, db, board, user))
 
     assert "NetBBS › Message boards › general" in session.visible_output
     assert "Newest posts" in session.visible_output

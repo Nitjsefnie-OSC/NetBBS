@@ -151,7 +151,7 @@ async def model_usage(session, lane, actor):
     await lane.run(require_sysop, actor)
     value = await lane.run(usage_summary)
     await _show_report(
-        session, lane, actor, "Model usage", breadcrumb=(), sections=_usage_sections(value),
+        session, lane, actor, "Model usage", sections=_usage_sections(value),
         help_title="Model usage",
         help_about="What model conversation has cost this node: requests, callers, tokens and the limits "
                    "callers ran into.",
