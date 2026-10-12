@@ -18,6 +18,7 @@ from netbbs.link.work_items import (
     WorkItemError,
     _MAX_ATTEMPTS,
     cancel_work_item,
+    delete_work_item,
     enqueue_work_item_without_commit,
     get_work_item,
     list_work_items,
@@ -166,6 +167,44 @@ def test_replay_work_item_resets_a_dead_lettered_item(db, sysop):
 
     entries = list_actions_for_object(db, "link_work_item", item.id)
     assert any(e.action == "replay_link_work_item" for e in entries)
+
+
+def test_replay_of_an_old_item_gets_its_full_retry_schedule_again(db, sysop):
+    # Issue #1245: the age budget counted from the original enqueue, so a
+    # replayed item older than five days dead-lettered on its first failure.
+    item = enqueue_work_item(db, kind=KIND_LINK_MAIL_DELIVERY, reference_id="a", target_fingerprint="fp")
+    _backdate(db, item.id, seconds_ago=6 * 86_400)
+    item = record_failure(db, get_work_item(db, item.id), error="unreachable")
+    assert item.status == "dead_lettered"
+
+    replayed = replay_work_item(db, item.id, replayed_by=sysop)
+    after = record_failure(db, replayed, error="unreachable")
+    assert after.status == "retrying"
+    assert after.attempts == 1
+
+
+def test_delete_work_item_forgets_a_dead_lettered_item(db, sysop):
+    item = enqueue_work_item(db, kind=KIND_LINK_MAIL_DELIVERY, reference_id="a", target_fingerprint="fp")
+    for _ in range(_MAX_ATTEMPTS):
+        item = record_failure(db, item, error="unreachable")
+
+    delete_work_item(db, item.id, deleted_by=sysop)
+    db.connection.commit()
+    assert list_work_items(db) == []
+    with pytest.raises(WorkItemError, match="no such work item"):
+        get_work_item(db, item.id)
+    entries = list_actions_for_object(db, "link_work_item", item.id)
+    assert any(e.action == "delete_link_work_item" for e in entries)
+
+
+def test_delete_work_item_refuses_on_an_unresolved_or_pushed_item(db, sysop):
+    pending = enqueue_work_item(db, kind=KIND_LINK_MAIL_DELIVERY, reference_id="a", target_fingerprint="fp")
+    with pytest.raises(WorkItemError, match="not 'dead_lettered' or 'cancelled'"):
+        delete_work_item(db, pending.id, deleted_by=sysop)
+    pushed = enqueue_work_item(db, kind=KIND_LINK_MAIL_DELIVERY, reference_id="b", target_fingerprint="fp")
+    record_success(db, pushed)
+    with pytest.raises(WorkItemError, match="not 'dead_lettered' or 'cancelled'"):
+        delete_work_item(db, pushed.id, deleted_by=sysop)
 
 
 def test_replay_work_item_refuses_on_a_still_unresolved_item(db, sysop):

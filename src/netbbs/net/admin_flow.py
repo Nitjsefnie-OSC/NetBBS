@@ -517,6 +517,7 @@ from netbbs.link.work_items import (
     KIND_LINK_MAIL_DELIVERY,
     WorkItem,
     cancel_work_item,
+    delete_work_item,
     list_work_items,
     replay_work_item,
 )
@@ -12777,7 +12778,7 @@ async def _outbox_screen(session: Session, lane: DatabaseLane, actor: User) -> N
     `pending` will be attempted on its own within one sync pass,
     `pushed`/`cancelled` are already resolved, so there's nothing a
     SysOp would act on for either. One item's detail is a screen of its
-    own with `[R]eplay` or `[C]ancel` on its action bar (design doc
+    own with `[R]eplay`/`[D]elete` or `[C]ancel` on its action bar (design doc
     §3.5: it used to print the item and then ask a yes/no that had to
     be answered to leave). Replaying a dead-lettered
     `link_mail_delivery` item also undoes its `mail_messages.
@@ -12863,16 +12864,20 @@ async def _outbox_item_screen(
     ]
     if selected.last_error:
         rows.append(Field("Last error", selected.last_error, color=WARNING_COLOR))
-    action = ("r", menu_key("R", "eplay now")) if dead else ("c", menu_key("C", "ancel (stop retrying)"))
+    actions = (
+        [("r", menu_key("R", "eplay now")), ("d", menu_key("D", "elete"))] if dead
+        else [("c", menu_key("C", "ancel (stop retrying)"))]
+    )
     choice, _page = await show_detail(
         session,
         title=_detail_title(session, chrome, "Work item", breadcrumb=("SysOp", "Operations", "Outbox")),
-        sections=[Section(None, rows)], actions=[action, _BACK_ACTION],
+        sections=[Section(None, rows)], actions=[*actions, _BACK_ACTION],
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
         help_title="Work item help",
         help_about=(
             "One outgoing delivery that is retrying or gave up. Replay sends it again now; cancel stops "
-            "retrying it."
+            "retrying it. Delete forgets one that gave up, when its recipient is gone for good; the "
+            "letter stays expired."
         ),
     )
     if choice == "r":
@@ -12890,6 +12895,17 @@ async def _outbox_item_screen(
 
         cancelled = await lane.run(_cancel)
         return colored(f"Cancelled -- status is now {cancelled.status!r}.", fg_color=SUCCESS_COLOR)
+    if choice == "d" and dead:
+        await session.write_line("")
+        if not await prompt_yes_no(
+            session, "Delete this work item for good? The letter stays expired.", default=False,
+        ):
+            return colored("Kept -- nothing was deleted.", fg_color=MUTED_COLOR)
+        await lane.run(delete_work_item, selected.id, deleted_by=actor)
+        return colored(
+            f"Deleted the {selected.kind} to {target_labels[selected.target_fingerprint]}.",
+            fg_color=SUCCESS_COLOR,
+        )
     return None
 
 
