@@ -3135,7 +3135,13 @@ itself; prose (a comma-separated roster, a closing note) wraps at the same
 indent. The block is at most 78 columns wide. Flat lines read as a wall of text
 between conversation; a titled block is told apart from it at a glance. A
 one-line answer (a refusal, "No one is here.", a toggle's new state) stays one
-muted line.
+muted line. A cell may be several colored pieces, and the blocks use the
+colors chat already gives each thing: in `/who` the caller's own name in the
+self color and other local callers in the accent color, "here" in the success
+color and an away message in the warning color, an MRC `nick@site` and "on
+MRC" in the MRC site color, a linked node's name in the node color; in
+`/list` the MRC and linked-node counts likewise. A block taller than the chat
+area is paged the way the hub's answers are (below).
 
 `/list` counts everyone this node can see in a channel, not only its own
 callers: `2 here · 3 on MRC` for a bridged room, from the room's roster while a
@@ -3154,12 +3160,28 @@ Its rows keep the hub's own colors and alignment and carry no badge or time of
 their own. Other traffic is shown as it arrives meanwhile; a second question
 asked before the first answer went quiet gets its own block. An answer taller
 than the chat area is paged (the hub may push 300 lines at once, and `/mrc
-bbses` names every board on the network): each page ends `page 1 of 4 · Enter
-shows more`, an empty Enter shows the next, and any other line drops the pages
-left. The pager is not modal -- unlike `/help`'s, it reads no key of its own,
-since the answer arrives while the caller's input line already owns the
-keyboard. A reply line arriving once its answer is drawn stands alone with its
+bbses` names every board on the network): each page ends `page 1 of 4 · PgDn
+more · PgUp back · Esc done`. PgDn, or Enter on an empty line for a terminal
+that sends no PgDn, shows the next page; Esc drops the rest; any other line
+does too. The pager is not modal -- unlike `/help`'s, it reads no key of its
+own, since the answer arrives while the caller's input line already owns the
+keyboard: the line editor hands PgUp, PgDn and a bare Escape to chat through a
+callback inside its keystroke's critical section, and the line being typed is
+untouched. A reply line arriving once its answer is drawn stands alone with its
 `[MRC]` badge, as a CTCP answer always does.
+
+PgUp and PgDn also scroll back through the chat itself, a page at a time over
+the 500 lines chat keeps for redrawing after a resize. A terminal's own
+scrollback is no use in chat: the next redraw of the pinned rows jumps it back
+to the bottom, a second later at most. Scrolled back, the chat area holds
+still, so it can be read or copied: lines that arrive meanwhile are kept and
+counted rather than drawn, and its last row says `8 lines back · 1 new · PgDn
+newer · Esc live`. Only the pinned status and input rows keep updating. PgDn
+past the newest line, Esc, Tab completion's candidate list or sending a line
+returns to the live chat, drawn again with whatever arrived. A resize does too.
+Scrolling needs the pinned rows, so a terminal shorter than four rows has none;
+PgUp at the newest line of a pager's answer scrolls back over the pages already
+shown.
 
 Chat lines carry a per-user display timestamp, **on by default** and toggled
 with `/timestamps`. The default is the answer for an account that has never

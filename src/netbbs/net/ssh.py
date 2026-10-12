@@ -398,6 +398,7 @@ class SSHSession(Session):
         viewport: int | Callable[[], int] | None = None,
         viewport_owns_row: bool = False,
         pasted_color: PastedColor | None = None,
+        navigate: char_input.Navigate | None = None,
     ) -> str:
         # live_buffer/lock/list_candidates pass straight through to
         # char_input.read_line unchanged -- see that function's
@@ -407,6 +408,7 @@ class SSHSession(Session):
             live_buffer=live_buffer, lock=lock, list_candidates=list_candidates,
             initial=initial, cancellable=cancellable, viewport=viewport, viewport_owns_row=viewport_owns_row,
             pasted_color=pasted_color,
+            navigate=navigate,
         )
 
     async def read_key(self, echo: bool = True) -> str:

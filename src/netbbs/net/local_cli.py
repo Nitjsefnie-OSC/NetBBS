@@ -118,6 +118,7 @@ class LocalCLISession(Session):
         viewport: int | Callable[[], int] | None = None,
         viewport_owns_row: bool = False,
         pasted_color: PastedColor | None = None,
+        navigate: char_input.Navigate | None = None,
     ) -> str:
         # live_buffer/lock/list_candidates are never actually passed by
         # this session's one caller (the standalone `python -m
@@ -129,6 +130,7 @@ class LocalCLISession(Session):
             live_buffer=live_buffer, lock=lock, list_candidates=list_candidates,
             initial=initial, cancellable=cancellable, viewport=viewport, viewport_owns_row=viewport_owns_row,
             pasted_color=pasted_color,
+            navigate=navigate,
         )
 
     async def read_key(self, echo: bool = True) -> str:

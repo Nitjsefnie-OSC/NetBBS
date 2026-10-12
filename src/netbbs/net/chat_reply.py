@@ -8,7 +8,9 @@ chat traffic; a block is told apart from conversation at a glance.
 
 Everything here takes sanitized plain text and styles it last ("sanitize
 before styling"); a cell is `(text, color)`, never a pre-colored string, so
-wrapping measures what the caller sees.
+wrapping measures what the caller sees. A cell's text may instead be a
+sequence of `(text, color)` segments -- `nick@site` with the site in its own
+colour -- each segment's `None` taking the cell's colour.
 """
 
 from __future__ import annotations
@@ -27,7 +29,18 @@ MAX_BLOCK_WIDTH = 78
 #: line of its own beneath the aligned ones.
 MIN_LAST_COLUMN = 20
 
-Cell = tuple[str, "int | None"]
+Segments = Sequence[tuple[str, "int | None"]]
+Cell = tuple["str | Segments", "int | None"]
+
+
+def _plain(text: "str | Segments") -> str:
+    return text if isinstance(text, str) else "".join(part for part, _color in text)
+
+
+def _styled(text: "str | Segments", color: int | None) -> str:
+    if isinstance(text, str):
+        return _style(text, color)
+    return "".join(_style(part, own if own is not None else color) for part, own in text)
 
 
 def block_width(terminal_width: int) -> int:
@@ -82,7 +95,7 @@ def table_rows(rows: Sequence[Sequence[Cell]], *, width: int) -> list[str]:
     widths = [0] * columns
     for row in rows:
         for index, (text, _color) in enumerate(row[:-1]):
-            widths[index] = max(widths[index], display_width(text))
+            widths[index] = max(widths[index], display_width(_plain(text)))
     # Columns that only some rows reach still need their space reserved.
     budget = width - 1 - MIN_LAST_COLUMN - 2 * (columns - 1)
     while sum(widths[:-1]) > budget and max(widths[:-1], default=0) > 8:
@@ -101,12 +114,13 @@ def _row_lines(row: Sequence[Cell], widths: list[int], width: int) -> list[str]:
     *leading, (last_text, last_color) = row
     for index, (text, color) in enumerate(leading):
         cell_width = widths[index]
-        if display_width(text) > cell_width:
+        shown = display_width(_plain(text))
+        if shown > cell_width:
             # Over its cap: the cell alone, then the row carries on aligned.
-            lines.append((line + _style(text, color)).rstrip())
+            lines.append((line + _styled(text, color)).rstrip())
             line = " " * (column + cell_width + 2)
         else:
-            line += _style(text, color) + " " * (cell_width - display_width(text) + 2)
+            line += _styled(text, color) + " " * (cell_width - shown + 2)
         column += cell_width + 2
     room = width - column
     if room < MIN_LAST_COLUMN and leading:
@@ -117,6 +131,12 @@ def _row_lines(row: Sequence[Cell], widths: list[int], width: int) -> list[str]:
         indent = 3
         line, room = " " * indent, width - indent
         column = indent
+    if not isinstance(last_text, str):
+        if display_width(_plain(last_text)) <= room:
+            lines.append(line + _styled(last_text, last_color))
+            return lines
+        # Too long to keep its segments: wrapped, in the cell's colour.
+        last_text = _plain(last_text)
     wrapped = wrap_to_width(last_text, max(1, room)) if last_text else []
     if not wrapped:
         if line.strip():

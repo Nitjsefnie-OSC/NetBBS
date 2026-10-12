@@ -250,7 +250,7 @@ def test_a_long_hub_answer_is_paged_and_an_empty_enter_turns_the_page(db, lane, 
             [participant] = hub.participants_for_username(channel.name, "alice")
             for index in range(20):
                 await hub.send_to(channel.name, participant, MrcNotice(f"board {index:02}", utc_now_iso(), kind="reply"))
-            assert await eventually(lambda: "Enter shows more" in _text(session))
+            assert await eventually(lambda: "PgDn more · PgUp back · Esc done" in _text(session))
             text = _text(session)
             assert "MRC hub · /mrc bbses" in text and "page 1 of 4" in text
             assert " board 05" in text.splitlines() and "board 06" not in text
@@ -306,7 +306,7 @@ def test_an_answer_completing_behind_a_pager_waits_for_its_pages(db, lane, hub, 
             assert "page 1 of 2" in text and "MOTD reply line 1" not in text
             session.inputs.put_nowait("")
             assert await eventually(lambda: "board 09" in _text(session))
-            assert "page 2 of 2 · Enter shows the answer to /mrc motd" in _text(session)
+            assert "page 2 of 2 · PgDn: the answer to /mrc motd" in _text(session)
             assert "MOTD reply line 1" not in _text(session)
             session.inputs.put_nowait("")
             assert await eventually(lambda: "MRC hub · /mrc motd" in _text(session))

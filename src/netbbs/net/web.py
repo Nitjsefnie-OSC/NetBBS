@@ -68,6 +68,7 @@ from netbbs.net.char_input import (
     InputHistory,
     LastCandidateList,
     LineViewport,
+    Navigate,
     DeferredWindow,
     complete_in_window,
     line_viewport,
@@ -615,6 +616,7 @@ class WebSession(Session):
         viewport: int | Callable[[], int] | None = None,
         viewport_owns_row: bool = False,
         pasted_color: PastedColor | None = None,
+        navigate: Navigate | None = None,
     ) -> str:
         """
         Read one line, with the same cursor-addressable editing,
@@ -651,7 +653,7 @@ class WebSession(Session):
                 history, completer, live_buffer=live_buffer, lock=lock,
                 list_candidates=list_candidates, initial=initial, cancellable=cancellable,
                 viewport=viewport, viewport_owns_row=viewport_owns_row, pasted_color=pasted_color,
-                viewport_deferred=viewport_deferred,
+                viewport_deferred=viewport_deferred, navigate=navigate,
             )
         finally:
             self._clicks_blocked -= blocked
@@ -694,6 +696,7 @@ class WebSession(Session):
         viewport_owns_row: bool = False,
         pasted_color: PastedColor | None = None,
         viewport_deferred: bool = False,
+        navigate: Navigate | None = None,
     ) -> str:
         # Issue #529, mirroring `netbbs.net.char_input._read_line_
         # editable` exactly -- this transport is a separate
@@ -786,7 +789,9 @@ class WebSession(Session):
 
                     if isinstance(item, _SpecialKey):
                         key = item.name
-                        if key == "LEFT":
+                        if key in ("PAGE_UP", "PAGE_DOWN") and navigate is not None:
+                            await navigate(key)
+                        elif key == "LEFT":
                             if cursor > 0:
                                 # A whole grapheme, as in `char_input`.
                                 cursor = _grapheme_start(line, cursor - 1)
@@ -877,6 +882,12 @@ class WebSession(Session):
                             window.reset()
                         await write("\r\n")
                         break
+
+                    if char == _ESC and navigate is not None and not cancellable:
+                        # A bare Escape arrives as the character itself here
+                        # (see the cancellable branch below).
+                        await navigate("ESCAPE")
+                        continue
 
                     if char == _ESC and cancellable:
                         # Issue #529. A *bare* Escape reaches this
