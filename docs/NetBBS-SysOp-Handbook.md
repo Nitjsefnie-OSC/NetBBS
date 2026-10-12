@@ -1804,34 +1804,61 @@ What callers and you see:
 
 ## MRC chat bridge
 
-MRC is a separate, public inter-BBS chat network. It is not NetBBS Link and
-does not provide Link's authenticated identities or trust model.
+| At a glance | |
+| --- | --- |
+| **Set up under** | **Settings ▸ Inter-BBS chat (MRC)** |
+| **Watch under** | **Node ▸ Inter-BBS chat (MRC)** |
+| **Decide first** | Which channels to bridge, and whether callers may open rooms themselves |
 
-1. Under **Settings → Inter-BBS chat (MRC)**, configure and enable the hub
+> [!IMPORTANT]
+> MRC is a separate, public inter-BBS chat network. It is not NetBBS Link and
+> does not provide Link's authenticated identities or trust model.
+
+### Bridge a channel
+
+1. Under **Settings ▸ Inter-BBS chat (MRC)**, configure and enable the hub
    connection and the site name/details it announces. Saving applies live.
 2. Set **MRC room** on each channel you want bridged. One room maps to one
-   channel. Callers see an MRC badge and a notice that their handle is visible.
-3. Optionally enable **Open rooms** so callers can select or name rooms through
-   the Multi Relay Chat picker. Set its access gates, room cap, retention, and
-   blocklist. Adopt a room to retain it, or retire it deliberately.
+   channel. Callers see an MRC badge and a notice that their handle is
+   visible.
+3. Optionally enable **Open rooms** so callers can select or name rooms
+   through the Multi Relay Chat picker. Set its access gates, room cap,
+   retention, and blocklist. Adopt a room to retain it, or retire it
+   deliberately.
 
-IP-address reporting and extra caller metadata are separate opt-in settings.
-Terminal size is sent for reply formatting. Private MRC messages require each
-caller's opt-in and are not confidential from the network. Do not type MRC
-passwords as ordinary chat; `/mrc register`, `/mrc identify`, and the related
-password commands ask separately without echo.
+### What MRC sees
 
-Use **Node → Inter-BBS chat (MRC)** for connection state, round-trip time, errors,
-and reconnect. Pause one channel's bridge or disable the whole bridge without
-removing local chat. MRC moderation and room rules also depend on the remote hub.
+- IP-address reporting and extra caller metadata are separate opt-in
+  settings.
+- Terminal size is sent for reply formatting.
+- Private MRC messages require each caller's opt-in and are not confidential
+  from the network.
 
-The room picker learns the network directory when a caller enters an MRC
-room; `/rooms` refreshes it. Reported user counts are snapshots, with stale
-readings marked. The chat status bar labels local occupancy separately from
-MRC occupancy; the hub roster does not supply a remote away count. A hub
-nickname or room correction that cannot identify one of several local callers
-produces a notice and diagnostic instead of being applied to an arbitrary
-account.
+> [!WARNING]
+> Do not type MRC passwords as ordinary chat; `/mrc register`,
+> `/mrc identify`, and the related password commands ask separately without
+> echo.
+
+### Run the bridge
+
+Use **Node ▸ Inter-BBS chat (MRC)** for connection state, round-trip time,
+errors, and reconnect. Pause one channel's bridge or disable the whole bridge
+without removing local chat. MRC moderation and room rules also depend on the
+remote hub.
+
+<details>
+<summary>Room directory, user counts and roster corrections</summary>
+
+- The room picker learns the network directory when a caller enters an MRC
+  room; `/rooms` refreshes it.
+- Reported user counts are snapshots, with stale readings marked.
+- The chat status bar labels local occupancy separately from MRC occupancy;
+  the hub roster does not supply a remote away count.
+- A hub nickname or room correction that cannot identify one of several local
+  callers produces a notice and diagnostic instead of being applied to an
+  arbitrary account.
+
+</details>
 
 ## FTN networks (FidoNet, fsxNet)
 
