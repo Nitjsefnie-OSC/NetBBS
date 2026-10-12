@@ -153,6 +153,13 @@ LIVE = [
     (mrc("marla", "TheOuterRim", "raises a mug back", action=True), None),
 ]
 
+#: Minutes past `EVENING` each earlier line and each `LIVE` line is said at:
+#: a conversation of a quarter hour before the caller joins, then the caller's
+#: half hour, with the caller answering a minute or so after each question.
+EARLIER_AT = [-14, -11, -9]
+LIVE_AT = [1, 2, 3, 5, 6, 6, 7, 8, 10, 11, 11, 12, 13, 15, 18, 19, 19, 22, 23, 24, 24]
+assert len(EARLIER_AT) == len(EARLIER) and len(LIVE_AT) == len(LIVE)
+
 
 _CONTROL = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[78]")
 
@@ -218,9 +225,11 @@ async def capture(exchanges: int) -> str:
         await until(lambda: bridge.state is MrcState.CONNECTED, 5,
                     f"the bridge to connect ({bridge.status()})")
 
-        for line in EARLIER:
+        for line, minutes in zip(EARLIER, EARLIER_AT):
+            at(minutes)
             await fake.send_line(line)
             await asyncio.sleep(0.25)
+        at(0)
 
         session = CaptureSession()
         session.location = ("Chat",)  # where the walk came from
@@ -247,7 +256,8 @@ async def capture(exchanges: int) -> str:
         # RATE_LIMIT_NOTICE where the line should be.
         played = LIVE[:exchanges]
         typed_at = 0.0
-        for inbound, typed in played:
+        for (inbound, typed), minutes in zip(played, LIVE_AT):
+            at(minutes)
             body = extract_body(inbound) if inbound is not None else typed
             if inbound is not None:
                 await fake.send_line(inbound)
@@ -294,16 +304,29 @@ async def capture(exchanges: int) -> str:
 #: at 09:05 (review on #979).
 EVENING = datetime.datetime(2026, 9, 12, 21, 24, tzinfo=datetime.timezone.utc)
 
+#: Minutes past `EVENING` the pinned clock reads; `at()` moves it.
+_STORY = [0.0]
+
+
+def at(minutes: float) -> None:
+    """Set the pinned clock to `minutes` past `EVENING`, so the next line is
+    stamped then. A capture takes a minute of real time; the conversation it
+    shows took half an hour, and every line in one minute read as a burst."""
+    _STORY[0] = minutes
+
 
 def pin_clock_to_the_evening() -> None:
-    """Point every `utc_now_iso` the chat path imported at a clock that
-    starts at `EVENING` and runs at real speed, so lines keep their order."""
+    """Point every `utc_now_iso` the chat path imported at a clock that reads
+    `EVENING` plus whatever `at()` last set. Real time still adds a sliver --
+    a hundredth of what passes -- so lines said at the same minute keep their
+    order without any of them reaching the next minute."""
     from netbbs import timeutil
 
     started = time.monotonic()
 
     def evening_now_iso() -> str:
-        moment = EVENING + datetime.timedelta(seconds=time.monotonic() - started)
+        moment = EVENING + datetime.timedelta(
+            minutes=_STORY[0], seconds=(time.monotonic() - started) / 100)
         return moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     real = timeutil.utc_now_iso
