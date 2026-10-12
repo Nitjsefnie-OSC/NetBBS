@@ -1029,54 +1029,101 @@ caller can access on this node, including carried linked content.
 
 ## Door games
 
-Open **Content → Doors → Gallery** to register Retro Trivia, Voidrunner, or
+| At a glance | |
+| --- | --- |
+| **Where** | **Content ▸ Doors** in the SysOp console |
+| **Callers find it under** | <kbd>G</kbd> **Games** on the main menu, or a Community's page |
+| **Outside NetBBS** | Games, licenses, runtimes and installation directories: see the [door setup guide](NetBBS-door-guide.md) |
+
+### Register a bundled game
+
+Open **Content ▸ Doors ▸ Gallery** to register Retro Trivia, Voidrunner, or
 War Dialer. Gallery entries fill a draft with the installed interpreter and
-sensible defaults; review and Save. Callers reach games through **Games** on
-the main menu or a Community's page.
+sensible defaults; review and <kbd>S</kbd> **Save**.
+
+### Set up any other door
 
 Third-party native programs, DOS games through DOSBox-X, doors built only for
 another platform (in a per-caller qemu VM you provision), remote RLogin
-services and BBSLink use compatibility profiles. Start with minimum play level 255,
-choose a template, set your actual paths, run **Check setup**, then **Test as
-SysOp**. Testing launches real programs and may change game data, even if you
-later discard the configuration draft. Test normal quit, disconnect, timeout,
-and each offered caller transport before opening it to users.
+services and BBSLink use compatibility profiles.
 
-Your own door scripts can be sent from inside NetBBS: **Content → Doors →
-Upload** asks for the file's name, then takes one file over Zmodem or a
-browser link into the node's doors folder, the one **From disk** lists.
-Replacing a file of the same name asks first. The upload registers nothing and
-changes no permissions; register it with **From disk**. It is capped at the
-node's upload limit and recorded in the audit log.
+1. Start with minimum play level 255.
+2. Choose a template.
+3. Set your actual paths.
+4. Run **Check setup**.
+5. Run **Test as SysOp**.
+6. Test normal quit, disconnect, timeout, and each offered caller transport
+   before opening it to users.
 
-**MANUAL — outside NetBBS:** obtain games and licenses, install their runtimes,
-prepare writable installation directories, and configure any remote-service
-tunnel and credentials. NetBBS does not install these components. Use the
-[door setup guide](NetBBS-door-guide.md) for exact profiles, game versions,
-DOSBox-X patches, service controls, and troubleshooting.
+> [!WARNING]
+> Testing launches real programs and may change game data, even if you later
+> discard the configuration draft.
 
-Native doors run as the NetBBS service account. Resource limits do **not**
-prevent them reading files or using the network as that account. Install only
-trusted programs. A door's temporary launch directory is deleted afterward;
-persistent game data must live elsewhere.
+> [!IMPORTANT]
+> **MANUAL — outside NetBBS:** obtain games and licenses, install their
+> runtimes, prepare writable installation directories, and configure any
+> remote-service tunnel and credentials. NetBBS does not install these
+> components. Use the [door setup guide](NetBBS-door-guide.md) for exact
+> profiles, game versions, DOSBox-X patches, service controls, and
+> troubleshooting.
+
+#### Upload your own door scripts
+
+Your own door scripts can be sent from inside NetBBS:
+**Content ▸ Doors ▸ Upload** asks for the file's name, then takes one file
+over Zmodem or a browser link into the node's doors folder, the one
+<kbd>F</kbd> **From disk** lists.
+
+- Replacing a file of the same name asks first.
+- The upload registers nothing and changes no permissions; register it with
+  **From disk**.
+- It is capped at the node's upload limit and recorded in the audit log.
+
+### What a door can reach
+
+> [!CAUTION]
+> Native doors run as the NetBBS service account. Resource limits do **not**
+> prevent them reading files or using the network as that account. Install
+> only trusted programs.
+
+A door's temporary launch directory is deleted afterward; persistent game
+data must live elsewhere.
+
+### Companion services
 
 A companion service keeps a game's world process alive between callers.
-NetBBS can supervise it and exposes Start, Halt, Restart, and its recent log
-on the door detail screen. Install/update the service yourself; stop it before
-copying its data. Do not raise a game's session count until its concurrent
-save handling has been tested.
+NetBBS can supervise it, and the door detail screen offers
+<kbd>S</kbd> **Start service**, <kbd>H</kbd> **Halt service**,
+<kbd>R</kbd> **Restart service** and <kbd>V</kbd> **View service log** (its
+recent log).
 
-A War Dialer door's detail screen adds **[W]orld**: the world's status and recent
-SysOp operations, a maintenance switch that closes it to new callers, and, on a
-live node with maintenance on, **[N]ext season** and **Reset [c]ompetition**. Both
-take a verified node backup first and ask for a reason and the world's filename.
-The [door guide](NetBBS-door-guide.md) has the details and the stopped-node CLI.
+- Install/update the service yourself.
+- Stop it before copying its data.
+- Do not raise a game's session count until its concurrent save handling has
+  been tested.
 
-A door may request permission to post to message boards. **Outbound** is off
-by default and configured per door: choose an allowlist and posting limit.
-Posts use a distinct door label, not the caller's identity. Normal board
-moderation applies. Allowing a linked board can distribute posts to peers;
-local deletion cannot retrieve copies already received elsewhere.
+### War Dialer's world
+
+A War Dialer door's detail screen adds <kbd>W</kbd> **World**: the world's
+status and recent SysOp operations, and a maintenance switch
+(<kbd>M</kbd>) that closes it to new callers. On a live node with maintenance
+on, it also offers <kbd>N</kbd> **Next season** and
+<kbd>C</kbd> **Competition reset**. Both take a verified node backup first and
+ask for a reason and the world's filename. The
+[door guide](NetBBS-door-guide.md) has the details and the stopped-node CLI.
+
+### Doors that post to boards
+
+A door may request permission to post to message boards.
+<kbd>O</kbd> **Outbound** is off by default and configured per door: choose an
+allowlist and posting limit.
+
+- Posts use a distinct door label, not the caller's identity.
+- Normal board moderation applies.
+
+> [!WARNING]
+> Allowing a linked board can distribute posts to peers; local deletion
+> cannot retrieve copies already received elsewhere.
 
 ## NetBBS Link
 
