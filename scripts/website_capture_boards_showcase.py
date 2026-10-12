@@ -360,6 +360,7 @@ async def shot_linked(node: Node) -> str:
     from netbbs.net.board_flow import _show_board
 
     session = Walker()
+    session.location = ("Message boards",)  # where the walk came from
     return await snapshot(session, _show_board(session, node.db, node.boards["NetBBS Users"],
                                                node.people["alice"]), "Masthead")
 
@@ -369,6 +370,7 @@ async def shot_queue(node: Node) -> str:
     from netbbs.net.board_flow import _show_board
 
     session = Walker(["q"])
+    session.location = ("Message boards",)  # where the walk came from
     return await snapshot(session, _show_board(session, node.db, node.boards["Classifieds"],
                                                node.people["keeper"]), "Hayes")
 

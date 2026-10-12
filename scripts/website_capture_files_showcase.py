@@ -179,6 +179,7 @@ async def shot_listing(node: Node) -> str:
     from netbbs.net.file_flow import _show_area
 
     session = walker(["DOWN", "DOWN", "DOWN"], width=TALL[0], height=TALL[1])
+    session.location = ("Files",)  # where the walk came from
     return await walk(session, _show_area(session, node.lane, node.areas["Utilities"], node.people["alice"]))
 
 
@@ -189,6 +190,7 @@ async def shot_transfer(node: Node) -> str:
 
     session = walker(["DOWN", "DOWN", "w", "d"], width=TALL[0], height=TALL[1])
     transfers = TransferGrants(base_url="https://harborlights.example.net")
+    session.location = ("Files",)  # where the walk came from
     return await walk(session, _show_area(session, node.lane, node.areas["ANSI Art"], node.people["alice"],
                                           transfers=transfers))
 

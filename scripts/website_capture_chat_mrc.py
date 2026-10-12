@@ -223,6 +223,7 @@ async def capture(exchanges: int) -> str:
             await asyncio.sleep(0.25)
 
         session = CaptureSession()
+        session.location = ("Chat",)  # where the walk came from
         task = asyncio.create_task(chat_flow._chat_loop(
             session, lane, hub, PresenceRegistry(), MessageMailbox(),
             InputHistory(), channel, alice, mrc_bridge=bridge))
