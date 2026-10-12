@@ -2198,6 +2198,20 @@ def test_node_menu_shows_maintenance_and_drain_options(db, lane, sysop):
     assert "rain" in text
 
 
+def test_node_menu_back_names_the_screen_that_opened_it(db, lane, sysop):
+    # Issue #1273: opened from the landing screen's [N]ode, [B]ack returns
+    # there, yet the menu always said "Return to Operations".
+    session = FakeSession(["n", "b", "b"])
+    asyncio.run(admin_menu(session, lane, sysop, node_controls=_node_controls()))
+    text = _written_text(session)
+    assert "Return to the SysOp console" in text
+    assert "Return to Operations" not in text
+
+    session = FakeSession(["o", "n", "b", "b", "b"])
+    asyncio.run(admin_menu(session, lane, sysop, node_controls=_node_controls()))
+    assert "Return to Operations" in _written_text(session)
+
+
 def test_maintenance_mode_toggle_turns_it_on(db, lane, sysop):
     node_controls = _node_controls()
     session = FakeSession(["n", "m", "b", "b", "b"])
