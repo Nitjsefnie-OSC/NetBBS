@@ -271,15 +271,17 @@ def test_finger_reflows_a_bio_the_same_way_the_directory_and_profile_screens_do(
     # `write_line` is one call per logical write, not per screen row --
     # a wrapped multi-line bio is still a single entry here, with the
     # wrap points embedded as literal "\n"s.
-    bio_entry = next(entry for entry in session.written if "word0" in entry)
-    wrapped_lines = bio_entry.splitlines()
+    first = next(index for index, entry in enumerate(session.written) if "word0" in entry)
+    wrapped_lines = [entry for entry in session.written[first:] if "word" in strip_ansi(entry)]
+    wrapped_lines = [line for entry in wrapped_lines for line in entry.splitlines()]
     assert len(wrapped_lines) > 1, "the long bio was not wrapped onto multiple lines at all"
     assert not any(
         display_width(strip_ansi(line)) > 80 for line in wrapped_lines
     ), "a wrapped bio line exceeded terminal width"
     # Every word survived, in order, just split across more lines --
     # confirms this is real wrapping, not truncation.
-    assert " ".join(wrapped_lines) == long_bio
+    words = " ".join(strip_ansi(line) for line in wrapped_lines).split()
+    assert " ".join(words[1:]) == long_bio  # after the "Bio" label
 
 
 def test_moderation_notices_stay_canonical_only(db, lane, hub, presence, alice, bob, channel):

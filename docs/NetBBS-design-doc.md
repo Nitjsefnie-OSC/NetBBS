@@ -3117,14 +3117,41 @@ A line from MRC is marked by an `[MRC]` badge in front of it, and its sender is
 `nick@site`: the nick in its MRC color, the `@` muted, the site in a color of
 its own that a linked node never uses (`MRC_SITE_COLOR`). Stored rows keep
 `user@site (MRC)`; screens drop the suffix, since a parenthesis after a name
-holds an account (§16, issue #899), and `/who`, `/names` and Find say
-`(on MRC)`.
+holds an account (§16, issue #899): `/names` and Find say `(on MRC)`, and
+`/who` says `on MRC` in the column beside the name.
 
 Chat `/help` is a width- and height-aware command table. It aligns descriptions
 in one column, colors command names, parameters, and descriptions as distinct
 fields, and paginates within the scrolling region while preserving chat's three
 pinned rows. The bare list remains permission-aware; `/help <command>` may
 explain a command outside that list without granting permission to run it.
+
+Every other command that answers with more than a line -- `/list`, `/who`,
+`/names`, `/whois`, `/finger`, `/members`, `/bots`, `/mrc` -- answers with one
+block in the scrolling area: a rule in the rule color with the title in the
+header color set into it and, at its right end, the count of what it lists.
+Rows follow one space in, their columns aligned and the last one wrapping under
+itself; prose (a comma-separated roster, a closing note) wraps at the same
+indent. The block is at most 78 columns wide. Flat lines read as a wall of text
+between conversation; a titled block is told apart from it at a glance. A
+one-line answer (a refusal, "No one is here.", a toggle's new state) stays one
+muted line.
+
+`/list` counts everyone this node can see in a channel, not only its own
+callers: `2 here · 3 on MRC` for a bridged room, from the room's roster while a
+caller here is in it and from the hub's room listing otherwise (marked with its
+age when it is not current), and `4 on Vertigo` for a linked channel while a
+caller here holds a live subscription to it, the only time that roster is kept
+current. Link presence travels from the origin to its subscribers only, so an
+origin's `/list` and `/who` do not count callers on subscribing nodes.
+
+The hub's answer to an `/mrc` question carries no request id and no end
+marker, so the first reply line after the question opens a block titled
+`MRC hub · /mrc <question>` with the time the answer began, and the following
+lines are its rows, with the hub's own colors and alignment and without a badge
+or time of their own. Anything else reaching the screen, the caller's next
+line, or ten seconds without a reply line ends the block; a later line stands
+alone with its `[MRC]` badge, as a CTCP answer always does.
 
 Chat lines carry a per-user display timestamp, **on by default** and toggled
 with `/timestamps`. The default is the answer for an account that has never
@@ -10577,7 +10604,8 @@ without teaching native chat anything about MRC. Decisions:
   Instead the last *complete* listing (rows closed by the hub's footer)
   is kept in `node_config`, bound to the hub's host and port, bounded to
   the directory's own cap, every field validated again on load, and
-  readings older than seven days dropped; after a restart the section
+  readings older than thirty days dropped -- room names change slowly, and
+  every count is shown with its age; after a restart the section
   shows those rooms at once, each with its real age, until a caller's
   entry refreshes them. A complete listing replaces rather than only
   adds: a room the hub no longer lists has emptied (an MRC room exists

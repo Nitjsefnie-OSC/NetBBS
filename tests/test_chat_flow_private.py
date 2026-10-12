@@ -18,6 +18,7 @@ import pytest
 from netbbs.auth.users import create_user
 from netbbs.chat.channels import create_channel
 from netbbs.chat.hub import ChatHub
+from netbbs.rendering.ansi import strip_ansi
 from netbbs.chat.mailbox import MessageMailbox
 from netbbs.chat.presence import PresenceRegistry
 from netbbs.chat.scrollback import get_scrollback
@@ -396,7 +397,7 @@ def test_commands_still_dispatch_normally_while_in_private_mode(
     output = _written(session)
     assert "Entering private conversation with bob" in output
     # /whois still ran as a command, not sent to bob as a private line.
-    assert "Status: online" in output
+    assert "Status online" in " ".join(strip_ansi(output).split())
     assert mailbox.flush("bob") == []
 
 

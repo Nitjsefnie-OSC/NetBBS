@@ -105,8 +105,11 @@ def test_mrc_subcommands_ask_the_hub_and_show_the_reply_to_the_asker_only(db, la
             await rig.fake.wait_for(lambda p: p.body == "NEWROOM::lobby" and p.from_user == "alice")
             session.inputs.put_nowait("/mrc rooms")
             await rig.fake.wait_for(lambda p: p.body == "LIST" and p.from_user == "alice")
+            # The next typed line ends the reply's block, so let it finish.
+            assert await eventually(lambda: "LIST reply line 2" in _text(session))
             session.inputs.put_nowait("/mrc bbses phenom")
             await rig.fake.wait_for(lambda p: p.body == "CONNECTED phenom")
+            assert await eventually(lambda: "CONNECTED reply line 2 phenom" in _text(session))
             session.inputs.put_nowait("/mrc ctcp bob version")
             await rig.fake.wait_for(lambda p: p.body == "[CTCP] alice bob VERSION")
             # Three asks spent the caller's own burst (the same allowance a
@@ -125,8 +128,13 @@ def test_mrc_subcommands_ask_the_hub_and_show_the_reply_to_the_asker_only(db, la
             session.inputs.put_nowait("/quit")
             await asyncio.wait_for(task, timeout=4)
             text = _text(session)
-            assert "[MRC] LIST reply line 1" in text and "[MRC] LIST reply line 2" in text
-            assert "[MRC] CONNECTED reply line 2 phenom" in text
+            # One titled block per answer, its lines indented under it
+            # without a badge of their own.
+            assert "MRC hub · /mrc rooms" in text and "MRC hub · /mrc bbses phenom" in text
+            lines = text.splitlines()
+            assert " LIST reply line 1" in lines and " LIST reply line 2" in lines
+            assert " CONNECTED reply line 2 phenom" in lines
+            assert "[MRC] LIST reply line" not in text
             assert text.count("Usage: /mrc") == 3
             assert "Unknown /mrc subcommand: bogus" in text
             # Carol, in the same channel, saw none of the replies.

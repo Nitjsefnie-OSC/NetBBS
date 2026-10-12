@@ -632,7 +632,7 @@ def set_open_room_topic(db: Database, channel: Channel, topic: str | None) -> bo
 # reading from another hub must never describe this one.
 
 DIRECTORY_SNAPSHOT_KEY = "mrc_directory_snapshot"
-DIRECTORY_SNAPSHOT_MAX_AGE_DAYS = 7
+DIRECTORY_SNAPSHOT_MAX_AGE_DAYS = 30
 MAX_DIRECTORY_SNAPSHOT_ROOMS = 200
 
 

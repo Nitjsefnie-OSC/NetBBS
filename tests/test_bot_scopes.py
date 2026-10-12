@@ -91,7 +91,9 @@ def test_real_chat_heading_who_actions_join_leave_and_no_replay(db, lane, hub, p
             for line in ("/who", "ordinary text", "/me waves"):
                 session.input.put_nowait(line)
             await eventually(lambda: len((read_state(db, "Baud") or {}).get("events", [])) == 3)
-            assert "".join(session.written).count("Baud.bot reads this channel") >= 2
+            written = "".join(session.written)
+            assert written.count("Baud.bot reads this channel") >= 1  # the heading
+            assert "reads this channel" in written.split("Who's in #lobby", 1)[1]  # its /who row
             session.input.put_nowait("/quit")
             await asyncio.wait_for(task, 6)
             await eventually(lambda: len(read_state(db, "Baud")["events"]) == 4)

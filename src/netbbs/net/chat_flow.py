@@ -190,6 +190,7 @@ from netbbs.messaging_preferences import invitation_refusal, live_message_refusa
 from netbbs.moderation import ChannelPermission, has_permission
 from netbbs.net.char_input import Completer, InputHistory, LineViewport, LiveInputBuffer, reject_unhandled_key
 from netbbs.net.char_input import move_cursor as relative_move_cursor
+from netbbs.net.chat_reply import Cell, block_width, paragraph, table_rows, title_rule
 from netbbs.net.chat_channel_picker_banner import load_chat_channel_picker_banner, load_chat_channel_picker_slot_art
 from netbbs.net.art_pacing import art_speed, art_time_limit
 from netbbs.net.list_art import CHAT_CHANNEL_PICKER, list_slot_fields
@@ -216,6 +217,7 @@ from netbbs.rendering import (
     HEADER_COLOR,
     LABEL_COLOR,
     MENU_KEY_COLOR,
+    METADATA_COLOR,
     MUTED_COLOR,
     RULE_COLOR,
     MRC_SITE_COLOR,
@@ -1947,6 +1949,52 @@ class ChatCommandContext:
     # Issue #304/#305: what this session has already been told about MRC
     # (the welcome, the "not private" note) -- owned by `browse_channels`.
     mrc_session_state: dict | None = None
+    # The hub's answer to this caller's last `/mrc` question, grouped
+    # under one title as it arrives (`_HubReplyBlock`).
+    hub_reply: "_HubReplyBlock | None" = None
+
+
+#: How long after the question, or after its previous line, the hub's
+#: answer still belongs to it. A reply streams in a burst; anything later
+#: is shown with its own `[MRC]` badge again.
+HUB_REPLY_WINDOW_SECONDS = 10.0
+
+
+class _HubReplyBlock:
+    """Which `/mrc` question the hub is answering on this screen. The
+    hub's lines carry no request id and no end marker, so the first
+    `reply` line after a question opens a titled block and the rest are
+    its rows -- until the window lapses or anything else reaches the
+    screen, after which a late line stands alone with its badge."""
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self._label = ""
+        self._last = 0.0
+        self._opened = False
+
+    def expect(self, label: str) -> None:
+        self._label, self._last, self._opened = label, self._clock(), False
+
+    def close(self) -> None:
+        self._label = ""
+
+    def take(self) -> str | None:
+        """`"title"` for the answer's first line, `"row"` for the rest,
+        `None` when no question is waiting for one."""
+        now = self._clock()
+        if not self._label or now - self._last > HUB_REPLY_WINDOW_SECONDS:
+            self._label = ""
+            return None
+        self._last = now
+        if self._opened:
+            return "row"
+        self._opened = True
+        return "title"
+
+    @property
+    def label(self) -> str:
+        return self._label
 
 
 @dataclass(frozen=True)
@@ -2125,14 +2173,19 @@ async def _handle_bots(ctx: ChatCommandContext, args: str) -> None:
             await ctx.session.write_line(str(exc))
             return
     current = await ctx.lane.run(channel_bot_policy, ctx.channel)
-    await ctx.session.write_line(f"Bots in #{sanitize_text(ctx.channel.name)} on this node: {BOT_POLICIES[current]}.")
-    await ctx.session.write_line(
-        "Use /names to find bots. Address Baud.bot: help locally, or Baud.bot@Node: help across Link. "
-        "!help uses only this node's default bot. Replies are public in this channel."
-    )
+    rows: list[tuple[Cell, Cell]] = [
+        (("Allowed", LABEL_COLOR), (f"{BOT_POLICIES[current]} on this node", VALUE_COLOR)),
+        (("Find", LABEL_COLOR), ("/names lists the bots here", VALUE_COLOR)),
+        (("Ask", LABEL_COLOR), ("Baud.bot: help locally, or Baud.bot@Node: help across Link", VALUE_COLOR)),
+        (("!help", LABEL_COLOR), ("asks only this node's default bot", VALUE_COLOR)),
+        (("Replies", LABEL_COLOR), ("public in this channel", VALUE_COLOR)),
+    ]
     if await ctx.lane.run(_requires_moderate, ctx.channel, ctx.user):
-        await ctx.session.write_line("Set with /bots all, /bots local or /bots none. This does not start or authorize a bot.")
-        await ctx.session.write_line("Mute one with /mute Baud.bot or /mute Baud.bot@node-fingerprint; /unmute reverses it.")
+        rows.append((("Set", LABEL_COLOR),
+                     ("/bots all, /bots local or /bots none. This does not start or authorize a bot.", VALUE_COLOR)))
+        rows.append((("Mute", LABEL_COLOR),
+                     ("/mute Baud.bot or /mute Baud.bot@node-fingerprint; /unmute reverses it.", VALUE_COLOR)))
+    await _write_block(ctx, await _reply_theme(ctx), f"Bots in #{sanitize_text(ctx.channel.name)}", rows=rows)
 
 
 async def _handle_topic(ctx: ChatCommandContext, args: str) -> None:
@@ -3138,32 +3191,24 @@ async def _handle_kick(ctx: ChatCommandContext, args: str) -> None:
     await _kick_live_sessions(ctx.hub, ctx.channel, target, reason="kicked")
 
 
-async def _write_vcard_detail(session: Session, lane: DatabaseLane, vcard: VCard) -> None:
+async def _vcard_rows(ctx: ChatCommandContext, vcard: VCard) -> list[tuple[Cell, Cell]]:
     """Shared by `/finger` and `/whois` (design doc) — the
-    identity/bio block both commands show identically; `/whois`
-    appends online/away/channel-membership lines of its own after
-    calling this. `lane`, not `db` -- the one DB read
-    (`resolve_display_preferences`) happens via `lane.run` before any
-    `await session.write_line(...)` call, same split as
-    `_resolve_target`."""
-    display_format, display_timezone = await lane.run(resolve_display_preferences)
-    accent = await lane.run(effective_accent_color_256)
+    identity/bio rows both commands show identically; `/whois` adds
+    online/away/channel rows of its own. `lane`, not `db` -- the one DB
+    read (`resolve_display_preferences`) happens via `lane.run`."""
+    display_format, display_timezone = await ctx.lane.run(resolve_display_preferences)
     when = format_for_display(vcard.created_at, override_format=display_format, override_timezone=display_timezone)
-    await session.write_line(colored(f"\r\n{sanitize_text(vcard.username)}", fg_color=accent, bold=True))
-    await session.write_line(f"Member since: {when}")
-    if vcard.bio is not None:
-        # Dogfood follow-up: this used to write the sanitized bio
-        # straight to the terminal with no `reflow()` call, unlike the
-        # Directory/Profile screens' identical field
-        # (`directory_flow._show_vcard`/`_render_profile`) -- the same bio
-        # rendered inconsistently depending on whether it was looked up
-        # here or there (a deliberate line break collapsed into one
-        # paragraph in one place; a long unbroken line never wrapped to
-        # terminal width in the other).
-        bio = reflow(sanitize_text(vcard.bio, allow_newlines=True), width=session.terminal_width)
-        await session.write_line(bio)
-    else:
-        await session.write_line(colored("(no public bio)", fg_color=MUTED_COLOR))
+    rows: list[tuple[Cell, Cell]] = [(("Member since", LABEL_COLOR), (when, VALUE_COLOR))]
+    if vcard.bio is None:
+        rows.append((("Bio", LABEL_COLOR), ("(no public bio)", MUTED_COLOR)))
+        return rows
+    # Dogfood follow-up: the bio keeps its own paragraph breaks, as the
+    # Directory/Profile screens show it (`directory_flow._show_vcard`);
+    # each paragraph wraps under the value column.
+    paragraphs = [part for part in sanitize_text(vcard.bio, allow_newlines=True).split("\n") if part.strip()]
+    for index, part in enumerate(paragraphs or ["(no public bio)"]):
+        rows.append((("Bio" if index == 0 else "", LABEL_COLOR), (part, VALUE_COLOR)))
+    return rows
 
 
 async def _handle_finger(ctx: ChatCommandContext, args: str) -> None:
@@ -3183,7 +3228,8 @@ async def _handle_finger(ctx: ChatCommandContext, args: str) -> None:
         return
 
     vcard = await ctx.lane.run(get_vcard, target, requesting_user=ctx.user)
-    await _write_vcard_detail(ctx.session, ctx.lane, vcard)
+    rows = await _vcard_rows(ctx, vcard)
+    await _write_block(ctx, await _reply_theme(ctx), sanitize_text(vcard.username), rows=rows)
 
 
 async def _handle_me(ctx: ChatCommandContext, args: str) -> ChatAction | None:
@@ -3574,6 +3620,27 @@ def _render_mrc_notice(db: Database, viewer: User, notice: MrcNotice) -> str:
     return format_with_preference(db, viewer, line, notice.created_at)
 
 
+def _render_hub_reply_title(db: Database, viewer: User, label: str, created_at: str, width: int) -> str:
+    """`── MRC hub · /mrc rooms ──── 21:24 ──`: the time the answer began,
+    if `viewer` keeps chat timestamps, in place of each line's own."""
+    stamp = None
+    if timestamps_enabled(db, viewer):
+        try:
+            stamp = format_for_display(created_at, db, override_format="%H:%M")
+        except ValueError:
+            stamp = None
+    unicode_style = unicode_style_enabled(db, viewer)
+    title = f"MRC hub{' · ' if unicode_style else ': '}{label}"
+    return title_rule(title, width=block_width(width), unicode_style=unicode_style,
+                      title_color=effective_header_color_256(db), right=stamp)
+
+
+def _render_hub_reply_row(db: Database, viewer: User, notice: MrcNotice) -> str:
+    """One line of the hub's answer inside its block: indented like
+    every block row, the hub's own colors kept, no badge or time."""
+    return " " + _mrc_body(db, viewer, notice.text)
+
+
 # `/mrc <subcommand>` (issue #298): what each one asks the hub, as the
 # caller's own nick. The reply comes back as plain text addressed to
 # that nick and is shown to them alone.
@@ -3755,33 +3822,43 @@ async def _handle_mrc(ctx: ChatCommandContext, args: str) -> None:
             return
         if failure is not None:
             await ctx.session.write_line(colored(f"(not sent to MRC: {sanitize_text(failure)})", fg_color=MUTED_COLOR))
+        elif ctx.hub_reply is not None and subcommand != "ctcp":
+            # A CTCP answer comes from another user's client, whenever it
+            # comes; it keeps its own badge.
+            ctx.hub_reply.expect(f"/mrc {sanitize_text(args.strip())}")
         return
     status = ctx.mrc_bridge.status()
     transport = "TLS" if status.tls else "plain"
-    await ctx.session.write_line(
-        f"MRC room #{sanitize_text(mapping.room)} via {sanitize_text(status.host)}:{status.port} ({transport}) "
-        f"as {sanitize_text(status.site_name)}"
-    )
     if mapping.paused:
-        await ctx.session.write_line(colored("Bridge paused by the SysOp -- nothing is relayed either way.", fg_color=MUTED_COLOR))
+        link: Cell = ("paused by the SysOp -- nothing is relayed either way", MUTED_COLOR)
     elif not status.enabled:
-        await ctx.session.write_line(colored("MRC is switched off node-wide.", fg_color=MUTED_COLOR))
+        link = ("MRC is switched off node-wide", MUTED_COLOR)
     elif status.connected:
-        await ctx.session.write_line(f"Link: {status_badge('CONNECTED', tone='success')}")
+        link = ("CONNECTED", SUCCESS_COLOR)
     else:
         detail = f" -- {sanitize_text(status.last_error)}" if status.last_error else ""
-        await ctx.session.write_line(f"Link: {status_badge(status.state.value.upper(), tone='neutral')}{detail}")
+        link = (f"{status.state.value.upper()}{detail}", ALERT_COLOR)
     optin = ctx.mrc_bridge.private_messages_enabled(ctx.user.username)
     optin_text = "on" if optin else ("off" if optin is False else "not read yet")
-    await ctx.session.write_line(
-        colored(f"Private MRC messages: {optin_text} (Profile > Communication)", fg_color=MUTED_COLOR)
-    )
-    await ctx.session.write_line("MRC roster counts are last reported by the hub; remote away counts are unavailable.")
     roster = _mrc_roster_entries(ctx)
     if roster:
-        await ctx.session.write_line(f"{len(roster)} MRC user{'s' if len(roster) != 1 else ''} here: " + ", ".join(roster))
+        users: Cell = (f"{len(roster)} on MRC: " + ", ".join(roster), VALUE_COLOR)
     elif status.connected and not mapping.paused:
-        await ctx.session.write_line(colored("No other MRC users reported in this room yet.", fg_color=MUTED_COLOR))
+        users = ("no other MRC users reported in this room yet", MUTED_COLOR)
+    else:
+        users = ("unknown while the link is down", MUTED_COLOR)
+    rows: list[tuple[Cell, Cell]] = [
+        (("Room", LABEL_COLOR), (f"#{sanitize_text(mapping.room)}", VALUE_COLOR)),
+        (("Link", LABEL_COLOR), link),
+        (("Hub", LABEL_COLOR), (f"{sanitize_text(status.host)}:{status.port} ({transport})", VALUE_COLOR)),
+        (("Site", LABEL_COLOR), (sanitize_text(status.site_name), VALUE_COLOR)),
+        (("Private", LABEL_COLOR), (f"{optin_text} (Profile > Communication)", VALUE_COLOR)),
+        (("Users", LABEL_COLOR), users),
+    ]
+    await _write_block(
+        ctx, await _reply_theme(ctx), "MRC bridge", rows=rows,
+        prose=[("Counts are as the hub last reported them; MRC has no remote away status.", MUTED_COLOR)],
+    )
 
 
 async def _handle_follow(ctx: ChatCommandContext, args: str) -> None:
@@ -3878,9 +3955,60 @@ async def _moderate_bot(ctx, name, *, mute, duration=None, reason=None) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class _ReplyTheme:
+    """How this caller's reply blocks are drawn: rule glyphs, the node's
+    header color for titles and accent color for names."""
+
+    unicode_style: bool
+    header: int
+    accent: int
+
+    @property
+    def dot(self) -> str:
+        return " \u00b7 " if self.unicode_style else ", "
+
+
+async def _reply_theme(ctx: ChatCommandContext) -> _ReplyTheme:
+    def _read(db: Database) -> _ReplyTheme:
+        return _ReplyTheme(unicode_style_enabled(db, ctx.user), effective_header_color_256(db),
+                           effective_accent_color_256(db))
+
+    return await ctx.lane.run(_read)
+
+
+async def _write_block(
+    ctx: ChatCommandContext, theme: _ReplyTheme, title: str, *,
+    rows: Sequence[Sequence[Cell]] = (), prose: Sequence[tuple[str, int | None]] = (),
+    count: int | None = None,
+) -> None:
+    """One command reply as a titled block (`netbbs.net.chat_reply`):
+    the title rule, aligned `rows`, then `prose` paragraphs. Every text
+    is sanitized plain text; styling happens in the renderer."""
+    width = block_width(ctx.session.terminal_width)
+    await ctx.session.write_line(title_rule(
+        title, width=width, unicode_style=theme.unicode_style, title_color=theme.header, count=count,
+    ))
+    for line in table_rows(rows, width=width):
+        await ctx.session.write_line(line)
+    for text, color in prose:
+        for line in paragraph(text, width=width, color=color):
+            await ctx.session.write_line(line)
+
+
+def _linked_node_label(ctx: ChatCommandContext, fingerprint: str) -> str:
+    """A linked origin's name for a roster or count, falling back to its
+    fingerprint: an authenticated session with no persisted peer record
+    still has a technical identity, as the directory and direct-message
+    paths show it, so two such nodes stay distinguishable."""
+    peer = ctx.link_context.link_node.peers.get(fingerprint) if ctx.link_context is not None else None
+    return identity_for_peer(peer).label if peer is not None else fingerprint
+
+
+
 async def _handle_names(ctx: ChatCommandContext, args: str) -> None:
-    """`/names` (design doc): a compact, one-line roster
-    of `ctx.channel`."""
+    """`/names` (design doc): the compact roster of `ctx.channel` -- one
+    comma-separated paragraph under the block's title."""
     usernames = _roster_usernames(ctx.hub, ctx.channel)
     remote_entries = await _remote_roster_entries(ctx)
     mrc_entries = _mrc_roster_entries(ctx)
@@ -3902,23 +4030,25 @@ async def _handle_names(ctx: ChatCommandContext, args: str) -> None:
     labels.extend(label for label, _fingerprint in remote_entries)
     # "(on MRC)", as /who says it: "bob (MRC)" would read as an alias
     # for a local account named MRC (issue #899).
-    labels.extend(f"{name} (on MRC)" for name in _mrc_roster_entries(ctx))
-    await ctx.session.write_line(", ".join(labels))
+    labels.extend(f"{name} (on MRC)" for name in mrc_entries)
+    theme = await _reply_theme(ctx)
+    await _write_block(ctx, theme, f"In #{sanitize_text(ctx.channel.name)}",
+                       prose=[(", ".join(labels), None)], count=len(labels))
 
 
 async def _handle_who(ctx: ChatCommandContext, args: str) -> None:
     """`/who` (design doc): the more detailed presence
-    view of `ctx.channel` — one line per person, with an away
-    indicator where applicable, plus (issue #195) one line per remote
-    participant known through a live Link subscription, annotated with
-    which linked node they're on."""
+    view of `ctx.channel` -- one row per person, with where they are or
+    their away message beside them: local callers, this node's bots
+    (and what each receives here), remote participants known through a
+    live Link subscription (issue #195) with the linked node they're on,
+    and the MRC room's users."""
     usernames = _roster_usernames(ctx.hub, ctx.channel)
     remote_entries = await _remote_roster_entries(ctx)
+    mrc_entries = _mrc_roster_entries(ctx)
     bot_labels = await ctx.lane.run(_local_bot_labels, ctx.hub, ctx.channel)
     readers = await ctx.lane.run(_bot_readers, ctx.hub, ctx.channel)
-    for label in readers:
-        await ctx.session.write_line(_bot_notice_line(BotNotice(f"{label} reads this channel.")))
-    if not usernames and not remote_entries and not _mrc_roster_entries(ctx) and not bot_labels and not readers:
+    if not usernames and not remote_entries and not mrc_entries and not bot_labels and not readers:
         await ctx.session.write_line(colored("No one is here.", fg_color=MUTED_COLOR))
         return
 
@@ -3932,33 +4062,60 @@ async def _handle_who(ctx: ChatCommandContext, args: str) -> None:
 
     labels_by_username = await ctx.lane.run(_labels)
     presence = await ctx.lane.run(_bot_presence_readers, ctx.channel)
-    for label in bot_labels:
-        if label not in readers:
-            # Say what this bot actually receives here, not what it might.
-            sees = "addressed messages; joins and leaves" if label in presence else "addressed messages only"
-            await ctx.session.write_line(f"[BOT] {label} ({sees})")
+    theme = await _reply_theme(ctx)
+    rows: list[tuple[Cell, Cell]] = []
     for username in usernames:
         label = labels_by_username.get(username)
         if label is None:
             continue
         if ctx.presence.is_away(username):
             message = ctx.presence.get_away_message(username)
-            suffix = f" (away: {sanitize_text(message)})" if message else " (away)"
+            where = f"here{theme.dot}away: {sanitize_text(message)}" if message else f"here{theme.dot}away"
         else:
-            suffix = ""
-        await ctx.session.write_line(f"{label}{suffix}")
+            where = "here"
+        rows.append(((label, theme.accent), (where, MUTED_COLOR)))
+    for label in readers:
+        rows.append(((f"[BOT] {label}", None), ("reads this channel", MUTED_COLOR)))
+    for label in bot_labels:
+        if label not in readers:
+            # Say what this bot actually receives here, not what it might.
+            sees = "addressed messages; joins and leaves" if label in presence else "addressed messages only"
+            rows.append(((f"[BOT] {label}", None), (sees, MUTED_COLOR)))
     for label, fingerprint in remote_entries:
-        peer = ctx.link_context.link_node.peers.get(fingerprint) if ctx.link_context is not None else None
-        # An authenticated session with no persisted peer record still
-        # has a technical identity -- show it, as the directory and
-        # direct-message paths do, so two such nodes stay distinguishable.
-        node_name = identity_for_peer(peer).label if peer is not None else fingerprint
-        node_note = (
-            f" (on linked node {sanitize_text(node_name)})" if node_name else " (on a linked node)"
-        )
-        await ctx.session.write_line(f"{label}{node_note}")
-    for name in _mrc_roster_entries(ctx):
-        await ctx.session.write_line(f"{name} (on MRC)")
+        node_name = _linked_node_label(ctx, fingerprint) if ctx.link_context is not None else fingerprint
+        where = f"on linked node {sanitize_text(node_name)}" if node_name else "on a linked node"
+        rows.append(((label, None), (where, MUTED_COLOR)))
+    for name in mrc_entries:
+        rows.append(((name, None), ("on MRC", MUTED_COLOR)))
+    await _write_block(ctx, theme, f"Who's in #{sanitize_text(ctx.channel.name)}", rows=rows, count=len(rows))
+
+
+def _list_presence(ctx: ChatCommandContext, channel: Channel, dot: str) -> str:
+    """`/list`'s count for one channel: callers here, then everyone else
+    this node can see in it -- the MRC room's users when it is bridged,
+    and a linked origin's callers while a local caller holds a live
+    subscription to it (only then is that roster kept current)."""
+    bits = [f"{ctx.hub.participant_count(channel.name)} here"]
+    bridge = ctx.mrc_bridge
+    if bridge is not None and bridge.is_bridged(channel):
+        # The room's own USERLIST roster exists only while a caller of
+        # this node is in it; otherwise the hub's room listing (refreshed
+        # while anyone here is on MRC) is the next best reading.
+        there, fresh = bridge.room_presence(channel)
+        note = "" if fresh else " (stale)"
+        mapping = bridge.mapping_for(channel)
+        details = bridge.directory_details(mapping.room) if there is None and mapping is not None else None
+        if details is not None:
+            there, _topic, fresh, age = details
+            note = "" if fresh else " " + _reading_age(age)
+        bits.append(f"{there} on MRC{note}" if there is not None else "? on MRC")
+    live = ctx.realtime_bridge
+    if live is not None and live.has_local_interest(channel.channel_id):
+        remote = len(live.remote_channel_presence(channel.channel_id))
+        if remote:
+            node = _linked_node_label(ctx, live.remote_channel_origin_fingerprint(channel.channel_id) or "")
+            bits.append(f"{remote} on {sanitize_text(node)}" if node else f"{remote} on a linked node")
+    return dot.join(bits)
 
 
 async def _handle_list(ctx: ChatCommandContext, args: str) -> None:
@@ -3968,18 +4125,21 @@ async def _handle_list(ctx: ChatCommandContext, args: str) -> None:
     `list_boards`/`_pick_channel`'s existing sort
     precedent — a quick text reference from inside chat, not the
     interactive category-nested picker the main menu's Chat option
-    already provides."""
+    already provides. The count says who is in each channel from
+    everywhere this node can see, not only its own callers."""
     visible = await ctx.lane.run(_visible_channels_for, ctx.user)
     if not visible:
         await ctx.session.write_line(colored("No channels are available to you.", fg_color=MUTED_COLOR))
         return
     visible.sort(key=lambda c: (not c.pinned, c.name.lower()))
-    for channel in visible:
-        online = ctx.hub.participant_count(channel.name)
-        description = f" - {sanitize_text(channel.description)}" if channel.description else ""
-        await ctx.session.write_line(
-            f"#{sanitize_text(channel.name)} ({online} online){description}"
-        )
+    theme = await _reply_theme(ctx)
+    rows = [
+        ((f"#{sanitize_text(channel.name)}", theme.accent),
+         (_list_presence(ctx, channel, theme.dot), METADATA_COLOR),
+         (sanitize_text(channel.description) if channel.description else "", MUTED_COLOR))
+        for channel in visible
+    ]
+    await _write_block(ctx, theme, "Channels", rows=rows, count=len(rows))
 
 
 def _channel_names_for_user(
@@ -4029,18 +4189,19 @@ async def _handle_whois(ctx: ChatCommandContext, args: str) -> None:
         return
 
     vcard = await ctx.lane.run(get_vcard, target, requesting_user=ctx.user)
-    await _write_vcard_detail(ctx.session, ctx.lane, vcard)
-
+    rows = await _vcard_rows(ctx, vcard)
     online = ctx.presence.is_online(target.username)
-    await ctx.session.write_line(f"Status: {'online' if online else 'offline'}")
+    status = [(("Status", LABEL_COLOR), ("online" if online else "offline", SUCCESS_COLOR if online else MUTED_COLOR))]
     if ctx.presence.is_away(target.username):
         message = ctx.presence.get_away_message(target.username)
-        await ctx.session.write_line(f"Away: {sanitize_text(message)}" if message else "Away")
-
+        status.append((("Away", LABEL_COLOR), (sanitize_text(message) if message else "yes", VALUE_COLOR)))
     channel_names = await ctx.lane.run(_channel_names_for_user, ctx.hub, ctx.user, target.username)
     if channel_names:
         joined = ", ".join(f"#{sanitize_text(name)}" for name in channel_names)
-        await ctx.session.write_line(f"Channels: {joined}")
+        status.append((("Channels", LABEL_COLOR), (joined, VALUE_COLOR)))
+    # Presence first, then the profile: "is bob here" is what /whois is
+    # usually asked for.
+    await _write_block(ctx, await _reply_theme(ctx), sanitize_text(vcard.username), rows=status + rows)
 
 
 # -- invite-only channels & membership admin (design doc §8) -------------------------------------
@@ -4211,7 +4372,8 @@ async def _handle_members(ctx: ChatCommandContext, args: str) -> None:
         await ctx.session.write_line(colored("No members have been granted access yet.", fg_color=MUTED_COLOR))
         return
     names = ", ".join(sanitize_text(member.username) for member in members)
-    await ctx.session.write_line(f"Members: {names}")
+    await _write_block(ctx, await _reply_theme(ctx), f"Members of #{sanitize_text(ctx.channel.name)}",
+                       prose=[(names, None)], count=len(members))
 
 
 # Design doc: the single source of truth for every command's
@@ -5533,6 +5695,7 @@ async def _chat_loop(
                     )
 
         session.pinned_notice_hook = deliver
+        hub_reply = _HubReplyBlock(asyncio.get_running_loop().time)
 
         async def receive_loop() -> None:
             while True:
@@ -5577,6 +5740,18 @@ async def _chat_loop(
                     rendered = await lane.run(format_with_preference, user, message.text, message.created_at)
                     await deliver(rendered, repaint_status=True)
                     continue
+                if not (isinstance(message, MrcNotice) and message.kind == "reply"):
+                    hub_reply.close()
+                if isinstance(message, MrcNotice) and message.kind == "reply":
+                    step = hub_reply.take()
+                    if step is not None:
+                        if step == "title":
+                            await deliver(await lane.run(
+                                _render_hub_reply_title, user, hub_reply.label, message.created_at,
+                                session.terminal_width,
+                            ))
+                        await deliver(await lane.run(_render_hub_reply_row, user, message))
+                        continue
                 if isinstance(message, MrcNotice):
                     # Issue #298: hub chatter, broadcasts and command replies
                     # arrive with their color codes intact and are styled
@@ -5642,6 +5817,7 @@ async def _chat_loop(
                     link_context=link_context,
                     mrc_bridge=mrc_bridge,
                     mrc_session_state=mrc_session_state,
+                    hub_reply=hub_reply,
                 )
 
             async def write_help_page(
@@ -5679,6 +5855,7 @@ async def _chat_loop(
                     viewport=_input_viewport(session),
                 )
                 line = raw_line.strip()
+                hub_reply.close()
 
                 # Help is modal because it reads page-turn keys. Prepare its
                 # result through ordinary command dispatch, then render each
@@ -5849,6 +6026,7 @@ async def _chat_loop(
                                 link_context=link_context,
                                 mrc_bridge=mrc_bridge,
                                 mrc_session_state=mrc_session_state,
+                                hub_reply=hub_reply,
                             )
                             if isinstance(private_target, RemotePrivateTarget):
                                 # Issue #270: each line is one live direct
