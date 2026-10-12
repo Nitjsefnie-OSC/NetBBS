@@ -14160,7 +14160,7 @@ async def _node_menu(session: Session, lane: DatabaseLane, actor: User, node_con
             await _draw_node_menu(session, node_controls, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == HELP_KEY:
             await show_menu_help(
-                session, "Node management help", _NODE_MENU,
+                session, "Node management help", _node_menu_entries(session),
                 about="The running node: who is connected, and taking it down for maintenance or a "
                       "shutdown. Maintenance mode stays on until you turn it off.",
                 header_color=header_color, unicode_style=unicode_style,
@@ -14222,12 +14222,13 @@ async def _draw_node_menu(
         state.append(Field("Shutdown scheduled", line, color=ALERT_COLOR, bold=True))
     panel_rows = await _write_sections(session, [Section("Right now", state)], unicode_style=unicode_style)
     await session.write_line(
-        "\r\n" + _fitted_menu(list(_NODE_MENU), description_level, session=session, used_rows=panel_rows + 3)
+        "\r\n" + _fitted_menu(list(_node_menu_entries(session)), description_level, session=session,
+                              used_rows=panel_rows + 3)
     )
     await _choice_prompt(session)
 
 
-_NODE_MENU = (
+_NODE_MENU_ACTIONS = (
     MenuEntry(label=menu_key("W", "ho"), brief="See who's currently connected"),
     MenuEntry(label=menu_key("O", "bserve live"), brief="Watch callers live, act on one"),
     MenuEntry(label=menu_key("M", "aintenance mode"), brief="Toggle: block non-SysOp logins"),
@@ -14236,8 +14237,22 @@ _NODE_MENU = (
     MenuEntry(label=menu_key("S", "hutdown"), brief="Schedule a node shutdown"),
     MenuEntry(label=menu_key("I", "nter-BBS chat (MRC)"), brief="Link state, hub, errors"),
     MenuEntry(label=menu_key("E", "chomail & netmail (FTN)"), brief="Calls, AreaFix, held packets"),
-    MenuEntry(label=menu_key("B", "ack"), brief="Return to Operations"),
 )
+
+#: How a [B]ack brief names a screen whose trail name is terser than the
+#: name the console's other briefs use for it.
+_BACK_DESTINATIONS = {"SysOp": "the SysOp console"}
+
+
+def _node_menu_entries(session: Session) -> tuple[MenuEntry, ...]:
+    """The Node menu is opened from the landing screen's `[N]ode` and from
+    Operations' `[N]ode and sessions`, so `[B]ack` names whichever screen
+    opened it -- the one before it in the session's trail -- rather than
+    always "Operations" (issue #1273)."""
+    trail = crumbs(session, own=True)
+    parent = trail[-1] if len(trail) > 1 else ""
+    destination = _BACK_DESTINATIONS.get(parent, parent) or "the previous screen"
+    return (*_NODE_MENU_ACTIONS, MenuEntry(label=menu_key("B", "ack"), brief=f"Return to {destination}"))
 
 
 def _session_name(entry: SessionSummary) -> str:
