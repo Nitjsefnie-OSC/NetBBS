@@ -387,8 +387,8 @@ browser caller at its global `Timeout`. `LimitRequestBody` is in bytes,
 
 > [!WARNING]
 > On NetBSD, one host refused every backend connection with
-> `AH00957 (22)Invalid argument` when it was set to 3600, while 600 and 1800
-> work; stay at 1800 or below there.
+> `AH00957 (22)Invalid argument` when `timeout=` was set to 3600, while 600
+> and 1800 work; keep `timeout=` at 1800 or below there.
 
 </details>
 
