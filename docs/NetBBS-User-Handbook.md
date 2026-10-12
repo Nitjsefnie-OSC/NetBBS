@@ -83,7 +83,7 @@ carried NetBBS Link content; it is not a search of the entire network.
 
 | At a glance | |
 | --- | --- |
-| **Where** | <kbd>M</kbd> **Message boards** on the main menu |
+| **Where** | <kbd>M</kbd> **Message boards**, or <kbd>E</kbd> **E-mail** for letters, on the main menu |
 | **Try first** | Open a board, select a post, and reply to it |
 | **While writing** | The editor shows its commands; in the fullscreen editor <kbd>Ctrl+G</kbd> shows help |
 
