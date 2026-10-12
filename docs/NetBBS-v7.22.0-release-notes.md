@@ -141,7 +141,13 @@ presence.
   - an older subscriber getting nothing relayed and reporting nothing;
   - a subscriber trying to report another BBS's caller (refused);
   - a caller of a quarantined BBS not being listed.
-- **Full Windows suite:** SUITE_RESULT.
+- **Full Windows suite:** 11,904 passed and 136 skipped, and the timing-sensitive
+  test passed. One test failed:
+  .
+  It waits a fixed 6 seconds for a bot announcement that crosses a subprocess
+  and Link, and under the parallel run it timed out, as it did in two earlier
+  full runs that day. Alone it passes in about a second. Issue #1287 gives it a
+  realistic bound.
 - **Not yet checked live:** linked-channel presence has not run between real
   BBSes, and the paged MRC answers have not been tried against the live hub's
   longest replies. NetBSD and real terminals remain manual evidence.
