@@ -3157,7 +3157,11 @@ marker, so the reply lines that follow the question (its first within ten
 seconds) are collected until the hub has been quiet for a second, then drawn as
 one block titled `MRC hub · /mrc <question>` with the time the answer began.
 Its rows keep the hub's own colors and alignment and carry no badge or time of
-their own. Other traffic is shown as it arrives meanwhile; a second question
+their own -- except the answer to `/mrc info`, whose `Label: value` rows are
+drawn like our own blocks' rows: the label in the label color, the value in the
+value color, a slash-separated value (the platform, the version) one color per
+part with the slashes muted. Only rows of that shape are redrawn; the hub's
+frame lines, and any layout the hub changes to, keep the hub's own look. Other traffic is shown as it arrives meanwhile; a second question
 asked before the first answer went quiet gets its own block. An answer taller
 than the chat area is paged (the hub may push 300 lines at once, and `/mrc
 bbses` names every board on the network): each page ends `page 1 of 4 · PgDn

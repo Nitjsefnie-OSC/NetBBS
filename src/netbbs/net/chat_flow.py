@@ -3748,10 +3748,49 @@ def _render_hub_reply_footer(
     return footer_rule(text, width=block_width(width), unicode_style=unicode_style)
 
 
-def _render_hub_reply_row(db: Database, viewer: User, notice: MrcNotice) -> str:
+def _render_hub_reply_row(db: Database, viewer: User, notice: MrcNotice, question: str = "") -> str:
     """One line of the hub's answer inside its block: indented like
-    every block row, the hub's own colors kept, no badge or time."""
+    every block row, the hub's own colors kept, no badge or time -- except
+    a `Label: value` row of the answer to `/mrc info`, drawn like our own
+    blocks' rows (`_info_row`)."""
+    if question.lower().startswith("/mrc info"):
+        row = _info_row(strip_pipe_codes(sanitize_text(notice.text)))
+        if row is not None:
+            return " " + row
     return " " + _mrc_body(db, viewer, notice.text)
+
+
+#: A row of the hub's `/mrc info` answer: its frame (`*.:`), a label of a
+#: few words, a colon, and the value -- `*.:  BBS name: Reliable Link`.
+_INFO_ROW = re.compile(r"^(?P<lead>[^A-Za-z]*?)(?P<label>[A-Za-z][A-Za-z ]{0,15}):(?P<gap>\s+)(?P<value>\S.*)$")
+#: `NETBBS / NetBSD.x86_64 / 7.22.0` or `NETBBS/NetBSD.x86_64/7.22.0`: a
+#: value made of slash-separated parts, which a URL never is here.
+_INFO_PARTS = re.compile(r"^[^\s/]+(?:\s*/\s*[^\s/]+)+$")
+_INFO_PART_COLORS = (HEADER_COLOR, MRC_SITE_COLOR, ACCENT_COLOR)
+
+
+def _info_row(text: str) -> str | None:
+    """`text` (one plain row of the hub's `/mrc info` answer) drawn like a
+    row of our own blocks: the frame muted, the label in the label colour,
+    the value in the value colour, and a slash-separated value (the
+    platform, the version) in one colour per part with the slashes muted.
+    `None` for any row of another shape -- the hub's frame lines, or a
+    layout it may change to -- which keeps the hub's own look. The hub's
+    colours are set aside only for the rows this recognises."""
+    match = _INFO_ROW.match(text)
+    if match is None:
+        return None
+    lead, label, gap, value = match.group("lead", "label", "gap", "value")
+    out = colored(lead, fg_color=MUTED_COLOR) + colored(label + ":", fg_color=LABEL_COLOR) + gap
+    if "://" not in value and _INFO_PARTS.match(value):
+        parts = re.split(r"(\s*/\s*)", value)
+        for index, part in enumerate(parts):
+            if index % 2:
+                out += colored(part, fg_color=MUTED_COLOR)
+            else:
+                out += colored(part, fg_color=_INFO_PART_COLORS[(index // 2) % len(_INFO_PART_COLORS)])
+        return out
+    return out + colored(value, fg_color=VALUE_COLOR)
 
 
 # `/mrc <subcommand>` (issue #298): what each one asks the hub, as the
@@ -6088,7 +6127,9 @@ async def _chat_loop(
                         await hub_reply_complete()
                         continue
                 if isinstance(message, MrcNotice) and message.kind == "reply" and hub_reply.accepts():
-                    hub_reply.add(await lane.run(_render_hub_reply_row, user, message), message.created_at)
+                    hub_reply.add(
+                        await lane.run(_render_hub_reply_row, user, message, hub_reply.label), message.created_at,
+                    )
                     continue
                 # Anything else is shown as it comes; the answer still being
                 # collected follows as one block once the hub goes quiet.
