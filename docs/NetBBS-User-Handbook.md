@@ -54,57 +54,103 @@ the old one.
 
 ## Find your way around
 
-Press a highlighted letter such as **[M]** for **Message boards**. Most menus react
-immediately, without Enter. In the browser you can also click an entry or a
-numbered row. In a list, type a row's number: two digits (**03**) or one digit
-and Enter (**3** Enter). Settings screens such as **Profile** number their
-settings the same way: type a setting's number, or move to it with Up/Down and
-press Enter, and Left/Right step the highlighted one's value. The numbers run
-on through a screen's sections, so a number works from any page of it. A pause that waits for you reads **[Enter] Continue**:
-any key goes on, and in the browser so does a click on it. **[?] Help** on the
-main menu sums up how the board works and who runs it. To write to the SysOp,
-send E-mail **To: sysop**.
-When typing text, use Enter to submit it.
-**Ctrl+U** clears the line you are typing, and at a field that allows it,
-Esc leaves it without changing anything.
+| At a glance | |
+| --- | --- |
+| **Choose** | Press a highlighted letter, such as <kbd>M</kbd> for **Message boards** |
+| **Go back** | <kbd>B</kbd> or <kbd>Esc</kbd> |
+| **Stuck?** | <kbd>?</kbd> shows help for the screen you are on |
+
+In this chapter: [Moving around](#moving-around) · [The main menu](#the-main-menu) ·
+[Lists of boards and areas](#lists-of-boards-and-areas)
+
+#### Moving around
+
+Press a highlighted letter such as <kbd>M</kbd> for **Message boards**. Most
+menus react immediately, without <kbd>Enter</kbd>. In the browser you can
+also click an entry or a numbered row.
+
+- **In a list**, type a row's number: two digits (`03`) or one digit and
+  Enter (`3` <kbd>Enter</kbd>).
+- **Settings screens** such as **Profile** number their settings the same
+  way: type a setting's number, or move to it with <kbd>Up</kbd>/<kbd>Down</kbd>
+  and press <kbd>Enter</kbd>, and <kbd>Left</kbd>/<kbd>Right</kbd> step the
+  highlighted one's value. The numbers run on through a screen's sections, so
+  a number works from any page of it.
+- **A pause** that waits for you reads `[Enter] Continue`: any key goes on,
+  and in the browser so does a click on it.
+- **When typing text**, use <kbd>Enter</kbd> to submit it. <kbd>Ctrl+U</kbd>
+  clears the line you are typing, and at a field that allows it,
+  <kbd>Esc</kbd> leaves it without changing anything.
+
 Follow the action bar on the current screen: letters can mean different
 things in different places. A few keys mean the same on every screen:
 
 | Key | What it does |
 | --- | --- |
-| **[B]** or Esc | Back, one level up: from a board to the list you picked it from, and from there to the menu. Esc first clears a highlighted row, if there is one |
-| **<** **>** | The previous or next page of a list or a long text; PgUp/PgDn do the same, and so do Left/Right on a list |
-| **/** | Find, wherever a list can be searched |
-| **?** | Help for the screen you are on; F1 and Ctrl-H do the same |
+| <kbd>B</kbd> or <kbd>Esc</kbd> | Back, one level up: from a board to the list you picked it from, and from there to the menu. <kbd>Esc</kbd> first clears a highlighted row, if there is one |
+| <kbd>&lt;</kbd> <kbd>&gt;</kbd> | The previous or next page of a list or a long text; <kbd>PgUp</kbd>/<kbd>PgDn</kbd> do the same, and so do <kbd>Left</kbd>/<kbd>Right</kbd> on a list |
+| <kbd>/</kbd> | Find, wherever a list can be searched |
+| <kbd>?</kbd> | Help for the screen you are on; <kbd>F1</kbd> and <kbd>Ctrl-H</kbd> do the same |
+
+> [!TIP]
+> **Help** (<kbd>?</kbd>) on the main menu sums up how the board works and
+> who runs it. To write to the SysOp, send E-mail **To: sysop**.
+
+#### The main menu
 
 | Main-menu choice | What it does |
 | --- | --- |
-| **Message boards** | Every message board on this node |
-| **Chat** | Every chat channel |
-| **Files** | Every file area |
-| **Games** | Door games, when the SysOp has set some up |
-| **Topics** | The node's Communities: topics the SysOp set up, each with its own boards, chat channels, file areas and games |
-| **New scan** | See unread activity and resources you have not visited; Back from each one brings you back with the next new one ready for Enter, **[R]eplies** opens the replies to your posts, and **[E]-mail** opens your mailbox, whose unread count is shown above the list |
-| **Find** (key **/**) | Search your own mail (your Inbox and Sent, never anyone else's) and the posts, files and retained chat on this node. Mail results come first, up to 20 of each kind. A letter opens as it does in the mailbox, and Back returns to the results. Mail is left out where the SysOp has not opened mail to you |
-| **E-mail** | Read and send persistent NetBBS mail, from the level the SysOp chose; not offered to the guest account |
-| **Who's online** | See callers and available ways to contact them |
-| **Profile** | Change your public profile and personal preferences |
-| **Approvals** | Posts and uploads waiting for your decision, if the SysOp made you a moderator |
-| **Staff** | Your staff console, if the SysOp gave you staff permissions |
-| **Operators** | Who runs this node: the SysOps, staff and moderators, when each was last on, and who is away |
-
-Lists of boards and file areas keep the SysOp's order, so the number you
-remember for a board still picks it next time. **[O]rder** in a list sorts it
-another way, by activity, name, newest or size, just this once or from then
-on; **[S]ysOp's order** there puts it back. **[/] Find** in a list shows only
-the names containing what you type; a blank answer shows the whole list again.
-A board, file area or chat channel whose name is drawn in pale turquoise is
-**Linked**: shared with other nodes over NetBBS Link. If your terminal shows
-plain ASCII, or the SysOp drew the list as art, its name ends in ` ~` instead.
+| <kbd>M</kbd> **Message boards** | Every message board on this node |
+| <kbd>C</kbd> **Chat** | Every chat channel |
+| <kbd>F</kbd> **Files** | Every file area |
+| <kbd>G</kbd> **Games** | Door games, when the SysOp has set some up |
+| <kbd>T</kbd> **Topics** | The node's Communities: topics the SysOp set up, each with its own boards, chat channels, file areas and games |
+| <kbd>N</kbd> **New scan** | See unread activity and resources you have not visited (below) |
+| **Find** (<kbd>/</kbd>) | Search your own mail and the posts, files and retained chat on this node (below) |
+| <kbd>E</kbd> **E-mail** | Read and send persistent NetBBS mail, from the level the SysOp chose; not offered to the guest account |
+| <kbd>W</kbd> **Who's online** | See callers and available ways to contact them |
+| <kbd>P</kbd> **Profile** | Change your public profile and personal preferences |
+| **Approvals** (<kbd>A</kbd>) | Posts and uploads waiting for your decision, if the SysOp made you a moderator |
+| <kbd>S</kbd> **Staff** | Your staff console, if the SysOp gave you staff permissions |
+| <kbd>O</kbd> **Operators** | Who runs this node: the SysOps, staff and moderators, when each was last on, and who is away |
 
 Some choices appear only when they have something to show or you have
-permission to use them. Search covers content held by this node, including
-carried NetBBS Link content; it is not a search of the entire network.
+permission to use them.
+
+**New scan:**
+
+- Back from each one brings you back with the next new one ready for
+  <kbd>Enter</kbd>.
+- <kbd>R</kbd> **Replies** opens the replies to your posts.
+- <kbd>E</kbd> **E-mail** opens your mailbox, whose unread count is shown
+  above the list.
+
+**Find** searches your own mail (your Inbox and Sent, never anyone else's)
+and the posts, files and retained chat on this node.
+
+- Mail results come first, up to 20 of each kind.
+- A letter opens as it does in the mailbox, and Back returns to the results.
+- Mail is left out where the SysOp has not opened mail to you.
+
+> [!NOTE]
+> Search covers content held by this node, including carried NetBBS Link
+> content; it is not a search of the entire network.
+
+#### Lists of boards and areas
+
+Lists of boards and file areas keep the SysOp's order, so the number you
+remember for a board still picks it next time.
+
+- <kbd>O</kbd> **Order** in a list sorts it another way, by activity, name,
+  newest or size, just this once or from then on;
+  <kbd>S</kbd> **SysOp's order** there puts it back.
+- **Find** (<kbd>/</kbd>) in a list shows only the names containing what you
+  type; a blank answer shows the whole list again.
+
+A board, file area or chat channel whose name is drawn in pale turquoise is
+**Linked**: shared with other nodes over NetBBS Link. If your terminal shows
+plain ASCII, or the SysOp drew the list as art, its name ends in ` ~`
+instead.
 
 ## Read and post
 
