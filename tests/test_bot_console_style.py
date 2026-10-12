@@ -128,3 +128,17 @@ def test_who_states_presence_events_only_for_bots_that_receive_them(db, sysop, c
     save_bot(db, actor=sysop, name="Quiet", channels=[channel.name], defaults=[])
     save_bot(db, actor=sysop, name="Greeter", channels=[channel.name], defaults=[], event_channels=[channel.name])
     assert _bot_presence_readers(db, channel) == {"Greeter.bot"}
+
+
+def test_a_failing_bot_shows_why_in_its_catalogue_row(db, lane, sysop, channel):
+    from netbbs.bots.registry import set_runtime_status
+    from netbbs.rendering import ERROR_COLOR
+    bot = save_bot(db, actor=sysop, name="Baud", channels=[channel.name], defaults=[], enabled=True)
+    set_runtime_status(db, bot.id, "restarting", "Bot closed its output pipe.")
+    session = Screen(["b"], width=80, height=24)
+    asyncio.run(bot_flow.bot_menu(session, lane, sysop))
+    # A table drops row descriptions, so the reason must be a cell of the row.
+    assert "LAST ERROR" in session.plain
+    row = _row(session.plain, "Baud.bot")
+    assert "restarting" in row and "Bot closed its" in row
+    assert fg(ERROR_COLOR) + "Bot closed its" in "".join(session.written)

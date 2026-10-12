@@ -23,8 +23,13 @@ from netbbs.rendering import (
 )
 
 # Issue #1241 (design doc §3.6): a bot is a record -- its state in the colour
-# of what it means, and how many channels it may speak in -- not a sentence.
-_BOT_COLUMNS = [ListColumn("state", 10, VALUE_COLOR), ListColumn("channels", 8, VALUE_COLOR, align_right=True)]
+# of what it means, how many channels it may speak in, and why it last failed
+# -- not a sentence. A table drops row descriptions, so the error is a column.
+_BOT_COLUMNS = [
+    ListColumn("state", 10, VALUE_COLOR),
+    ListColumn("channels", 8, VALUE_COLOR, align_right=True),
+    ListColumn("last error", 24, MUTED_COLOR),
+]
 _STATE_COLORS = {"running": SUCCESS_COLOR, "starting": VALUE_COLOR, "restarting": ERROR_COLOR}
 
 
@@ -35,6 +40,13 @@ def _state_cell(bot, statuses):
         return ("off", MUTED_COLOR) if state == "stopped" else ("stopping", WARNING_COLOR)
     # Enabled but not running: the runtime has not picked it up (yet).
     return (state, _STATE_COLORS.get(state, WARNING_COLOR))
+
+
+def _error_cell(bot, statuses):
+    state, error = statuses.get(bot.id, ("stopped", ""))
+    if not error:
+        return ""
+    return (sanitize_text(error), ERROR_COLOR if state == "restarting" else MUTED_COLOR)
 
 
 def _yes_no(value):
@@ -82,6 +94,7 @@ async def bot_menu(session, lane, actor):
         return await refresh()
 
     def description(bot):
+        # Shown only where the terminal is too narrow for the table.
         _state, error = statuses.get(bot.id, ("stopped", ""))
         if error:
             return f"Last error: {sanitize_text(error)}"
@@ -93,7 +106,7 @@ async def bot_menu(session, lane, actor):
             name_of=lambda b: b.label,
             stable_id_of=lambda b: b.id,
             columns=_BOT_COLUMNS,
-            column_values_of=lambda b: [_state_cell(b, statuses), str(len(b.channels))],
+            column_values_of=lambda b: [_state_cell(b, statuses), str(len(b.channels)), _error_cell(b, statuses)],
             description_of=description, title="Chat bots",
             empty_message="No bots installed. Create an instance of Baud to get started.",
             refresh=refresh, on_create=create, live_keys={"s": stop_all, "m": model_settings, "u": model_usage}, item_keys={"k": stop_one, "d": delete_one},

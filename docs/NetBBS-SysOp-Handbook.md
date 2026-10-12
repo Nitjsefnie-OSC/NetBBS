@@ -1441,8 +1441,8 @@ participation and model conversation. The [bot API guide](NetBBS-bot-api.md)
 describes each.
 
 The catalogue lists each bot's state (running in green, restarting in red,
-off once its process is gone) and how many channels it may use; its last
-error is shown under the highlighted row. The editor groups its fields under
+off once its process is gone), how many channels it may use and its last
+error. The editor groups its fields under
 Bot, Channels, Greetings and announcements, Queries and conversation, and
 Behaviour and program. **Kill selected** stops one bot; **Stop all** stops
 every bot; **Delete selected** removes a bot whose state reads off, with its
