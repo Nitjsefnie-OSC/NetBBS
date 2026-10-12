@@ -571,7 +571,11 @@ async def capture_chat(tmp: Path) -> str:
 
 
 async def capture_who(tmp: Path) -> str:
-    """The caller-facing Who screen: who else is connected, right now."""
+    """The caller-facing Who screen: who else is connected, right now.
+
+    Each caller's "connected since" is the evening the chat capture is set
+    in -- wren at 19:58, otto at 20:00, when they join #lobby there -- not
+    the moment the script ran, which drew both at the same minute."""
     from netbbs.chat.hub import ChatHub
     from netbbs.chat.presence import PresenceRegistry
     from netbbs.net.directory_flow import _caller_who_screen
@@ -581,11 +585,15 @@ async def capture_who(tmp: Path) -> str:
         people = _people(db)
         controls = _controls()
         presence = PresenceRegistry()
-        for session_of in ("wren", "otto"):
+        connected = {"wren": "2026-10-12T19:58:07.000000Z", "otto": "2026-10-12T20:00:41.000000Z"}
+        for session_of, since in connected.items():
             registered = CaptureSession(width=80)
             registered.username = session_of
             controls.session_registry.enter(registered)
             controls.session_registry.mark_authenticated(registered, session_of)
+            # The registry stamps an entry when it is made, with no way to
+            # pass a time in: set it on the entry, as a real login would have.
+            controls.session_registry._sessions[registered].connected_at = since
             presence.enter(session_of)
         presence.enter("keeper")
         presence.set_away("otto", "back in ten")
