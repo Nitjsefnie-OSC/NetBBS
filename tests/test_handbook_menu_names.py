@@ -31,7 +31,8 @@ HANDBOOKS = sorted((ROOT / "docs").glob("NetBBS-*-Handbook.md"))
 
 _PATH = re.compile(r"\*\*([^*\n]+? ▸ [^*\n]+?)\*\*")
 _KEYED = re.compile(r"<kbd>([^<]+)</kbd> \*\*([^*\n]+)\*\*")
-_FENCE = re.compile(r"^```.*?^```", re.MULTILINE | re.DOTALL)
+# A fence indented under a list item is still a fence.
+_FENCE = re.compile(r"^[ \t]*```.*?^[ \t]*```", re.MULTILINE | re.DOTALL)
 
 
 def _norm(label: str) -> str:
@@ -161,10 +162,19 @@ def test_the_check_reads_the_console_and_the_handbooks():
     ],
 )
 def test_a_misnamed_screen_or_key_is_reported(tmp_path, line, complaint):
+    """Only the prose is reported: code blocks, indented under a list item
+    or not, may quote anything."""
     handbook = tmp_path / "NetBBS-Test-Handbook.md"
-    handbook.write_text(f"# Test\n\n{line}\n\n```sh\n**Not ▸ Checked**\n```\n", encoding="utf-8")
-    with pytest.raises(AssertionError, match=re.escape(complaint)):
+    handbook.write_text(
+        f"# Test\n\n{line}\n\n"
+        "```sh\n**Not ▸ Checked** <kbd>Q</kbd> **Unchecked**\n```\n\n"
+        "1. A step:\n\n   ```sh\n   **Also ▸ Unchecked** <kbd>Q</kbd> **Unchecked**\n   ```\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError) as failure:
         if "<kbd>" in line:
             test_every_hotkey_matches_its_menu_entry(handbook)
         else:
             test_every_menu_path_names_screens_that_exist(handbook)
+    assert complaint in str(failure.value)
+    assert "Unchecked" not in str(failure.value)
