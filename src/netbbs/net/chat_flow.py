@@ -1968,8 +1968,9 @@ class _HubReplyBlock:
     question are collected until the hub goes quiet, then drawn as one
     titled block -- paged when taller than the chat area, the next page
     on an empty Enter. A non-empty line typed by the caller drops the
-    pages still held, never an answer still arriving; a line arriving
-    once the answer is drawn stands alone with its badge."""
+    pages still held, never an answer still arriving or waiting its turn
+    behind them; a line arriving once the answer is drawn stands alone
+    with its badge."""
 
     def __init__(self, clock: Callable[[], float]) -> None:
         self._clock = clock
@@ -1986,6 +1987,11 @@ class _HubReplyBlock:
         self.more: list[str] = []
         self.page = 0
         self.pages = 0
+        # Answers that completed while an earlier one was still being
+        # paged: each waits, whole, for the pages before it (review of
+        # #1257 -- one shared pager slot let the second overwrite the
+        # first's unread pages).
+        self.waiting: list[tuple[str, str, list[str]]] = []
 
     def expect(self, label: str) -> None:
         if self.rows:
@@ -3694,12 +3700,20 @@ def _render_hub_reply_title(
                       title_color=effective_header_color_256(db), right=stamp)
 
 
-def _render_hub_reply_footer(db: Database, viewer: User, page: int, pages: int, width: int) -> str:
-    """`──────── page 1 of 4 · Enter shows more ──` under a page with more after it."""
+def _render_hub_reply_footer(
+    db: Database, viewer: User, page: int, pages: int, width: int, *, next_label: str | None = None,
+) -> str:
+    """`──────── page 1 of 4 · Enter shows more ──` under a page with more
+    after it; under an answer's last page, which answer waits behind it."""
     unicode_style = unicode_style_enabled(db, viewer)
     dot = " · " if unicode_style else ", "
-    return footer_rule(f"page {page} of {pages}{dot}Enter shows more", width=block_width(width),
-                       unicode_style=unicode_style)
+    if next_label is not None:
+        text = f"Enter shows the answer to {next_label}"
+        if pages > 1:
+            text = f"page {page} of {pages}{dot}{text}"
+    else:
+        text = f"page {page} of {pages}{dot}Enter shows more"
+    return footer_rule(text, width=block_width(width), unicode_style=unicode_style)
 
 
 def _render_hub_reply_row(db: Database, viewer: User, notice: MrcNotice) -> str:
@@ -5772,13 +5786,13 @@ async def _chat_loop(
         session.pinned_notice_hook = deliver
         hub_reply = _HubReplyBlock(asyncio.get_running_loop().time)
 
-        async def hub_reply_page(*, fresh: bool = False) -> list[str]:
-            """The next page of the hub's answer as screen lines: `fresh`
-            takes a just-completed answer, otherwise the pages still held."""
+        async def hub_reply_page(answer: tuple[str, str, list[str]] | None = None) -> list[str]:
+            """The next page of the hub's answer as screen lines: the first
+            of `answer`, a completed one, or else the next of those held."""
             width = session.terminal_width
             capacity = _hub_reply_capacity(session)
-            if fresh:
-                label, started_at, rows = hub_reply.take()
+            if answer is not None:
+                label, started_at, rows = answer
                 page, rest = _take_hub_reply_page(rows, capacity, width)
                 hub_reply.more_label, hub_reply.more, hub_reply.page = label, rest, 1
                 hub_reply.pages = 1 + _hub_reply_page_count(rest, capacity, width)
@@ -5797,7 +5811,26 @@ async def _chat_loop(
                 lines.append(await lane.run(
                     _render_hub_reply_footer, user, hub_reply.page, hub_reply.pages, width,
                 ))
+            elif hub_reply.waiting:
+                lines.append(await lane.run(
+                    _render_hub_reply_footer, user, hub_reply.page, hub_reply.pages, width,
+                    next_label=hub_reply.waiting[0][0],
+                ))
             return lines
+
+        async def hub_reply_complete() -> None:
+            """The hub has gone quiet on an answer: draw it, unless an
+            earlier answer's pages are still being read -- then it waits
+            for them, and the caller is told it is there."""
+            answer = hub_reply.take()
+            if hub_reply.more or hub_reply.waiting:
+                hub_reply.waiting.append(answer)
+                await deliver(colored(
+                    f"(the hub answered {answer[0]}; Enter shows it after these pages)",
+                    fg_color=MUTED_COLOR,
+                ))
+                return
+            await deliver_many(await hub_reply_page(answer))
 
         async def receive_loop() -> None:
             while True:
@@ -5809,7 +5842,7 @@ async def _chat_loop(
                         message = await asyncio.wait_for(queue.get(), timeout=quiet)
                     except asyncio.TimeoutError:
                         # The hub has gone quiet: its answer is complete.
-                        await deliver_many(await hub_reply_page(fresh=True))
+                        await hub_reply_complete()
                         continue
                 if isinstance(message, MrcNotice) and message.kind == "reply" and hub_reply.accepts():
                     hub_reply.add(await lane.run(_render_hub_reply_row, user, message), message.created_at)
@@ -6060,8 +6093,10 @@ async def _chat_loop(
                             return _Quit()
 
                         if not line:
-                            if hub_reply.more:
-                                for page_line in await hub_reply_page():
+                            if hub_reply.more or hub_reply.waiting:
+                                # The held pages first, then the next answer waiting.
+                                answer = None if hub_reply.more else hub_reply.waiting.pop(0)
+                                for page_line in await hub_reply_page(answer):
                                     await session.write_line(page_line)
                             continue
                         if mrc_bridge is not None and _mrc_helper_carries_a_secret(strip_pipe_codes(line).lstrip()):

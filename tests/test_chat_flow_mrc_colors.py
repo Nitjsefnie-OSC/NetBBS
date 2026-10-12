@@ -271,3 +271,48 @@ def test_a_long_hub_answer_is_paged_and_an_empty_enter_turns_the_page(db, lane, 
         finally:
             await rig.close()
     asyncio.run(scenario())
+
+
+def test_an_answer_completing_behind_a_pager_waits_for_its_pages(db, lane, hub, presence, channel, alice):
+    # Review of #1257: one shared pager slot let a second answer overwrite
+    # the first's unread pages. The second now waits, and says so.
+    from netbbs.timeutil import utc_now_iso
+
+    async def scenario():
+        rig = await _rig(db, lane, hub, channel)
+        try:
+            session = _QueueSession()
+            session.terminal_width, session.terminal_height = 80, 12  # pages of six rows
+            task = asyncio.create_task(
+                chat_flow._chat_loop(
+                    session, lane, hub, presence, MessageMailbox(), InputHistory(), channel, alice,
+                    mrc_bridge=rig.bridge,
+                )
+            )
+            await rig.fake.wait_for(lambda p: p.body == "NEWROOM::lobby" and p.from_user == "alice")
+            session.inputs.put_nowait("/mrc bbses")
+            await rig.fake.wait_for(lambda p: p.body == "CONNECTED")
+            [participant] = hub.participants_for_username(channel.name, "alice")
+            for index in range(10):
+                await hub.send_to(channel.name, participant, MrcNotice(f"board {index:02}", utc_now_iso(), kind="reply"))
+            # Every row collected (the queue drained, the last one rendered),
+            # then asked again well inside the first answer's quiet second.
+            assert await eventually(lambda: hub._channels[channel.name][participant].empty())
+            await asyncio.sleep(0.2)
+            session.inputs.put_nowait("/mrc motd")
+            await rig.fake.wait_for(lambda p: p.body == "MOTD")
+            assert await eventually(lambda: "the hub answered /mrc motd" in _text(session))
+            text = _text(session)
+            assert "page 1 of 2" in text and "MOTD reply line 1" not in text
+            session.inputs.put_nowait("")
+            assert await eventually(lambda: "board 09" in _text(session))
+            assert "page 2 of 2 · Enter shows the answer to /mrc motd" in _text(session)
+            assert "MOTD reply line 1" not in _text(session)
+            session.inputs.put_nowait("")
+            assert await eventually(lambda: "MRC hub · /mrc motd" in _text(session))
+            assert " MOTD reply line 1" in _text(session).splitlines()
+            session.inputs.put_nowait("/quit")
+            await asyncio.wait_for(task, timeout=4)
+        finally:
+            await rig.close()
+    asyncio.run(scenario())
