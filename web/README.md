@@ -63,24 +63,14 @@ against the checkout too; new handbook links become live after the corresponding
 repository changes are published. Inspect rendered pages at desktop and narrow
 widths when changing layout or substantial copy.
 
-Host `Roanoke.NetWorkXXIII.de` (NetBSD, pkgsrc Apache), account `thiesi`, SSH
-via PuTTY's **Pageant** — use `plink`/`pscp`, not OpenSSH. `sudo` is
-passwordless; `chown`/`chmod` are not on its `PATH`, so call `/sbin/chown` and
-`/bin/chmod` by absolute path. The docroot is not writable by `thiesi`, so
-upload to `/tmp` and `sudo mv` into place.
+The site is deployed from `main`, never from a branch or a working tree, so
+what is live is what `main` says. Where it is hosted, how to reach that host,
+and the exact copy-and-install steps are operational details. They live in the
+maintainer's private operations notes, not in this public repository.
 
-```sh
-D=/usr/pkg/share/httpd/htdocs/www.NetBBS.org
-plink -batch -agent thiesi@Roanoke.NetWorkXXIII.de \
-  "cp $D/index.html /tmp/index.html.<version>.bak"      # keep it out of the docroot
-pscp -batch -agent web/netbbs-index.html thiesi@Roanoke.NetWorkXXIII.de:/tmp/index.html.new
-plink -batch -agent thiesi@Roanoke.NetWorkXXIII.de \
-  "sudo mv /tmp/index.html.new $D/index.html && \
-   sudo /sbin/chown root:wheel $D/index.html && sudo /bin/chmod 644 $D/index.html"
-```
-
-The icon files go the same way, each to its own name at the docroot's top
-level. They change only when the picture does.
+A deploy backs up each page it replaces, outside the web-served directory. The
+icon files go the same way as the pages, each to its own name at the site's
+top level; they change only when the picture does.
 
 Verify the **full SHA-256 chain** every time — local, the `/tmp` copy, the
 docroot copy, and a `curl` of the live URL must all be the same hash. Then:
