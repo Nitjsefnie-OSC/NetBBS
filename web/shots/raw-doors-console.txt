@@ -1,6 +1,6 @@
-[2J[H[38;5;246mHarbor Lights[0m[38;5;246m › [0m[38;5;51mDoors[0m
+[2J[H[38;5;246mHarbor Lights[0m[38;5;246m › [0m[38;5;246mSysOp[0m[38;5;246m › [0m[38;5;246mContent[0m[38;5;246m › [0m[38;5;51mDoors[0m
 [38;5;246mpage 1/1, 7 total[0m
-[38;5;240m─────────────────────[0m
+[38;5;240m───────────────────────────────────────[0m
 [38;5;46m  01. [0m[38;5;220mAmiga Empire[0m[38;5;248m - A Linux door in a per-caller VM[0m
 [38;5;46m  02. [0m[38;5;220mDoorParty[0m[38;5;248m - Dozens of doors on a remote server[0m
 [38;5;46m  03. [0m[38;5;220mGlobal War[0m[38;5;248m - Turn-based world conquest[0m

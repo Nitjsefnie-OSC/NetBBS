@@ -358,86 +358,163 @@ async def capture_mainmenu(tmp: Path) -> str:
 
 
 async def capture_chat(tmp: Path) -> str:
-    """A live channel with scrollback, presence and the pinned status line.
+    """A live channel with scrollback, presence, the pinned status line -- and
+    Baud, the bundled chat bot, taking part.
 
-    The shot this replaces predates two changes that are the point of
-    looking at it: timestamps are on by default now, and the prompt glyph
-    is one a legacy Windows font actually has.
+    Baud runs for real: its own process under `BotRuntime`, answering what
+    the caller types into the channel. It greets the caller on joining,
+    answers `seen` and `stats`, and saves a reminder and then delivers it.
+    The channel's clock is pinned to one evening, scrollback and live lines
+    alike, so a recapture shows the same times whenever it is run and the
+    dialogue's "evening" is true of them.
     """
+    import datetime
+    import re
+    import time
+
+    from netbbs.bots.registry import save_bot
+    from netbbs.bots.runtime import BotRuntime
     from netbbs.chat.channels import create_channel, set_topic
-    from netbbs.chat.hub import ChatHub
+    from netbbs.chat.hub import ChatHub, ParticipantId
     from netbbs.chat.mailbox import MessageMailbox
     from netbbs.chat.presence import PresenceRegistry
     from netbbs.chat import scrollback as scrollback_module
     from netbbs.chat.scrollback import record_message
+    from netbbs.config import set_node_display_name
+    from netbbs import session_history as history_module
+    from netbbs.session_history import record_session_end, record_session_start
     from netbbs.net import chat_flow
     from netbbs.net.char_input import InputHistory
 
+    evening = datetime.datetime(2026, 10, 12, 20, 12, tzinfo=datetime.timezone.utc)
+
+    def ago(minutes: float) -> str:
+        return (evening - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
     db, lane = _node(tmp)
     try:
+        set_node_display_name(db, NODE_NAME)
         people = _people(db)
         channel = create_channel(db, "lobby", creator=people["keeper"],
                                  description="General chat")
-        channel = set_topic(db, channel, "release day: 7.14.0", set_by=people["keeper"])
-        said = [
-            ("join", "wren", None),
-            ("message", "wren", "evening -- did the 7.14.0 wheel land yet?"),
-            ("join", "otto", None),
-            ("message", "keeper", "it did. you can reply to link mail now"),
-            ("message", "otto", "just pulled it. syncterm draws the boxes right at last"),
-            ("message", "wren", "read receipts are the one I wanted"),
-            ("message", "keeper", "those are on for everybody, so it is in the notes"),
-            ("action", "otto", "reads the notes properly this time"),
-            ("message", "wren", "anyone else on the link tonight? quiet over here"),
-            ("message", "keeper", "two peers up. sync window moved to 04:00 last week"),
-        ]
-        # One evening, in order. The shared `SEEDED_AT` dates are days apart,
-        # and chat shows only the *time* -- so they read as a conversation
-        # whose timestamps run backwards.
-        stamps = iter([
-            f"2026-09-12T{t}.000000Z" for t in
-            ("19:58:11", "19:58:40", "20:01:02", "20:01:37",
-             "20:02:14", "20:03:05", "20:03:51", "20:04:22",
-             "20:06:09", "20:06:48")
-        ])
-        original = scrollback_module.utc_now_iso
-        scrollback_module.utc_now_iso = lambda: next(stamps, SEEDED_AT[-1])
+        channel = set_topic(db, channel, "release day: 7.21.0", set_by=people["keeper"])
+
+        # alice called earlier this evening and has gone: what `seen` reports.
+        stamps = iter([ago(95), ago(52)])
+        original = history_module.utc_now_iso
+        history_module.utc_now_iso = lambda: next(stamps)
         try:
-            for kind, who, body in said:
+            record_session_end(db, record_session_start(db, people["alice"]))
+        finally:
+            history_module.utc_now_iso = original
+
+        said = [
+            ("join", "wren", None, 14),
+            ("message", "wren", "evening -- did the 7.21.0 wheel land yet?", 13.5),
+            ("join", "otto", None, 12),
+            ("message", "otto", "just pulled it. the outbox can finally drop dead letters", 11),
+            ("message", "wren", "and every breadcrumb says where you came from now", 10),
+            ("action", "otto", "goes looking for alice's new ANSI upload", 8),
+        ]
+        stamps = iter([ago(minutes) for *_rest, minutes in said])
+        original = scrollback_module.utc_now_iso
+        scrollback_module.utc_now_iso = lambda: next(stamps)
+        try:
+            for kind, who, body, _minutes in said:
                 record_message(db, channel, kind=kind, author_label=who, body=body)
         finally:
             scrollback_module.utc_now_iso = original
+
+        save_bot(db, actor=people["keeper"], name="Baud", channels=["lobby"], defaults=["lobby"],
+                 enabled=True, queries=["seen", "stats"], event_channels=["lobby"], greetings=True)
 
         presence = PresenceRegistry()
         for name in ("keeper", "wren", "otto"):
             presence.enter(name)
 
-        # Run as a task and cancel it, the way `website_capture_chat_mrc.py`
-        # does: `_chat_loop` is a live screen with background receive and
-        # clock tasks, so it does not "finish" the way a menu render does.
-        # Its `read_line` waits on a queue nothing is ever put into, which
-        # is what leaves the caller sitting in the channel rather than
-        # typing their way back out of it.
+        # From here on the channel's clock runs from `evening` at real speed:
+        # every live line, Baud's included, is stamped through it.
+        started = time.monotonic()
+        original_clock = scrollback_module.utc_now_iso
+        scrollback_module.utc_now_iso = lambda: ago(-(time.monotonic() - started) / 60)
         hub = ChatHub()
+        # wren and otto are in the channel too, and answer live: real
+        # traffic is also what scrolls the join's blank block off the screen.
+        others = {name: ParticipantId(name, 1) for name in ("wren", "otto")}
+        for pid in others.values():
+            hub.join(channel.name, pid)
+        runtime = BotRuntime(lane, hub, presence=presence, poll_seconds=0.05)
+        runtime.start()
+        # A node up since the afternoon, not one booted for the photograph.
+        runtime.started_at -= 4 * 3600 + 17 * 60
         session = CaptureSession(width=80, height=24)
         session.inputs = asyncio.Queue()
-        session.location = ("Chat",)  # where the walk came from
-        task = asyncio.create_task(chat_flow._chat_loop(
-            session, lane, hub, presence, MessageMailbox(), InputHistory(),
-            channel, people["keeper"],
-        ))
+        task = None
         try:
-            for _ in range(200):                       # ~5s, checked 40x a second
-                if hub.participant_count(channel.name) > 0 and session.written:
-                    break
-                await asyncio.sleep(0.025)
-            else:
-                raise RuntimeError("the caller never joined the channel")
-            await asyncio.sleep(0.4)                   # let the scrollback replay land
+            async def until(predicate, what: str, seconds: float = 10.0) -> None:
+                for _ in range(int(seconds * 40)):
+                    if predicate():
+                        return
+                    await asyncio.sleep(0.025)
+                raise RuntimeError(f"timed out waiting for {what}")
+
+            def shown(needle: str) -> bool:
+                # As the caller reads it: colour codes can split a phrase.
+                return needle in re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", "".join(session.written))
+
+            await until(lambda: runtime.running_ids, "Baud to start")
+            # Run as a task and cancel it, the way `website_capture_chat_mrc.py`
+            # does: `_chat_loop` is a live screen with background receive and
+            # clock tasks, so it does not "finish" the way a menu render does.
+            session.location = ("Chat",)  # where the walk came from
+            task = asyncio.create_task(chat_flow._chat_loop(
+                session, lane, hub, presence, MessageMailbox(), InputHistory(),
+                channel, people["keeper"],
+            ))
+            # wren, otto and Baud are already in the channel; only the
+            # caller's own join notice says the caller is.
+            await until(lambda: shown("Joined #lobby"), "the caller to join the channel")
+            await until(lambda: shown("Welcome, keeper!"), "Baud's greeting")
+            async def say(who: str, body: str) -> None:
+                recorded = record_message(db, channel, kind="message", author_label=who, body=body)
+                await hub.broadcast(channel.name, recorded, exclude={others[who]})
+                await until(lambda: shown(body), f"{who}'s line")
+
+            await say("otto", "evening keeper")
+            await asyncio.sleep(0.8)
+            await session.inputs.put("evening both. 7.21.0 is out")
+            await until(lambda: shown("7.21.0 is out"), "keeper's greeting")
+            await say("wren", "saw it! the breadcrumbs finally all match")
+            await say("otto", "and the outbox lets go of dead letters now")
+            await say("wren", "hi keeper! ask Baud about alice, she was on earlier")
+            for line, answer in (
+                ("!seen alice", "last recorded"),
+                ("Baud.bot: remind 3s stretch, then the sync window", "Saved reminder #1"),
+                ("!stats", "human accounts online"),
+            ):
+                await asyncio.sleep(0.8)               # a person types; no burst
+                await session.inputs.put(line)
+                await until(lambda answer=answer: shown(answer), f"Baud's answer to {line!r}")
+                if answer == "last recorded":
+                    await say("otto", "ha, missed her. her ANSI is up in the art area though")
+                elif answer == "human accounts online":
+                    await say("otto", "four hours and not a hiccup. nice wheel")
+            await until(lambda: shown("reminder #1: stretch"), "the reminder", seconds=15)
+            await say("wren", "a bot that remembers things. better than me")
+            await asyncio.sleep(0.8)
+            await session.inputs.put("thanks Baud. right, back to the outbox")
+            await until(lambda: shown("back to the outbox"), "keeper's last line")
+            await say("otto", "o/")
+            await asyncio.sleep(0.4)                   # let the status line settle
             return "".join(session.written)
         finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await runtime.close()
+            for pid in others.values():
+                hub.leave(channel.name, pid)
+            scrollback_module.utc_now_iso = original_clock
     finally:
         lane.close()
         db.close()
