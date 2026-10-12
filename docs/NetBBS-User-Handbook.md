@@ -596,7 +596,7 @@ send one. There are three ways to move the file:
 - **Zmodem**, with a Zmodem-capable terminal client. PuTTY and ordinary SSH
   clients do not provide Zmodem by themselves.
 
-#### Zmodem
+### Zmodem
 
 A Zmodem terminal such as SyncTERM starts its side of the transfer by itself:
 it saves a download, or asks which file to upload. If yours doesn't, start its
@@ -609,7 +609,7 @@ Zmodem receive or send by hand.
   the new file, so <kbd>E</kbd> **Edit description** describes it straight
   away.
 
-#### Browser links
+### Browser links
 
 When you upload through a browser link, the terminal tells you once the file
 has arrived, and whether it waits for approval before others can see it. The
