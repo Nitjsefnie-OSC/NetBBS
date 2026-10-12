@@ -33,6 +33,7 @@ from netbbs.link.realtime_channels import LiveChannelBridge
 from netbbs.link.transport import LinkRealtimeSessionRegistry
 from netbbs.net import chat_flow
 from netbbs.net.char_input import InputHistory
+from netbbs.rendering.ansi import strip_ansi
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
 from tests.test_chat_flow_moderation import FakeSession
@@ -122,7 +123,8 @@ def test_who_annotates_a_remote_participant_with_its_linked_node(lane, hub, pres
     assert "Remote User" in text
     # No persisted peer record for the origin: its technical identity is
     # the only one it has, and is shown so two such nodes stay distinct.
-    assert f"on linked node {origin_fingerprint}" in text
+    # The where column names the node, in the node colour: "on <node>".
+    assert f"Remote User  on {origin_fingerprint}" in strip_ansi(text)
 
 
 def test_remote_node_hello_with_an_unsafe_friendly_name_is_refused():

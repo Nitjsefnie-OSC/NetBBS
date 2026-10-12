@@ -390,6 +390,14 @@ Choose a chat channel to join the conversation. Type a line and press
 | `/nick name` | Set a chat alias; a bare `/nick` clears it |
 | `/dm user` | Invite someone online to a private direct chat |
 
+> [!TIP]
+> <kbd>PgUp</kbd> scrolls back through the conversation, a page at a time, and
+> <kbd>PgDn</kbd> forward again. While you are scrolled back the chat holds
+> still, so you can read or copy at leisure; new lines wait, counted at the
+> bottom, until you return with <kbd>Esc</kbd>, with <kbd>PgDn</kbd> past the
+> newest line, or by sending a line. Your terminal's own scrollback jumps back
+> to the bottom whenever chat redraws, so use these keys instead.
+
 #### Aliases and names from other BBSes
 
 An alias is always shown with the username beside it, as
@@ -839,8 +847,9 @@ with their BBS in a color of its own.
 The network's answer to an `/mrc` question, such as `/rooms` or `/mrc bbses`,
 appears a moment after it finishes arriving, as one block headed
 `MRC hub · /mrc bbses`. A long answer comes a page at a time: press
-<kbd>Enter</kbd> on an empty line for the next page. Typing anything else skips
-the rest of it.
+<kbd>PgDn</kbd> (or <kbd>Enter</kbd> on an empty line) for the next page and
+<kbd>Esc</kbd> to skip the rest. Long command replies, like `/list` on a board
+with many channels, page the same way.
 
 #### Stylized MRC names
 

@@ -183,3 +183,22 @@ def test_a_page_counts_the_rows_a_long_hub_line_wraps_onto():
     assert chat_flow._hub_reply_page_count(rows, 3, 80) == 2
     # A row taller than a whole page still goes out, alone.
     assert chat_flow._take_hub_reply_page(["y" * 500, "z"], 3, 80)[0] == ["y" * 500]
+
+
+
+def test_a_cell_of_coloured_pieces_aligns_on_its_text_and_keeps_each_colour():
+    from netbbs.rendering.ansi import fg
+    rows = [
+        (([("kite", None), ("@", 248), ("blackwater", 146)], 252), ("on MRC", 146)),
+        (("alice", 220), ([("here", 82), (" · ", 248), ("away: brb", 214)], None)),
+    ]
+    lines = table_rows(rows, width=60)
+    plain = [strip_ansi(line) for line in lines]
+    assert plain == [" kite@blackwater  on MRC", " alice            here · away: brb"]
+    assert fg(146) + "blackwater" in lines[0] and fg(252) + "kite" in lines[0]
+    assert fg(82) + "here" in lines[1] and fg(214) + "away: brb" in lines[1]
+
+
+def test_an_mrc_or_linked_address_splits_at_its_at_sign():
+    assert chat_flow._address_segments("kite@blackwater", 146) == [("kite", None), ("@", 248), ("blackwater", 146)]
+    assert chat_flow._address_segments("alice", 146) == [("alice", None)]

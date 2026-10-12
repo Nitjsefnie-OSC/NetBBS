@@ -230,6 +230,7 @@ from netbbs.rendering import (
     SUCCESS_COLOR,
     TOPIC_COLOR,
     VALUE_COLOR,
+    WARNING_COLOR,
     badge,
     clear_line,
     clear_screen,
@@ -1966,11 +1967,11 @@ class _HubReplyBlock:
     """The hub's answer to this screen's last `/mrc` question. Its lines
     carry no request id and no end marker, so the lines that follow a
     question are collected until the hub goes quiet, then drawn as one
-    titled block -- paged when taller than the chat area, the next page
-    on an empty Enter. A non-empty line typed by the caller drops the
-    pages still held, never an answer still arriving or waiting its turn
-    behind them; a line arriving once the answer is drawn stands alone
-    with its badge."""
+    titled block -- paged when taller than the chat area (`held`, which a
+    long command reply uses too). A non-empty line typed by the caller
+    drops the pages still held, never an answer still arriving or waiting
+    its turn behind them; a line arriving once the answer is drawn stands
+    alone with its badge."""
 
     def __init__(self, clock: Callable[[], float]) -> None:
         self._clock = clock
@@ -1982,11 +1983,9 @@ class _HubReplyBlock:
         # Answers complete but not drawn yet: a second question asked
         # before the first answer went quiet.
         self.ready: list[tuple[str, str, list[str]]] = []
-        # The pages still to show, once an answer has been drawn.
-        self.more_label = ""
-        self.more: list[str] = []
-        self.page = 0
-        self.pages = 0
+        # The pages still to show of whatever was drawn last: a hub
+        # answer or a long command reply.
+        self.held: _HeldPages | None = None
         # Answers that completed while an earlier one was still being
         # paged: each waits, whole, for the pages before it (review of
         # #1257 -- one shared pager slot let the second overwrite the
@@ -2027,6 +2026,36 @@ class _HubReplyBlock:
         taken = (self.label, self.started_at, self.rows)
         self.label, self.rows = "", []
         return taken
+
+
+@dataclass
+class _HeldPages:
+    """The rest of an answer taller than the chat area -- the hub's or a
+    chat command's -- drawn a page at a time: PgDn, or Enter on an empty
+    line, for the next; Esc drops it; PgUp scrolls back through what was
+    shown. `title(page, pages, width)` and `footer(page, pages, width,
+    next_answer)` render the page's frame."""
+
+    rows: list[str]
+    title: Callable[[int, int, int], Awaitable[str]]
+    footer: Callable[[int, int, int, str | None], Awaitable[str]]
+    page: int = 0
+    pages: int = 0
+
+
+async def _next_held_page(session: Session, held: _HeldPages, *, waiting: str | None) -> list[str]:
+    """The next page of `held` as screen lines, its title first and -- when
+    more follows, or another answer waits behind it -- its footer last."""
+    width = session.terminal_width
+    capacity = _hub_reply_capacity(session)
+    page, held.rows = _take_hub_reply_page(held.rows, capacity, width)
+    held.page += 1
+    # A resize since the first page changes how many are left.
+    held.pages = held.page + _hub_reply_page_count(held.rows, capacity, width)
+    lines = [await held.title(held.page, held.pages, width), *page]
+    if held.rows or waiting is not None:
+        lines.append(await held.footer(held.page, held.pages, width, None if held.rows else waiting))
+    return lines
 
 
 def _hub_reply_capacity(session: Session) -> int:
@@ -3704,16 +3733,18 @@ def _render_hub_reply_title(
 def _render_hub_reply_footer(
     db: Database, viewer: User, page: int, pages: int, width: int, *, next_label: str | None = None,
 ) -> str:
-    """`──────── page 1 of 4 · Enter shows more ──` under a page with more
-    after it; under an answer's last page, which answer waits behind it."""
+    """`── page 1 of 4 · PgDn more · PgUp back · Esc done ──` under a page
+    with more after it; under an answer's last page, which answer waits
+    behind it. Enter on an empty line works as PgDn, for a terminal that
+    sends no PgDn."""
     unicode_style = unicode_style_enabled(db, viewer)
     dot = " · " if unicode_style else ", "
     if next_label is not None:
-        text = f"Enter shows the answer to {next_label}"
+        text = f"PgDn: the answer to {next_label}"
         if pages > 1:
             text = f"page {page} of {pages}{dot}{text}"
     else:
-        text = f"page {page} of {pages}{dot}Enter shows more"
+        text = f"page {page} of {pages}{dot}PgDn more{dot}PgUp back{dot}Esc done"
     return footer_rule(text, width=block_width(width), unicode_style=unicode_style)
 
 
@@ -4107,14 +4138,41 @@ async def _write_block(
     the title rule, aligned `rows`, then `prose` paragraphs. Every text
     is sanitized plain text; styling happens in the renderer."""
     width = block_width(ctx.session.terminal_width)
-    await ctx.session.write_line(title_rule(
+    lines = [title_rule(
         title, width=width, unicode_style=theme.unicode_style, title_color=theme.header, count=count,
-    ))
-    for line in table_rows(rows, width=width):
-        await ctx.session.write_line(line)
+    )]
+    lines.extend(table_rows(rows, width=width))
     for text, color in prose:
-        for line in paragraph(text, width=width, color=color):
+        lines.extend(paragraph(text, width=width, color=color))
+    holder = ctx.hub_reply
+    if (holder is None or ctx.session.terminal_height < _PINNED_UI_MIN_HEIGHT
+            or len(lines) - 1 <= _hub_reply_capacity(ctx.session)):
+        for line in lines:
             await ctx.session.write_line(line)
+        return
+
+    # Taller than the chat area: a page at a time, like the hub's answers.
+    async def page_title(page: int, pages: int, width: int) -> str:
+        return title_rule(
+            title, width=block_width(width), unicode_style=theme.unicode_style, title_color=theme.header,
+            count=count if page == 1 else None, right=None if page == 1 else f"{page}/{pages}",
+        )
+
+    async def page_footer(page: int, pages: int, width: int, waiting: str | None) -> str:
+        return await ctx.lane.run(_render_hub_reply_footer, ctx.user, page, pages, width, next_label=waiting)
+
+    held = _HeldPages(lines[1:], page_title, page_footer)
+    page = await _next_held_page(ctx.session, held, waiting=None)
+    if holder.held is not None or holder.waiting:
+        # A hub answer took the pager while this was being drawn (review of
+        # #1288): it keeps its pages, and this reply is shown whole.
+        for line in lines:
+            await ctx.session.write_line(line)
+        return
+    # Claimed before the first write, which can yield to the receive loop.
+    holder.held = held if held.rows else None
+    for line in page:
+        await ctx.session.write_line(line)
 
 
 def _linked_node_label(ctx: ChatCommandContext, fingerprint: str) -> str:
@@ -4189,25 +4247,50 @@ async def _handle_who(ctx: ChatCommandContext, args: str) -> None:
         label = labels_by_username.get(username)
         if label is None:
             continue
+        name_color = SELF_COLOR if username == ctx.user.username else theme.accent
+        where: list[tuple[str, int | None]] = [("here", SUCCESS_COLOR)]
         if ctx.presence.is_away(username):
             message = ctx.presence.get_away_message(username)
-            where = f"here{theme.dot}away: {sanitize_text(message)}" if message else f"here{theme.dot}away"
-        else:
-            where = "here"
-        rows.append(((label, theme.accent), (where, MUTED_COLOR)))
+            where += [(theme.dot, MUTED_COLOR),
+                      (f"away: {sanitize_text(message)}" if message else "away", WARNING_COLOR)]
+        rows.append(((label, name_color), (where, None)))
+    bot_badge = ("[BOT] ", MUTED_COLOR)
     for label in readers:
-        rows.append(((f"[BOT] {label}", None), ("reads this channel", MUTED_COLOR)))
+        rows.append((([bot_badge, (label, VALUE_COLOR)], None), ("reads this channel", MUTED_COLOR)))
     for label in bot_labels:
         if label not in readers:
             # Say what this bot actually receives here, not what it might.
             sees = "addressed messages; joins and leaves" if label in presence else "addressed messages only"
-            rows.append(((f"[BOT] {label}", None), (sees, MUTED_COLOR)))
+            rows.append((([bot_badge, (label, VALUE_COLOR)], None), (sees, MUTED_COLOR)))
     for label, node_name in remote_entries:
-        where = f"on linked node {sanitize_text(node_name)}" if node_name else "on a linked node"
-        rows.append(((label, None), (where, MUTED_COLOR)))
+        where = ([("on ", MUTED_COLOR), (sanitize_text(node_name), NODE_COLOR)] if node_name
+                 else [("on a linked node", MUTED_COLOR)])
+        rows.append(((_address_segments(label, NODE_COLOR), VALUE_COLOR), (where, None)))
     for name in mrc_entries:
-        rows.append(((name, None), ("on MRC", MUTED_COLOR)))
+        rows.append(((_address_segments(name, MRC_SITE_COLOR), VALUE_COLOR), ("on MRC", MRC_SITE_COLOR)))
     await _write_block(ctx, theme, f"Who's in #{sanitize_text(ctx.channel.name)}", rows=rows, count=len(rows))
+
+
+def _address_segments(label: str, site_color: int) -> list[tuple[str, int | None]]:
+    """`nick@site` as chat lines draw it: the name in the cell's colour, the
+    `@` muted, the site in its own (an MRC site's or a linked node's)."""
+    name, at, site = label.rpartition("@") if "@" in label and not label.startswith("[BOT]") else ("", "", "")
+    if not at or not name:
+        return [(label, None)]
+    return [(name, None), ("@", MUTED_COLOR), (site, site_color)]
+
+
+def _list_presence_segments(ctx: ChatCommandContext, channel: Channel, dot: str) -> list[tuple[str, int | None]]:
+    """`_list_presence` in colour: here in the value colour, MRC in the MRC
+    site colour, linked BBSes in the node colour."""
+    parts = _list_presence(ctx, channel, dot).split(dot)
+    segments: list[tuple[str, int | None]] = []
+    for index, part in enumerate(parts):
+        if index:
+            segments.append((dot, MUTED_COLOR))
+        color = MRC_SITE_COLOR if "on MRC" in part else NODE_COLOR if " on " in part else VALUE_COLOR
+        segments.append((part, color))
+    return segments
 
 
 def _list_presence(ctx: ChatCommandContext, channel: Channel, dot: str) -> str:
@@ -4259,7 +4342,7 @@ async def _handle_list(ctx: ChatCommandContext, args: str) -> None:
     theme = await _reply_theme(ctx)
     rows = [
         ((f"#{sanitize_text(channel.name)}", theme.accent),
-         (_list_presence(ctx, channel, theme.dot), METADATA_COLOR),
+         (_list_presence_segments(ctx, channel, theme.dot), METADATA_COLOR),
          (sanitize_text(channel.description) if channel.description else "", MUTED_COLOR))
         for channel in visible
     ]
@@ -5306,6 +5389,93 @@ _REPLAY_CONTROLS = re.compile(
 )
 
 
+def _transcript_rows(session: Session) -> list[str]:
+    """Every kept line as screen rows at the terminal's current width, oldest
+    first -- what the scrolled-back view pages through."""
+    width = session.terminal_width
+    rows: list[str] = []
+    for text in getattr(session, "line_transcript", None) or ():
+        rows.extend(wrap_terminal_text(_REPLAY_CONTROLS.sub("", text), width).split("\r\n"))
+    return rows
+
+
+@dataclass
+class _ScrollView:
+    """How far the chat area is scrolled back from the newest line (issue
+    #1281 follow-up). At 0 the chat is live. Scrolled back, the area holds
+    still -- a terminal's own scrollback jumps to the bottom with the next
+    redraw, a second later at most -- and new lines are kept and counted
+    instead of drawn, until PgDn reaches the newest again, Esc, or the
+    caller sends a line."""
+
+    offset: int = 0  # rows between the newest and the bottom of the view
+    unseen: int = 0  # lines that arrived while scrolled back
+    height: int = 0
+    width: int = 0
+
+    def area(self, height: int) -> int:
+        """Rows of history the view shows: the chat area less its last row,
+        which says where the view is."""
+        return height - _PINNED_ROWS - 1
+
+    def scroll(self, session: Session, height: int, *, up: bool) -> bool:
+        """One page up or down; whether the view moved."""
+        area = self.area(height)
+        if area < 2:
+            return False
+        rows = len(_transcript_rows(session))
+        step = area - 1  # one row of overlap, so the eye keeps its place
+        limit = max(0, rows - area)
+        new = min(limit, self.offset + step) if up else max(0, self.offset - step)
+        moved = new != self.offset
+        self.offset, self.height, self.width = new, height, session.terminal_width
+        return moved
+
+    def hold(self, session: Session, text: str) -> None:
+        """A line arriving while scrolled back: kept, counted, and the view
+        moved up by its rows so what is on screen stays put."""
+        transcript = getattr(session, "line_transcript", None)
+        if transcript is not None:
+            transcript.append(text)
+        self.offset += len(wrap_terminal_text(_REPLAY_CONTROLS.sub("", text), session.terminal_width).split("\r\n"))
+        self.unseen += 1
+
+
+def _scrolled_frame(session: Session, view: _ScrollView, height: int, *, unicode_style: bool) -> str:
+    """The chat area drawn scrolled back: the kept rows `view.offset` above
+    the newest, and on its last row where the view is and how to leave."""
+    if height < _PINNED_UI_MIN_HEIGHT:
+        return ""
+    rows = _transcript_rows(session)
+    area = view.area(height)
+    end = max(0, len(rows) - view.offset)
+    window = rows[max(0, end - area):end]
+    out = set_scroll_region(1, height - _PINNED_ROWS)
+    for index in range(area):
+        row = index - (area - len(window))
+        out += move_cursor(index + 1, 1) + clear_line() + (window[row] if row >= 0 else "")
+    dot = " · " if unicode_style else ", "
+    note = f"{view.offset} line{'s' if view.offset != 1 else ''} back"
+    if view.unseen:
+        note += f"{dot}{view.unseen} new"
+    note += f"{dot}PgDn newer{dot}Esc live"
+    out += move_cursor(area + 1, 1) + clear_line() + footer_rule(
+        note, width=block_width(session.terminal_width), unicode_style=unicode_style,
+    )
+    return out
+
+
+def _live_frame(session: Session, height: int) -> str:
+    """The chat area redrawn at its newest lines, the way a resize does."""
+    if height < _PINNED_UI_MIN_HEIGHT:
+        return ""
+    scroll_bottom = height - _PINNED_ROWS
+    out = set_scroll_region(1, scroll_bottom)
+    for row in range(1, scroll_bottom + 1):
+        out += move_cursor(row, 1) + clear_line()
+    return out + move_cursor(scroll_bottom, 1) + _replay_transcript(session, scroll_bottom - 1)
+
+
 def _new_transcript() -> deque[str]:
     return deque(maxlen=_TRANSCRIPT_LINES)
 
@@ -5811,14 +5981,24 @@ async def _chat_loop(
             async with lock:
                 height = await pinned_ui.sync(session, lane, hub, presence, channel, user, live_buffer)
                 if height is None:
+                    view.offset = 0
                     for text in texts:
                         await session.write_line(text)
                     return
-                for text in texts:
-                    await _print_and_redraw_input(
-                        session, text, live_buffer, height,
-                        accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
-                    )
+                if view.offset and (height, session.terminal_width) != (view.height, view.width):
+                    await view_live(height)  # a resize ends the scrolled view
+                if view.offset:
+                    # Scrolled back: the view holds still, so the caller can
+                    # read or copy it. New lines are kept, and counted.
+                    for text in texts:
+                        view.hold(session, text)
+                    await draw_scrolled(height)
+                else:
+                    for text in texts:
+                        await _print_and_redraw_input(
+                            session, text, live_buffer, height,
+                            accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
+                        )
                 if repaint_status:
                     await _repaint_status_line(
                         session, lane, hub, presence, channel, user,
@@ -5828,37 +6008,96 @@ async def _chat_loop(
 
         session.pinned_notice_hook = deliver
         hub_reply = _HubReplyBlock(asyncio.get_running_loop().time)
+        view = _ScrollView()
+
+        async def draw_scrolled(height: int) -> None:
+            """The scrolled-back view, from the lines kept: callers already
+            hold `lock` (the line editor's keystroke, or `deliver_many`)."""
+            await session.write(_scrolled_frame(session, view, height, unicode_style=pinned_ui.unicode_style))
+            await _repaint_input_row(
+                session, live_buffer, height, accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
+            )
+
+        async def view_live(height: int) -> None:
+            """Back to the newest lines, with whatever arrived meanwhile."""
+            view.offset = view.unseen = 0
+            await session.write(_live_frame(session, height))
+            await _repaint_input_row(
+                session, live_buffer, height, accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
+            )
+
+        async def print_lines(lines: Sequence[str]) -> None:
+            height = pinned_ui.last_height if pinned_ui.active else None
+            for text in lines:
+                if height is None:
+                    await session.write_line(text)
+                else:
+                    await _print_and_redraw_input(
+                        session, text, live_buffer, height,
+                        accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
+                    )
+
+        async def navigate(key: str) -> None:
+            """PgUp/PgDn/Esc from the line editor, inside its keystroke's
+            critical section: PgUp and PgDn scroll through the chat's kept
+            lines, and at the newest PgDn shows the next page of a held
+            answer; Esc leaves the scrolled view, or drops the pages held."""
+            scrolled = bool(view.offset)  # what the key was pressed on
+            # The pinned rows' height as of now (review of #1288): a resize
+            # since the last line drawn is only noticed by a sync. A height
+            # change redraws the chat live; a width change alone does not.
+            height = await pinned_ui.sync(session, lane, hub, presence, channel, user, live_buffer)
+            if view.offset and (height is None or (height, session.terminal_width) != (view.height, view.width)):
+                if height is not None and height == view.height:
+                    await view_live(height)
+                view.offset = view.unseen = 0
+            if key == "ESCAPE":
+                # One Escape does one thing: leave the scrolled view if it
+                # was pressed there, else drop the pages held.
+                if scrolled:
+                    if view.offset and height is not None:
+                        await view_live(height)
+                    view.offset = view.unseen = 0
+                elif hub_reply.held is not None:
+                    hub_reply.held = None
+                    await print_lines([colored("(the rest of that answer is skipped)", fg_color=MUTED_COLOR)])
+                return
+            if key == "PAGE_UP" or view.offset:
+                if height is None:
+                    return
+                moved = view.scroll(session, height, up=key == "PAGE_UP")
+                if view.offset:
+                    await draw_scrolled(height)
+                elif moved:
+                    await view_live(height)
+                return
+            if hub_reply.held is not None or hub_reply.waiting:
+                answer = None if hub_reply.held is not None else hub_reply.waiting.pop(0)
+                await print_lines(await hub_reply_page(answer))
 
         async def hub_reply_page(answer: tuple[str, str, list[str]] | None = None) -> list[str]:
-            """The next page of the hub's answer as screen lines: the first
-            of `answer`, a completed one, or else the next of those held."""
-            width = session.terminal_width
-            capacity = _hub_reply_capacity(session)
+            """The next page as screen lines: the first of `answer`, a
+            completed hub answer, or else the next of whatever is held (a hub
+            answer's or a long command reply's)."""
             if answer is not None:
                 label, started_at, rows = answer
-                page, rest = _take_hub_reply_page(rows, capacity, width)
-                hub_reply.more_label, hub_reply.more, hub_reply.page = label, rest, 1
-                hub_reply.pages = 1 + _hub_reply_page_count(rest, capacity, width)
-                title = await lane.run(_render_hub_reply_title, user, label, started_at, width)
+
+                async def title(page: int, pages: int, width: int) -> str:
+                    if page == 1:
+                        return await lane.run(_render_hub_reply_title, user, label, started_at, width)
+                    return await lane.run(_render_hub_reply_title, user, label, "", width, page=f"{page}/{pages}")
+
+                async def footer(page: int, pages: int, width: int, waiting: str | None) -> str:
+                    return await lane.run(_render_hub_reply_footer, user, page, pages, width, next_label=waiting)
+
+                held = _HeldPages(list(rows), title, footer)
             else:
-                page, hub_reply.more = _take_hub_reply_page(hub_reply.more, capacity, width)
-                hub_reply.page += 1
-                # A resize since the first page changes how many are left.
-                hub_reply.pages = hub_reply.page + _hub_reply_page_count(hub_reply.more, capacity, width)
-                title = await lane.run(
-                    _render_hub_reply_title, user, hub_reply.more_label, "", width,
-                    page=f"{hub_reply.page}/{hub_reply.pages}",
-                )
-            lines = [title, *page]
-            if hub_reply.more:
-                lines.append(await lane.run(
-                    _render_hub_reply_footer, user, hub_reply.page, hub_reply.pages, width,
-                ))
-            elif hub_reply.waiting:
-                lines.append(await lane.run(
-                    _render_hub_reply_footer, user, hub_reply.page, hub_reply.pages, width,
-                    next_label=hub_reply.waiting[0][0],
-                ))
+                held = hub_reply.held
+                assert held is not None
+            lines = await _next_held_page(
+                session, held, waiting=hub_reply.waiting[0][0] if hub_reply.waiting else None,
+            )
+            hub_reply.held = held if held.rows else None
             return lines
 
         async def hub_reply_complete() -> None:
@@ -5866,10 +6105,10 @@ async def _chat_loop(
             earlier answer's pages are still being read -- then it waits
             for them, and the caller is told it is there."""
             answer = hub_reply.take()
-            if hub_reply.more or hub_reply.waiting:
+            if hub_reply.held is not None or hub_reply.waiting:
                 hub_reply.waiting.append(answer)
                 await deliver(colored(
-                    f"(the hub answered {answer[0]}; Enter shows it after these pages)",
+                    f"(the hub answered {answer[0]}; PgDn shows it after these pages)",
                     fg_color=MUTED_COLOR,
                 ))
                 return
@@ -6024,6 +6263,10 @@ async def _chat_loop(
                     return True
 
             async def list_candidates(candidates: Sequence[str], line_text: str, cursor: int) -> None:
+                if view.offset:
+                    if pinned_ui.active and pinned_ui.last_height is not None:
+                        await view_live(pinned_ui.last_height)
+                    view.offset = view.unseen = 0
                 await _print_candidates_and_redraw_input(
                     session, live_buffer, session.terminal_height, candidates, line_text, cursor,
                     accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
@@ -6034,11 +6277,17 @@ async def _chat_loop(
                 raw_line = await session.read_line(
                     history=history, completer=completer, live_buffer=live_buffer, lock=lock,
                     list_candidates=list_candidates if pinned_ui.active else None,
-                    viewport=_input_viewport(session),
+                    viewport=_input_viewport(session), navigate=navigate,
                 )
                 line = raw_line.strip()
+                if view.offset:
+                    # Whatever was typed answers what is live now.
+                    async with lock:
+                        if pinned_ui.active and pinned_ui.last_height is not None:
+                            await view_live(pinned_ui.last_height)
+                        view.offset = 0
                 if line:
-                    hub_reply.more = []
+                    hub_reply.held = None
 
                 # Help is modal because it reads page-turn keys. Prepare its
                 # result through ordinary command dispatch, then render each
@@ -6138,9 +6387,9 @@ async def _chat_loop(
                             return _Quit()
 
                         if not line:
-                            if hub_reply.more or hub_reply.waiting:
+                            if hub_reply.held is not None or hub_reply.waiting:
                                 # The held pages first, then the next answer waiting.
-                                answer = None if hub_reply.more else hub_reply.waiting.pop(0)
+                                answer = None if hub_reply.held is not None else hub_reply.waiting.pop(0)
                                 for page_line in await hub_reply_page(answer):
                                     await session.write_line(page_line)
                             continue

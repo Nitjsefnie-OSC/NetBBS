@@ -126,6 +126,13 @@ CANCEL_KEY = "\x03"  # Ctrl-C
 KILL_LINE_KEY = "\x15"  # Ctrl-U
 
 
+#: A line editor's way to hand chat the keys it has no use for itself
+#: (issue #1281 follow-up): called with `"PAGE_UP"`, `"PAGE_DOWN"` or
+#: `"ESCAPE"` (a bare Escape) inside the per-keystroke critical section, so
+#: it draws without taking `lock` itself. The line being typed is untouched.
+Navigate = Callable[[str], Awaitable[None]]
+
+
 class InputCancelled(Exception):
     """Raised by `read_line(cancellable=True)` when the caller presses a
     bare Escape (issue #529).
@@ -1195,6 +1202,7 @@ async def read_line(
     viewport: int | Callable[[], int] | None = None,
     viewport_owns_row: bool = False,
     pasted_color: PastedColor | None = None,
+    navigate: Navigate | None = None,
 ) -> str:
     """
     Read one line of input, echoing (or masking, if `echo=False`) as it
@@ -1245,7 +1253,7 @@ async def read_line(
         source, write, history, completer, live_buffer=live_buffer, lock=lock,
         list_candidates=list_candidates, initial=initial, cancellable=cancellable,
         viewport=viewport, viewport_owns_row=viewport_owns_row, pasted_color=pasted_color,
-        viewport_deferred=viewport_deferred,
+        viewport_deferred=viewport_deferred, navigate=navigate,
     )
 
 
@@ -1336,6 +1344,7 @@ async def _read_line_editable(
     viewport_owns_row: bool = False,
     pasted_color: PastedColor | None = None,
     viewport_deferred: bool = False,
+    navigate: Navigate | None = None,
 ) -> str:
     # `initial` (issue #529) starts the buffer populated and the cursor
     # at its end, so the caller can edit an existing value instead of
@@ -1504,6 +1513,14 @@ async def _read_line_editable(
                     continue
 
                 if b == _ESC:
+                    if navigate is not None and not cancellable:
+                        # The same bare-Escape test as below: only nothing
+                        # following ESC is a bare Escape.
+                        peek = await _read_byte_with_timeout(source, _FOLLOWUP_BYTE_TIMEOUT)
+                        if peek is None:
+                            await navigate("ESCAPE")
+                            continue
+                        _push_back(source, peek)
                     if cancellable:
                         # `_read_escape_sequence`'s `None` is ambiguous:
                         # it means both "nothing followed ESC" (a real
@@ -1524,6 +1541,8 @@ async def _read_line_editable(
                     if isinstance(key, ColorCode):
                         if pasted_color is not None:
                             _type_pasted_color(source, key, pasted_color)
+                    elif key in ("PAGE_UP", "PAGE_DOWN") and navigate is not None:
+                        await navigate(key)
                     elif key == "LEFT":
                         if cursor > 0:
                             # A whole grapheme back: landing between a

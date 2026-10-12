@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     # already makes every annotation in this file a lazily-evaluated
     # string at runtime; this block exists only so type checkers/IDEs
     # can resolve `InputHistory` by name.
-    from netbbs.net.char_input import CandidateListPrinter, Completer, EditorKey, InputHistory, LiveInputBuffer
+    from netbbs.net.char_input import CandidateListPrinter, Completer, EditorKey, InputHistory, LiveInputBuffer, Navigate
     from netbbs.net.throttle import LoginThrottle
 
 
@@ -722,6 +722,7 @@ class Session(ABC):
         viewport: int | Callable[[], int] | None = None,
         viewport_owns_row: bool = False,
         pasted_color: PastedColor | None = None,
+        navigate: Navigate | None = None,
     ) -> str:
         """
         Read one line of input from the client.

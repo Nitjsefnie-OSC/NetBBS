@@ -387,6 +387,7 @@ class TelnetSession(Session):
         viewport: int | Callable[[], int] | None = None,
         viewport_owns_row: bool = False,
         pasted_color: PastedColor | None = None,
+        navigate: char_input.Navigate | None = None,
     ) -> str:
         """
         Read one line of input, character by character, echoing (or
@@ -405,6 +406,7 @@ class TelnetSession(Session):
             live_buffer=live_buffer, lock=lock, list_candidates=list_candidates,
             initial=initial, cancellable=cancellable, viewport=viewport, viewport_owns_row=viewport_owns_row,
             pasted_color=pasted_color,
+            navigate=navigate,
         )
 
     async def read_key(self, echo: bool = True) -> str:
