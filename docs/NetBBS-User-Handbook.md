@@ -636,7 +636,7 @@ In this chapter: [Your terminal](#your-terminal) ·
 Use <kbd>P</kbd> **Profile** for display, editor, and chat preferences, your
 SSH keys, and your password.
 
-#### Your terminal
+### Your terminal
 
 **Profile ▸ Character set** sets the characters NetBBS sends your terminal:
 
@@ -658,7 +658,7 @@ which of two sample lines looks right.
 <details>
 <summary>SyncTERM's keys</summary>
 
-With CP437, SyncTERM's Home, End, Page Up, Page Down, Insert and Delete keys
+SyncTERM's Home, End, Page Up, Page Down, Insert and Delete keys
 work as they do in other terminals. SyncTERM's Backspace key sends the same
 code as <kbd>Ctrl</kbd>+<kbd>H</kbd>, so in SyncTERM it stays Backspace, and
 <kbd>F1</kbd> opens a screen's help instead. NetBBS names F1 where other
@@ -666,7 +666,7 @@ terminals see Ctrl-H.
 
 </details>
 
-#### Banners
+### Banners
 
 Some nodes draw their welcome art or main-menu art slowly, at the speed of an
 old modem. Press any key to draw the rest at once; that key is used up, so it
@@ -676,7 +676,7 @@ doesn't also act at the next prompt.
 in at once. The welcome banner comes before you sign in, so it plays at the
 node's speed whatever you chose; any key still draws the rest.
 
-#### Calling as a guest
+### Calling as a guest
 
 Signed in as the board's guest, you share one account with every other guest.
 
@@ -708,7 +708,7 @@ go back to the account's own the next time anyone signs in as the guest.
 > [!TIP]
 > Register an account of your own to keep your settings.
 
-#### Access requirements
+### Access requirements
 
 Some resources require an account level, verified age, or verified name. When
 you open one, a **Requires:** line under its title says what it asks, for
@@ -720,7 +720,7 @@ A name requirement may also disclose the verified name beside contributions in
 that resource. Ask the SysOp what is required before sharing identity
 information. You cannot grant yourself access by editing your profile.
 
-#### Verified age and name
+### Verified age and name
 
 An entry marked **needs verification** asks for a verified name, or for a
 verified age when the birthdate in your profile is old enough but nobody has
@@ -745,7 +745,7 @@ over Link**, **Share verified name over Link**).
 - Switching it off makes this BBS stop giving it out and tells those BBSes to
   forget it. One that already copied it cannot be forced to.
 
-#### Logging off and reporting problems
+### Logging off and reporting problems
 
 To finish, return to the main menu and choose <kbd>L</kbd> **Logoff**. When
 reporting a problem, tell the SysOp which screen, connection method, and
