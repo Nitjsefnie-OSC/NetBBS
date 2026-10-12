@@ -580,28 +580,49 @@ you are typing a password, and anything typed at a password prompt shows as
 
 ## Exchange files
 
-Open a file area and select an upload or download action. Use the browser
-transfer controls, a browser link offered by the node, or a Zmodem-capable
-terminal client. Browser links require the SysOp to configure the web
-listener. PuTTY and ordinary SSH clients do not provide Zmodem by themselves.
+| At a glance | |
+| --- | --- |
+| **Where** | <kbd>F</kbd> **Files** on the main menu, then a file area |
+| **Try first** | <kbd>D</kbd> **Download** on a file that interests you |
+| **You need** | A Zmodem terminal such as SyncTERM, or the browser |
+
+Open a file area and select an upload or download action:
+<kbd>D</kbd> **Download** for the highlighted file, <kbd>U</kbd> **Upload** to
+send one. There are three ways to move the file:
+
+- **Browser transfer controls**, in the browser terminal.
+- **A browser link** offered by the node. Browser links require the SysOp to
+  configure the web listener.
+- **Zmodem**, with a Zmodem-capable terminal client. PuTTY and ordinary SSH
+  clients do not provide Zmodem by themselves.
+
+#### Zmodem
+
 A Zmodem terminal such as SyncTERM starts its side of the transfer by itself:
 it saves a download, or asks which file to upload. If yours doesn't, start its
-Zmodem receive or send by hand. Press **Ctrl-X** five times to cancel a
-transfer. If a Zmodem transfer fails, you stay on the file list: press **[W]**
-there for a browser link instead. After a Zmodem upload you are back on the
-file list too, with the cursor on the new file, so **[E]** describes it
-straight away.
+Zmodem receive or send by hand.
+
+- Press <kbd>Ctrl</kbd>+<kbd>X</kbd> five times to cancel a transfer.
+- If a Zmodem transfer fails, you stay on the file list: press
+  <kbd>W</kbd> **Web transfer** there for a browser link instead.
+- After a Zmodem upload you are back on the file list too, with the cursor on
+  the new file, so <kbd>E</kbd> **Edit description** describes it straight
+  away.
+
+#### Browser links
 
 When you upload through a browser link, the terminal tells you once the file
-has arrived, and whether it waits for approval before others can see it. In
-the browser terminal the list updates by itself; elsewhere the list shows the
-new file the next time it is drawn, for example when you press Ctrl-L. The
-message names the file area the file went to in its own color.
+has arrived, and whether it waits for approval before others can see it. The
+message names the file area the file went to in its own color. In the browser
+terminal the list updates by itself; elsewhere the list shows the new file the
+next time it is drawn, for example when you press <kbd>Ctrl</kbd>+<kbd>L</kbd>.
 
-Treat a transfer link like a password: it grants access to that transfer.
-Links expire; request a fresh one if needed. A remote file may first need
-to be fetched from its originating node. If that node is unavailable, try
-later or tell your SysOp.
+> [!NOTE]
+> Treat a transfer link like a password: it grants access to that transfer.
+> Links expire; request a fresh one if needed.
+
+A remote file may first need to be fetched from its originating node. If that
+node is unavailable, try later or tell your SysOp.
 
 ## Play a door game
 
