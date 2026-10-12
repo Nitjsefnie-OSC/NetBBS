@@ -105,11 +105,8 @@ def test_mrc_subcommands_ask_the_hub_and_show_the_reply_to_the_asker_only(db, la
             await rig.fake.wait_for(lambda p: p.body == "NEWROOM::lobby" and p.from_user == "alice")
             session.inputs.put_nowait("/mrc rooms")
             await rig.fake.wait_for(lambda p: p.body == "LIST" and p.from_user == "alice")
-            # The next typed line ends the reply's block, so let it finish.
-            assert await eventually(lambda: "LIST reply line 2" in _text(session))
             session.inputs.put_nowait("/mrc bbses phenom")
             await rig.fake.wait_for(lambda p: p.body == "CONNECTED phenom")
-            assert await eventually(lambda: "CONNECTED reply line 2 phenom" in _text(session))
             session.inputs.put_nowait("/mrc ctcp bob version")
             await rig.fake.wait_for(lambda p: p.body == "[CTCP] alice bob VERSION")
             # Three asks spent the caller's own burst (the same allowance a
@@ -128,7 +125,8 @@ def test_mrc_subcommands_ask_the_hub_and_show_the_reply_to_the_asker_only(db, la
             session.inputs.put_nowait("/quit")
             await asyncio.wait_for(task, timeout=4)
             text = _text(session)
-            # One titled block per answer, its lines indented under it
+            # One titled block per answer, even with the second asked
+            # before the first went quiet, its lines indented under it
             # without a badge of their own.
             assert "MRC hub · /mrc rooms" in text and "MRC hub · /mrc bbses phenom" in text
             lines = text.splitlines()
@@ -230,3 +228,46 @@ def test_mrc_speaker_is_badged_and_its_site_has_its_own_color(db, channel, alice
     assert colored("[MRC] ", fg_color=MUTED_COLOR) in rendered
     assert colored("@", fg_color=MUTED_COLOR) + colored("Other", fg_color=MRC_SITE_COLOR) in rendered
     assert colored("Other", fg_color=NODE_COLOR) not in rendered
+
+
+def test_a_long_hub_answer_is_paged_and_an_empty_enter_turns_the_page(db, lane, hub, presence, channel, alice):
+    from netbbs.timeutil import utc_now_iso
+
+    async def scenario():
+        rig = await _rig(db, lane, hub, channel)
+        try:
+            session = _QueueSession()
+            session.terminal_width, session.terminal_height = 80, 12  # pages of six rows
+            task = asyncio.create_task(
+                chat_flow._chat_loop(
+                    session, lane, hub, presence, MessageMailbox(), InputHistory(), channel, alice,
+                    mrc_bridge=rig.bridge,
+                )
+            )
+            await rig.fake.wait_for(lambda p: p.body == "NEWROOM::lobby" and p.from_user == "alice")
+            session.inputs.put_nowait("/mrc bbses")
+            await rig.fake.wait_for(lambda p: p.body == "CONNECTED")
+            [participant] = hub.participants_for_username(channel.name, "alice")
+            for index in range(20):
+                await hub.send_to(channel.name, participant, MrcNotice(f"board {index:02}", utc_now_iso(), kind="reply"))
+            assert await eventually(lambda: "Enter shows more" in _text(session))
+            text = _text(session)
+            assert "MRC hub · /mrc bbses" in text and "page 1 of 4" in text
+            assert " board 05" in text.splitlines() and "board 06" not in text
+            assert "[MRC] board" not in text
+            session.inputs.put_nowait("")
+            assert await eventually(lambda: "board 11" in _text(session))
+            text = _text(session)
+            assert "2/4" in text and "page 2 of 4" in text and "board 12" not in text
+            shown = text.count("board ")
+            # Any other line drops the pages still held.
+            session.inputs.put_nowait("hello")
+            await rig.fake.wait_for(lambda p: "hello" in p.body)
+            session.inputs.put_nowait("")
+            await asyncio.sleep(0.3)
+            assert _text(session).count("board ") == shown
+            session.inputs.put_nowait("/quit")
+            await asyncio.wait_for(task, timeout=4)
+        finally:
+            await rig.close()
+    asyncio.run(scenario())

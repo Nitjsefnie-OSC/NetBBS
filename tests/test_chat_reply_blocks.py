@@ -131,16 +131,43 @@ def test_list_counts_a_linked_origin_only_while_a_caller_here_is_subscribed():
     assert chat_flow._list_presence(stale, _channel("general"), " · ") == "0 here"
 
 
-def test_a_hub_answer_is_one_block_until_its_window_lapses_or_something_else_shows():
+def test_a_hub_answer_is_collected_until_the_hub_goes_quiet():
     now = [100.0]
     block = chat_flow._HubReplyBlock(lambda: now[0])
-    assert block.take() is None  # nothing asked
+    assert not block.accepts() and block.quiet_in() is None  # nothing asked
     block.expect("/mrc rooms")
-    assert block.take() == "title" and block.label == "/mrc rooms"
-    now[0] += chat_flow.HUB_REPLY_WINDOW_SECONDS - 1
-    assert block.take() == "row"
-    now[0] += chat_flow.HUB_REPLY_WINDOW_SECONDS + 1
-    assert block.take() is None  # a late line stands alone
+    assert block.accepts() and block.quiet_in() is None
+    block.add("row 1", "2026-10-12T21:24:00Z")
+    now[0] += 0.4
+    block.add("row 2", "2026-10-12T21:24:01Z")
+    assert block.quiet_in() == chat_flow.HUB_REPLY_QUIET_SECONDS
+    assert block.take() == ("/mrc rooms", "2026-10-12T21:24:00Z", ["row 1", "row 2"])
+    assert not block.accepts()  # drawn: a later line stands alone
+
+
+def test_a_question_with_no_answer_in_time_takes_no_later_line():
+    now = [0.0]
+    block = chat_flow._HubReplyBlock(lambda: now[0])
     block.expect("/mrc motd")
-    block.close()
-    assert block.take() is None
+    now[0] += chat_flow.HUB_REPLY_WINDOW_SECONDS + 1
+    assert not block.accepts()
+
+
+def test_a_second_question_keeps_the_first_answer_for_drawing():
+    block = chat_flow._HubReplyBlock(lambda: 0.0)
+    block.expect("/mrc rooms")
+    block.add("lobby", "t1")
+    block.expect("/mrc motd")
+    assert block.quiet_in() == 0.0
+    assert block.take() == ("/mrc rooms", "t1", ["lobby"])
+    block.add("welcome", "t2")
+    assert block.take() == ("/mrc motd", "t2", ["welcome"])
+
+
+def test_a_page_counts_the_rows_a_long_hub_line_wraps_onto():
+    rows = ["x" * 100, "short", "short", "short"]
+    page, rest = chat_flow._take_hub_reply_page(rows, 3, 80)
+    assert page == ["x" * 100, "short"] and rest == ["short", "short"]
+    assert chat_flow._hub_reply_page_count(rows, 3, 80) == 2
+    # A row taller than a whole page still goes out, alone.
+    assert chat_flow._take_hub_reply_page(["y" * 500, "z"], 3, 80)[0] == ["y" * 500]

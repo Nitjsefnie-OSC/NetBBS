@@ -53,6 +53,16 @@ def title_rule(
     return rule
 
 
+
+def footer_rule(text: str, *, width: int, unicode_style: bool) -> str:
+    """`──────── page 1 of 4 · Enter shows more ──`: a rule closing a block,
+    `text` set in near its right end."""
+    char = "─" if unicode_style else "-"
+    shown = truncate_to_width(text, max(1, width - 6))
+    fill = max(2, width - display_width(shown) - 4)
+    return (colored(char * fill + " ", fg_color=RULE_COLOR) + colored(shown, fg_color=METADATA_COLOR)
+            + colored(" " + char * 2, fg_color=RULE_COLOR))
+
 def _style(text: str, color: int | None) -> str:
     return colored(text, fg_color=color) if color is not None and text else text
 

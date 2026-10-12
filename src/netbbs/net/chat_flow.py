@@ -190,7 +190,7 @@ from netbbs.messaging_preferences import invitation_refusal, live_message_refusa
 from netbbs.moderation import ChannelPermission, has_permission
 from netbbs.net.char_input import Completer, InputHistory, LineViewport, LiveInputBuffer, reject_unhandled_key
 from netbbs.net.char_input import move_cursor as relative_move_cursor
-from netbbs.net.chat_reply import Cell, block_width, paragraph, table_rows, title_rule
+from netbbs.net.chat_reply import Cell, block_width, footer_rule, paragraph, table_rows, title_rule
 from netbbs.net.chat_channel_picker_banner import load_chat_channel_picker_banner, load_chat_channel_picker_slot_art
 from netbbs.net.art_pacing import art_speed, art_time_limit
 from netbbs.net.list_art import CHAT_CHANNEL_PICKER, list_slot_fields
@@ -1954,47 +1954,103 @@ class ChatCommandContext:
     hub_reply: "_HubReplyBlock | None" = None
 
 
-#: How long after the question, or after its previous line, the hub's
-#: answer still belongs to it. A reply streams in a burst; anything later
-#: is shown with its own `[MRC]` badge again.
+#: How long after the question the hub's first line may come and still be
+#: its answer; a later line is shown alone with its own `[MRC]` badge.
 HUB_REPLY_WINDOW_SECONDS = 10.0
+#: How long the hub must stay quiet before its answer counts as complete.
+#: A reply streams in one burst, and carries no end marker of its own.
+HUB_REPLY_QUIET_SECONDS = 1.0
 
 
 class _HubReplyBlock:
-    """Which `/mrc` question the hub is answering on this screen. The
-    hub's lines carry no request id and no end marker, so the first
-    `reply` line after a question opens a titled block and the rest are
-    its rows -- until the window lapses or anything else reaches the
-    screen, after which a late line stands alone with its badge."""
+    """The hub's answer to this screen's last `/mrc` question. Its lines
+    carry no request id and no end marker, so the lines that follow a
+    question are collected until the hub goes quiet, then drawn as one
+    titled block -- paged when taller than the chat area, the next page
+    on an empty Enter. A non-empty line typed by the caller drops the
+    pages still held, never an answer still arriving; a line arriving
+    once the answer is drawn stands alone with its badge."""
 
     def __init__(self, clock: Callable[[], float]) -> None:
         self._clock = clock
-        self._label = ""
+        self.label = ""
+        self._asked = 0.0
         self._last = 0.0
-        self._opened = False
+        self.started_at = ""
+        self.rows: list[str] = []
+        # Answers complete but not drawn yet: a second question asked
+        # before the first answer went quiet.
+        self.ready: list[tuple[str, str, list[str]]] = []
+        # The pages still to show, once an answer has been drawn.
+        self.more_label = ""
+        self.more: list[str] = []
+        self.page = 0
+        self.pages = 0
 
     def expect(self, label: str) -> None:
-        self._label, self._last, self._opened = label, self._clock(), False
+        if self.rows:
+            self.ready.append((self.label, self.started_at, self.rows))
+        self.label, self._asked, self.rows, self.started_at = label, self._clock(), [], ""
 
-    def close(self) -> None:
-        self._label = ""
+    def accepts(self) -> bool:
+        """Whether a reply line now belongs to the question asked."""
+        if not self.label:
+            return False
+        if not self.rows and self._clock() - self._asked > HUB_REPLY_WINDOW_SECONDS:
+            self.label = ""
+            return False
+        return True
 
-    def take(self) -> str | None:
-        """`"title"` for the answer's first line, `"row"` for the rest,
-        `None` when no question is waiting for one."""
-        now = self._clock()
-        if not self._label or now - self._last > HUB_REPLY_WINDOW_SECONDS:
-            self._label = ""
+    def add(self, row: str, created_at: str) -> None:
+        self.rows.append(row)
+        self.started_at = self.started_at or created_at
+        self._last = self._clock()
+
+    def quiet_in(self) -> float | None:
+        """Seconds until the collected answer is complete, or `None`."""
+        if self.ready:
+            return 0.0
+        if not self.rows:
             return None
-        self._last = now
-        if self._opened:
-            return "row"
-        self._opened = True
-        return "title"
+        return max(0.0, self._last + HUB_REPLY_QUIET_SECONDS - self._clock())
 
-    @property
-    def label(self) -> str:
-        return self._label
+    def take(self) -> tuple[str, str, list[str]]:
+        """The oldest complete answer; collecting ends with the current one."""
+        if self.ready:
+            return self.ready.pop(0)
+        taken = (self.label, self.started_at, self.rows)
+        self.label, self.rows = "", []
+        return taken
+
+
+def _hub_reply_capacity(session: Session) -> int:
+    """Rows of hub reply one page holds: the chat area less the title, the
+    footer, and the row the last line feed scrolls into."""
+    height = max(1, getattr(session, "terminal_height", 24))
+    scroll = height - (_PINNED_ROWS if height >= _PINNED_UI_MIN_HEIGHT else 0)
+    return max(3, scroll - 3)
+
+
+def _take_hub_reply_page(rows: Sequence[str], capacity: int, width: int) -> tuple[list[str], list[str]]:
+    """As many rows as fit `capacity` screen rows at `width` (a hub line
+    can be 140 columns and wrap), at least one."""
+    used = 0
+    taken = 0
+    for row in rows:
+        height = max(1, -(-visible_width(row) // max(1, width)))
+        if taken and used + height > capacity:
+            break
+        used += height
+        taken += 1
+    return list(rows[:taken]), list(rows[taken:])
+
+
+def _hub_reply_page_count(rows: Sequence[str], capacity: int, width: int) -> int:
+    count = 0
+    while rows:
+        _page, rows = _take_hub_reply_page(rows, capacity, width)
+        count += 1
+    return count
 
 
 @dataclass(frozen=True)
@@ -3620,11 +3676,14 @@ def _render_mrc_notice(db: Database, viewer: User, notice: MrcNotice) -> str:
     return format_with_preference(db, viewer, line, notice.created_at)
 
 
-def _render_hub_reply_title(db: Database, viewer: User, label: str, created_at: str, width: int) -> str:
+def _render_hub_reply_title(
+    db: Database, viewer: User, label: str, created_at: str, width: int, *, page: str | None = None,
+) -> str:
     """`── MRC hub · /mrc rooms ──── 21:24 ──`: the time the answer began,
-    if `viewer` keeps chat timestamps, in place of each line's own."""
-    stamp = None
-    if timestamps_enabled(db, viewer):
+    if `viewer` keeps chat timestamps, in place of each line's own; a
+    later page says which page it is instead."""
+    stamp = page
+    if page is None and timestamps_enabled(db, viewer):
         try:
             stamp = format_for_display(created_at, db, override_format="%H:%M")
         except ValueError:
@@ -3633,6 +3692,14 @@ def _render_hub_reply_title(db: Database, viewer: User, label: str, created_at: 
     title = f"MRC hub{' · ' if unicode_style else ': '}{label}"
     return title_rule(title, width=block_width(width), unicode_style=unicode_style,
                       title_color=effective_header_color_256(db), right=stamp)
+
+
+def _render_hub_reply_footer(db: Database, viewer: User, page: int, pages: int, width: int) -> str:
+    """`──────── page 1 of 4 · Enter shows more ──` under a page with more after it."""
+    unicode_style = unicode_style_enabled(db, viewer)
+    dot = " · " if unicode_style else ", "
+    return footer_rule(f"page {page} of {pages}{dot}Enter shows more", width=block_width(width),
+                       unicode_style=unicode_style)
 
 
 def _render_hub_reply_row(db: Database, viewer: User, notice: MrcNotice) -> str:
@@ -5678,15 +5745,23 @@ async def _chat_loop(
             Routes through the pinned-row-aware print-and-redraw path
             when the pinned UI is active.
             """
+            await deliver_many((text,), repaint_status=repaint_status)
+
+        async def deliver_many(texts: Sequence[str], *, repaint_status: bool = False) -> None:
+            """`deliver` for several lines that belong together (a page of
+            the hub's answer): one lock acquisition, so nothing lands
+            between them."""
             async with lock:
                 height = await pinned_ui.sync(session, lane, hub, presence, channel, user, live_buffer)
                 if height is None:
-                    await session.write_line(text)
+                    for text in texts:
+                        await session.write_line(text)
                     return
-                await _print_and_redraw_input(
-                    session, text, live_buffer, height,
-                    accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
-                )
+                for text in texts:
+                    await _print_and_redraw_input(
+                        session, text, live_buffer, height,
+                        accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
+                    )
                 if repaint_status:
                     await _repaint_status_line(
                         session, lane, hub, presence, channel, user,
@@ -5697,9 +5772,50 @@ async def _chat_loop(
         session.pinned_notice_hook = deliver
         hub_reply = _HubReplyBlock(asyncio.get_running_loop().time)
 
+        async def hub_reply_page(*, fresh: bool = False) -> list[str]:
+            """The next page of the hub's answer as screen lines: `fresh`
+            takes a just-completed answer, otherwise the pages still held."""
+            width = session.terminal_width
+            capacity = _hub_reply_capacity(session)
+            if fresh:
+                label, started_at, rows = hub_reply.take()
+                page, rest = _take_hub_reply_page(rows, capacity, width)
+                hub_reply.more_label, hub_reply.more, hub_reply.page = label, rest, 1
+                hub_reply.pages = 1 + _hub_reply_page_count(rest, capacity, width)
+                title = await lane.run(_render_hub_reply_title, user, label, started_at, width)
+            else:
+                page, hub_reply.more = _take_hub_reply_page(hub_reply.more, capacity, width)
+                hub_reply.page += 1
+                # A resize since the first page changes how many are left.
+                hub_reply.pages = hub_reply.page + _hub_reply_page_count(hub_reply.more, capacity, width)
+                title = await lane.run(
+                    _render_hub_reply_title, user, hub_reply.more_label, "", width,
+                    page=f"{hub_reply.page}/{hub_reply.pages}",
+                )
+            lines = [title, *page]
+            if hub_reply.more:
+                lines.append(await lane.run(
+                    _render_hub_reply_footer, user, hub_reply.page, hub_reply.pages, width,
+                ))
+            return lines
+
         async def receive_loop() -> None:
             while True:
-                message = await queue.get()
+                quiet = hub_reply.quiet_in()
+                if quiet is None:
+                    message = await queue.get()
+                else:
+                    try:
+                        message = await asyncio.wait_for(queue.get(), timeout=quiet)
+                    except asyncio.TimeoutError:
+                        # The hub has gone quiet: its answer is complete.
+                        await deliver_many(await hub_reply_page(fresh=True))
+                        continue
+                if isinstance(message, MrcNotice) and message.kind == "reply" and hub_reply.accepts():
+                    hub_reply.add(await lane.run(_render_hub_reply_row, user, message), message.created_at)
+                    continue
+                # Anything else is shown as it comes; the answer still being
+                # collected follows as one block once the hub goes quiet.
                 if isinstance(message, _KickNotice):
                     await deliver(
                         colored(f"\r\n*** You have been {message.reason} from this channel.", fg_color=MUTED_COLOR)
@@ -5740,18 +5856,6 @@ async def _chat_loop(
                     rendered = await lane.run(format_with_preference, user, message.text, message.created_at)
                     await deliver(rendered, repaint_status=True)
                     continue
-                if not (isinstance(message, MrcNotice) and message.kind == "reply"):
-                    hub_reply.close()
-                if isinstance(message, MrcNotice) and message.kind == "reply":
-                    step = hub_reply.take()
-                    if step is not None:
-                        if step == "title":
-                            await deliver(await lane.run(
-                                _render_hub_reply_title, user, hub_reply.label, message.created_at,
-                                session.terminal_width,
-                            ))
-                        await deliver(await lane.run(_render_hub_reply_row, user, message))
-                        continue
                 if isinstance(message, MrcNotice):
                     # Issue #298: hub chatter, broadcasts and command replies
                     # arrive with their color codes intact and are styled
@@ -5855,7 +5959,8 @@ async def _chat_loop(
                     viewport=_input_viewport(session),
                 )
                 line = raw_line.strip()
-                hub_reply.close()
+                if line:
+                    hub_reply.more = []
 
                 # Help is modal because it reads page-turn keys. Prepare its
                 # result through ordinary command dispatch, then render each
@@ -5955,6 +6060,9 @@ async def _chat_loop(
                             return _Quit()
 
                         if not line:
+                            if hub_reply.more:
+                                for page_line in await hub_reply_page():
+                                    await session.write_line(page_line)
                             continue
                         if mrc_bridge is not None and _mrc_helper_carries_a_secret(strip_pipe_codes(line).lstrip()):
                             history.forget(raw_line)  # read_line recorded it before we saw it

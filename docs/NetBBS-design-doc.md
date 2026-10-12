@@ -3146,12 +3146,19 @@ current. Link presence travels from the origin to its subscribers only, so an
 origin's `/list` and `/who` do not count callers on subscribing nodes.
 
 The hub's answer to an `/mrc` question carries no request id and no end
-marker, so the first reply line after the question opens a block titled
-`MRC hub · /mrc <question>` with the time the answer began, and the following
-lines are its rows, with the hub's own colors and alignment and without a badge
-or time of their own. Anything else reaching the screen, the caller's next
-line, or ten seconds without a reply line ends the block; a later line stands
-alone with its `[MRC]` badge, as a CTCP answer always does.
+marker, so the reply lines that follow the question (its first within ten
+seconds) are collected until the hub has been quiet for a second, then drawn as
+one block titled `MRC hub · /mrc <question>` with the time the answer began.
+Its rows keep the hub's own colors and alignment and carry no badge or time of
+their own. Other traffic is shown as it arrives meanwhile; a second question
+asked before the first answer went quiet gets its own block. An answer taller
+than the chat area is paged (the hub may push 300 lines at once, and `/mrc
+bbses` names every board on the network): each page ends `page 1 of 4 · Enter
+shows more`, an empty Enter shows the next, and any other line drops the pages
+left. The pager is not modal -- unlike `/help`'s, it reads no key of its own,
+since the answer arrives while the caller's input line already owns the
+keyboard. A reply line arriving once its answer is drawn stands alone with its
+`[MRC]` badge, as a CTCP answer always does.
 
 Chat lines carry a per-user display timestamp, **on by default** and toggled
 with `/timestamps`. The default is the answer for an account that has never
