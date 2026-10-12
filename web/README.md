@@ -105,11 +105,19 @@ and writes one screen instead of a page of panels. That is not only convenience
 — it means a screen the website shows is a screen the presentation review
 already covers, under the same label, so the two cannot drift apart silently.
 
+The landing page's main menu is Harbor Lights' own art, drawn by
+`scripts/website_harbor_lights_menu.py` (`python scripts/website_harbor_lights_menu.py
+out.ans` writes it) and installed as slot art: NetBBS draws keeper's values into its
+tokens and keeper's `[T]opics`, which the art doesn't draw, into its `{menu}` row. Its
+full blocks are drawn as cells painted in their colour, which a terminal shows the
+same way and the page's tall lines don't split into stripes.
+
 The chat capture runs Baud for real: `BotRuntime` starts the bundled bot as
 its own process, and the caller's lines are typed into the channel, so every
 `[BOT]` line on the landing page is an answer Baud actually gave. The
-channel's clock is pinned to one evening, so a recapture shows the same times
-whenever it runs.
+channel's clock is pinned to one evening and each line gets its own minute, so a
+recapture shows the same times whenever it runs. The twenty-minute reminder is
+saved by Baud and delivered by its next tick once the host's clock is moved on.
 
 **Every embedded capture is reproducible.** `website_capture_screens.py --list`
 names the ten NetBBS screens; `website_capture_chat_mrc.py`,
