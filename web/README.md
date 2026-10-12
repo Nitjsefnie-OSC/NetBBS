@@ -105,6 +105,11 @@ and writes one screen instead of a page of panels. That is not only convenience
 — it means a screen the website shows is a screen the presentation review
 already covers, under the same label, so the two cannot drift apart silently.
 
+The chat capture runs Baud for real: `BotRuntime` starts the bundled bot as
+its own process, and the caller's lines are typed into the channel, so every
+`[BOT]` line on the landing page is an answer Baud actually gave. Its
+timestamps are minutes before the run, so a recapture reads as one evening.
+
 **Every embedded capture is reproducible.** `website_capture_screens.py --list`
 names the ten NetBBS screens; `website_capture_chat_mrc.py`,
 `website_capture_door_menu.py` and `website_capture_door_profile.py` cover three

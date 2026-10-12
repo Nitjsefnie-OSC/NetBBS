@@ -1,5 +1,5 @@
-[2J[H[38;5;246mHarbor Lights[0m[38;5;246m › [0m[38;5;51mAfter Hours[0m
-[38;5;240m───────────────────────────[0m
+[2J[H[38;5;246mHarbor Lights[0m[38;5;246m › [0m[38;5;246mSysOp[0m[38;5;246m › [0m[38;5;246mContent[0m[38;5;246m › [0m[38;5;246mMessage boards[0m[38;5;246m › [0m[38;5;51mAfter Hours[0m
+[38;5;240m──────────────────────────────────────────────────────────────[0m
 [38;5;248m0 posts (no posts yet) · place 3 of 4 · not Linked[0m
 [1m[38;5;246mACCESS[0m
 [1m[38;5;220m> 03 Min read level:[0m      [38;5;252m0 · 5 users[0m
