@@ -154,95 +154,160 @@ instead.
 
 ## Read and post
 
+| At a glance | |
+| --- | --- |
+| **Where** | <kbd>M</kbd> **Message boards**, or <kbd>E</kbd> **E-mail** for letters, on the main menu |
+| **Try first** | Open a board, select a post, and reply to it |
+| **While writing** | The editor shows its commands; in the fullscreen editor <kbd>Ctrl+G</kbd> shows help |
+
+In this chapter: [Read and reply](#read-and-reply) ·
+[Point a post at files](#point-a-post-at-files) ·
+[The line editor](#the-line-editor) ·
+[The fullscreen editor](#the-fullscreen-editor) ·
+[Drafts](#drafts-come-back-where-you-started) ·
+[Address a letter](#address-a-letter) ·
+[Send netmail](#send-netmail-to-an-ftn-network) ·
+[Point a letter at files](#point-a-letter-at-files) ·
+[Review and send](#review-and-send)
+
+#### Read and reply
+
 Open a message board, select a post, and use the displayed actions to read,
 reply, or start a topic. Follow a resource to make it easier to revisit.
-
-Some boards may carry an **echo** from an FTN network such as FidoNet or
-fsxNet. People on many other BBSes read and write in an echo, and what you post
-there goes out to them too. Their posts are signed with a name and an FTN
-address, as in `Joe Bloggs (21:3/110)`. **Reply** works as on any board. An
-edit or a deletion stays on this BBS, because other BBSes keep the copy they
-already received.
-On a moderated board, your post may wait for approval before others see it.
-You are told at the main menu when it is approved or rejected; a rejection
-also arrives as mail from **System**, with the reason and what you wrote.
 
 A post keeps the lines you write: a list, a short line or your sign-off stays
 as you typed it, and only a line too wide for the reader's screen wraps.
 
+On a moderated board, your post may wait for approval before others see it.
+You are told at the main menu when it is approved or rejected; a rejection
+also arrives as mail from **System**, with the reason and what you wrote.
+
+**Echoes.** Some boards may carry an **echo** from an FTN network such as
+FidoNet or fsxNet. People on many other BBSes read and write in an echo, and
+what you post there goes out to them too.
+
+- Their posts are signed with a name and an FTN address, as in
+  `Joe Bloggs (21:3/110)`.
+- **Reply** works as on any board.
+
+> [!NOTE]
+> In an echo, an edit or a deletion stays on this BBS, because other BBSes
+> keep the copy they already received.
+
+#### Point a post at files
+
 A post can point at files that are already in a file area here, up to five --
-the practice page you want an opinion on, say. On the review screen press
-**[A]ttach file**, choose the file area and then the file; **[R]emove file**
-takes one off again. Nothing is copied: the post names the file, and whoever
-reads it downloads it from its file area. The files are listed under the
-post's byline, and **[G]et file** downloads one -- with several, you choose
-which -- by Zmodem, or with a browser link where your terminal has no Zmodem.
-A reader who may not open that file area sees only that a file is there, not
-its name; the review screen tells you when a file's area is closed to some of
-the board's readers. A file deleted or expired since shows as no longer
-available. When you edit a post, its files come along and can be changed on
-the review screen. On a board shared with other BBSes, readers there get a
-line naming each file, its size, its file area and this BBS at the end of the
-post, not a download. A draft keeps the text, not the files.
+the practice page you want an opinion on, say.
 
-The text editor shows its commands. In the line editor, a blank line starts
-a new paragraph; press Enter on an empty line twice, or type `/done`, to
-finish. `/insert N` writes the next lines before line N until you type
-`/end`, which is how you answer between the quoted lines of a reply; `/list`
-shows every line and where you are writing. A reply opens with the post
-quoted: `/unquote` removes the whole quote, and `/delete N-M` removes lines N
-to M, so you can keep only the part you answer. `/exit` or `/quit` keeps a draft
-for later; `/cancel` discards it. In the fullscreen editor, **Ctrl+G** shows
-help and **Ctrl+X** opens the exit choices, including **Keep draft & exit**.
-Both editors keep what you have typed if the connection drops.
+1. On the review screen press <kbd>A</kbd> **Attach file**.
+2. Choose the file area and then the file.
 
-The fullscreen editor also has these keys:
+<kbd>R</kbd> **Remove file** takes one off again.
+
+Nothing is copied: the post names the file, and whoever reads it downloads it
+from its file area. The files are listed under the post's byline, and
+<kbd>G</kbd> **Get file** downloads one -- with several, you choose which --
+by Zmodem, or with a browser link where your terminal has no Zmodem.
+
+- A reader who may not open that file area sees only that a file is there,
+  not its name; the review screen tells you when a file's area is closed to
+  some of the board's readers.
+- A file deleted or expired since shows as no longer available.
+- When you edit a post, its files come along and can be changed on the
+  review screen.
+- On a board shared with other BBSes, readers there get a line naming each
+  file, its size, its file area and this BBS at the end of the post, not a
+  download.
+- A draft keeps the text, not the files.
+
+#### The line editor
+
+The text editor shows its commands. In the line editor:
+
+| Type | What it does |
+| --- | --- |
+| A blank line | Starts a new paragraph |
+| <kbd>Enter</kbd> on an empty line twice, or `/done` | Finishes |
+| `/insert N` | Writes the next lines before line N until you type `/end` -- this is how you answer between the quoted lines of a reply |
+| `/list` | Shows every line and where you are writing |
+| `/unquote` | Removes the whole quote a reply opens with |
+| `/delete N-M` | Removes lines N to M, so you can keep only the part you answer |
+| `/exit` or `/quit` | Keeps a draft for later |
+| `/cancel` | Discards it |
+
+> [!TIP]
+> Both editors keep what you have typed if the connection drops.
+
+#### The fullscreen editor
+
+In the fullscreen editor, <kbd>Ctrl+G</kbd> shows help and
+<kbd>Ctrl+X</kbd> opens the exit choices, including **Keep draft & exit**.
+It also has these keys:
 
 | Key | What it does |
 | --- | --- |
-| **Ctrl+K** | Cut the line. Press it again to add the next line. |
-| **Ctrl+Y** | Paste the cut lines. |
-| **Ctrl+E** | Erase all the text, after a yes. **Ctrl+Y** brings it back. |
-| **Ctrl+W** | Delete the word before the cursor. In a browser, which closes the tab on Ctrl+W, use **Alt+Backspace**. |
-| **Ctrl+R** | Rewrap the quoted (`>`) paragraph under the cursor to fit the screen, keeping its `>`. |
+| <kbd>Ctrl+K</kbd> | Cut the line. Press it again to add the next line. |
+| <kbd>Ctrl+Y</kbd> | Paste the cut lines. |
+| <kbd>Ctrl+E</kbd> | Erase all the text, after a yes. <kbd>Ctrl+Y</kbd> brings it back. |
+| <kbd>Ctrl+W</kbd> | Delete the word before the cursor. In a browser, which closes the tab on <kbd>Ctrl+W</kbd>, use <kbd>Alt+Backspace</kbd>. |
+| <kbd>Ctrl+R</kbd> | Rewrap the quoted (`>`) paragraph under the cursor to fit the screen, keeping its `>`. |
 
-The status line shows how many characters you have used and the limit. The
-limit assumes the rest is plain letters: an accented letter or other special
-character takes more room and lowers it by one.
+It shows what you are writing above the text: the recipient or board, and
+the subject. The status line shows how many characters you have used and the
+limit. The limit assumes the rest is plain letters: an accented letter or
+other special character takes more room and lowers it by one.
 
-Turn the fullscreen editor on or off in **Profile** with **Fullscreen editor
-(all writing)**. It is used for mail, posts, your bio and signature, and file
-descriptions.
+Turn the fullscreen editor on or off in **Profile** with
+**Fullscreen editor (all writing)**. It is used for mail, posts, your bio and
+signature, and file descriptions.
 
-A draft comes back where you started it. A new post's draft is offered when
-you return to that board, a reply's when you reply to the same post or
-message again. An unfinished letter is shown on the mail screen under
-**[D]raft**, with its recipient and subject, and **Compose** offers it before
-starting a new one: resume it, delete it, or leave it for later. A draft is
-never sent or posted by itself.
+#### Drafts come back where you started
+
+A draft comes back where you started it:
+
+- A new post's draft is offered when you return to that board.
+- A reply's draft is offered when you reply to the same post or message
+  again.
+- An unfinished letter is shown on the mail screen under <kbd>D</kbd> **Draft**,
+  with its recipient and subject, and <kbd>C</kbd> **Compose** offers it
+  before starting a new one: resume it, delete it, or leave it for later.
+
+A draft is never sent or posted by itself.
+
+#### Address a letter
 
 Writing a message or a post opens a screen of its own. Mail asks who it is
 for first: a user name, or `name@TheirBBS` for someone on a linked BBS. An
-empty line or Esc there cancels. Press Tab to complete a name, or, after the
-`@`, the name of a linked BBS; if several fit, they are listed under the
-prompt. Type `?` and press Enter for a list of everyone you can write to:
-people you had mail with lately first, then the members of this board, then
-the linked BBSes. Choose a BBS and you are asked for the person's user
-name there; `name@?` lists just the BBSes for that name. The list also shows
-who you can't write to right now, dimmed, with `-` instead of a number and
-the reason beside the name: they don't accept your mail, their account is
-disabled or awaiting approval, or their BBS is not linked yet (this board's
-SysOp hasn't finished linking it). Tab only completes names you can write to.
+empty line or <kbd>Esc</kbd> there cancels.
 
-A letter can go to several people, up to 20, here and on linked BBSes
-alike: separate them with commas, as in `bob, carol@Farpoint`. Tab completes
-the name after the last comma, and `?` as the last name opens the list for
-that one. Each name is checked as you type it; if one can't be used, you are
-told which and why, and the prompt opens again on what you typed, to fix.
-Each person gets their own copy, and every copy shows everyone it went to --
-there is no blind copy. If one of them can't take it when you press **Send**
--- their mailbox is full, say -- nothing is sent to anyone: the review screen
-names them, and **[T]o** lets you take them off and send to the rest.
+- **Complete a name:** press <kbd>Tab</kbd> to complete a name, or, after the
+  `@`, the name of a linked BBS; if several fit, they are listed under the
+  prompt. Tab only completes names you can write to.
+- **Pick from a list:** type `?` and press <kbd>Enter</kbd> for a list of
+  everyone you can write to: people you had mail with lately first, then the
+  members of this board, then the linked BBSes. Choose a BBS and you are asked
+  for the person's user name there; `name@?` lists just the BBSes for that
+  name.
+- **Who you can't reach:** the list also shows who you can't write to right
+  now, dimmed, with `-` instead of a number and the reason beside the name:
+  they don't accept your mail, their account is disabled or awaiting
+  approval, or their BBS is not linked yet (this board's SysOp hasn't
+  finished linking it).
+
+**Several people.** A letter can go to several people, up to 20, here and on
+linked BBSes alike: separate them with commas, as in `bob, carol@Farpoint`.
+
+- <kbd>Tab</kbd> completes the name after the last comma, and `?` as the last
+  name opens the list for that one.
+- Each name is checked as you type it; if one can't be used, you are told
+  which and why, and the prompt opens again on what you typed, to fix.
+- Each person gets their own copy, and every copy shows everyone it went to
+  -- there is no blind copy.
+- If one of them can't take it when you press **Send** -- their mailbox is
+  full, say -- nothing is sent to anyone: the review screen names them, and
+  <kbd>T</kbd> **To** lets you take them off and send to the rest.
+
+#### Send netmail to an FTN network
 
 If this BBS is on an FTN network such as FidoNet or fsxNet, you may be able to
 send **netmail** to someone on another BBS of that network. Write their name
@@ -256,31 +321,44 @@ names the network the letter goes out on.
 - **Replies:** **Reply** to a netmail in your Inbox, or to one in Sent, writes
   netmail back.
 
+#### Point a letter at files
+
 A letter can point at files that are already in a file area here, up to
-five. On the review screen press **[A]ttach file**, choose the file area and
-then the file; **[R]emove file** takes one off again. Nothing is copied: the
+five.
+
+1. On the review screen press <kbd>A</kbd> **Attach file**.
+2. Choose the file area and then the file.
+
+<kbd>R</kbd> **Remove file** takes one off again. Nothing is copied: the
 letter names the file, and whoever reads it downloads it from the file area.
-Only someone who may open that file area can be sent the letter -- if one of
-your recipients can't, **Send** names them and nothing goes out. Someone on
-another BBS can't download from here: their copy ends with a line naming each
-file, its size, its file area and this BBS, as in
-`File: report.zip (12.3 KiB) in file area "Uploads" on Farpoint`. A forward
-takes the files of the letter it passes on along, and the draft of a letter
-keeps them.
 
-The fullscreen editor shows what you are writing above the text: the
-recipient or board, and the subject. Nothing is
-sent or posted until you choose to on the review screen, which keeps To and
-Subject at the top and shows a long message a page at a time. Turn the
-pages with **<** **>** or PgUp/PgDn. **[E]dit body** reopens the text, and
-**[B]ack** (or Esc) leaves without sending, after asking first if you have
-written anything.
+- Only someone who may open that file area can be sent the letter -- if one
+  of your recipients can't, **Send** names them and nothing goes out.
+- Someone on another BBS can't download from here: their copy ends with a
+  line naming each file, its size, its file area and this BBS, as in
+  `File: report.zip (12.3 KiB) in file area "Uploads" on Farpoint`.
+- A forward takes the files of the letter it passes on along, and the draft
+  of a letter keeps them.
 
-A post or message needs a subject. Leave it empty and mail asks again;
-press Esc there to cancel the message. A subject that is too long is caught
-as soon as you press Enter, with how many characters to remove, and the
-field stays open so you can shorten it. If your signature pushes a message
-over its length limit, the review screen says so before you can send it.
+#### Review and send
+
+Nothing is sent or posted until you choose to on the review screen, which
+keeps To and Subject at the top and shows a long message a page at a time.
+
+- Turn the pages with <kbd>&lt;</kbd> <kbd>&gt;</kbd> or
+  <kbd>PgUp</kbd>/<kbd>PgDn</kbd>.
+- <kbd>E</kbd> **Edit body** reopens the text.
+- <kbd>B</kbd> **Back** (or <kbd>Esc</kbd>) leaves without sending, after
+  asking first if you have written anything.
+
+A post or message needs a subject. Leave it empty and mail asks again; press
+<kbd>Esc</kbd> there to cancel the message. A subject that is too long is
+caught as soon as you press <kbd>Enter</kbd>, with how many characters to
+remove, and the field stays open so you can shorten it.
+
+> [!NOTE]
+> If your signature pushes a message over its length limit, the review
+> screen says so before you can send it.
 
 ## Chat and mail
 
