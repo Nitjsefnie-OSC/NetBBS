@@ -2368,53 +2368,81 @@ location; it does not delete that directory later.
 
 ## Upgrading and removing NetBBS
 
-The node checks GitHub Releases on startup and every 24 hours by default;
-a startup within 15 minutes of the last attempt skips another check. Results
-appear on the SysOp dashboard and **Settings → Update**. You can check manually,
-toggle the schedule, and set an optional GitHub token for a higher API limit.
+| At a glance | |
+| --- | --- |
+| **Where** | **Settings ▸ Update** in the SysOp console |
+| **From the shell** | `pip install` of the release wheel into the node's virtual environment |
+| **Decide first** | Whether NetBBS may restart itself after an install, and how you would roll back |
+
+In this chapter: [Update checks](#update-checks) ·
+[Install from the console](#install-from-the-console) ·
+[Upgrade by hand](#upgrade-by-hand) ·
+[Roll back](#roll-back) · [Remove NetBBS](#remove-netbbs)
+
+### Update checks
+
+The node checks GitHub Releases on startup and every 24 hours by default; a
+startup within 15 minutes of the last attempt skips another check. Results
+appear on the SysOp dashboard and **Settings ▸ Update**, where you can:
+
+- check manually with <kbd>C</kbd> **Check now**;
+- toggle the schedule with <kbd>A</kbd> (**Auto-check on** or **off**);
+- set an optional GitHub token for a higher API limit with
+  <kbd>T</kbd> **Token**.
+
 These checks do not download, install, restart, or interrupt callers.
 
-### Installing from Settings → Update
+### Install from the console
 
-When a check has found a newer release, **[I]nstall vX** appears on
-**Settings → Update** on the live node. It first shows the plan, and does
-nothing until you choose **[I]nstall now** and answer yes. Read the release
-notes first, and stop games and companion services, as for any upgrade. The
-steps run in order, and a failure stops the rest and says why:
+When a check has found a newer release, **Install vX** (<kbd>I</kbd>) appears on
+**Settings ▸ Update** on the live node. It first shows the plan, and does
+nothing until you choose <kbd>I</kbd> **Install now** and answer yes.
+
+> [!IMPORTANT]
+> Read the release notes first, and stop games and companion services, as for
+> any upgrade.
+
+The steps run in order, and a failure stops the rest and says why:
 
 1. Download the release's wheel from GitHub and check it against the SHA-256
    digest the release publishes. A wheel without a published digest is not
    installed.
 2. Back up this node to `netbbs_backups/` beside the database, the same as
-   **Full backups → Create backup now**.
+   <kbd>C</kbd> **Create backup now** under **Operations ▸ Full backups**.
 3. `pip install` the wheel into the environment NetBBS runs from, with the same
-   extras. pip also fetches any newer dependency the release needs. The install
-   is refused for a system Python (not a virtual environment), a development
-   checkout, or an environment the service account cannot write. A failed pip
-   run shows its last lines of output.
-4. Restart, or not, as **[R]estart after install** says:
-   - **auto** restarts under systemd, detected, and not under NetBSD rc.d.
-   - **yes** declares that your service manager restarts NetBBS when it exits.
-   - **no** always stops after installing.
+   extras. pip also fetches any newer dependency the release needs. A failed
+   pip run shows its last lines of output. The install is refused for:
+   - a system Python (not a virtual environment);
+   - a development checkout;
+   - an environment the service account cannot write.
+4. Restart, or not, as <kbd>R</kbd> **Restart after install** says:
+
+   | Setting | Effect |
+   | --- | --- |
+   | **auto** | Restarts under systemd, detected, and not under NetBSD rc.d |
+   | **yes** | Declares that your service manager restarts NetBBS when it exits |
+   | **no** | Always stops after installing |
 
    A restart warns callers and waits the configured shutdown delay. The node
    then exits with status 75, and the service manager starts the new version.
-   Without a restart, the screen tells you to restart the service yourself. Do
-   it promptly: until then, the old version runs with the new files on disk.
+
+> [!WARNING]
+> Without a restart, the screen tells you to restart the service yourself. Do
+> it promptly: until then, the old version runs with the new files on disk.
 
 After the restart, the Update screen says whether the node came back as the
 version that was installed.
 
-**MANUAL — on the host, units installed from an earlier release:** the shipped
-`netbbs.service` now carries `RestartForceExitStatus=75` and
-`SuccessExitStatus=75`. An older unit with `Restart=on-failure` already restarts
-on 75, but logs it as a failure. Add both lines, then run
-`systemctl daemon-reload`.
+> [!NOTE]
+> **Manual, on the host, for units installed from an earlier release:** the
+> shipped `netbbs.service` now carries `RestartForceExitStatus=75` and
+> `SuccessExitStatus=75`. An older unit with `Restart=on-failure` already
+> restarts on 75, but logs it as a failure. Add both lines, then run
+> `systemctl daemon-reload`.
 
-Rolling back stays a host procedure: stop the service, install the previous
-release's wheel, restore the backup from step 2, and start the service.
+### Upgrade by hand
 
-**MANUAL — on the host (the by-hand route, always available):**
+This route is **manual, on the host**, and always available:
 
 1. Read the selected release's notes. Record the current version and paths.
 2. Stop games/services and create a backup; verify its game coverage and keep
@@ -2422,17 +2450,33 @@ release's wheel, restore the backup from step 2, and start the service.
 3. Stop NetBBS through its service manager.
 4. Install the selected GitHub-release wheel into the same virtual environment,
    using the same extras as before.
-5. Start the service and verify a real login, content, file transfer, and games.
+5. Start the service and verify a real login, content, file transfer, and
+   games.
 
-Startup applies required database migrations. An older build refuses a database
-with a newer schema. To roll back after a migration, stop the service, reinstall
-the earlier release, and restore the pre-upgrade state using compatible tooling;
-do not attempt to downgrade the database by hand. Keep the newer state separately
-if callers have contributed since the upgrade.
+Startup applies required database migrations. An older build refuses a
+database with a newer schema.
 
-Uninstalling with the environment's `python -m pip uninstall netbbs` removes the
-package, not node data. Disable the service first. Removing state, keys, games,
-DNS registration, or backups is a separate, deliberate operator action.
+### Roll back
+
+Rolling back stays a host procedure:
+
+1. Stop the service.
+2. Install the previous release's wheel.
+3. Restore the pre-upgrade backup: the one the console install made in its
+   step 2, or the one you made by hand.
+4. Start the service.
+
+> [!CAUTION]
+> After a migration, restore the pre-upgrade state using compatible tooling;
+> do not attempt to downgrade the database by hand. Keep the newer state
+> separately if callers have contributed since the upgrade.
+
+### Remove NetBBS
+
+Disable the service first. Uninstalling with the environment's
+`python -m pip uninstall netbbs` removes the package, not node data. Removing
+state, keys, games, DNS registration, or backups is a separate, deliberate
+operator action.
 
 ## Troubleshooting
 
