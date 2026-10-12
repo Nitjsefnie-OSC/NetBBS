@@ -87,8 +87,8 @@ def _bridge_with_roster(hub, lane, presence, *, channel_id: str, roster: dict[st
     registry = LinkRealtimeSessionRegistry(own_fingerprint="this-node-fingerprint")
     bridge = LiveChannelBridge(hub=hub, lane=lane, presence=presence, registry=registry)
     if roster:
-        bridge._remote_channel_presence[channel_id] = dict(roster)
-        bridge._remote_channel_presence_source[channel_id] = origin_fingerprint
+        bridge._channel_rosters[channel_id] = {origin_fingerprint: dict(roster)}
+        bridge._channel_roster_via[channel_id] = origin_fingerprint
     return bridge
 
 

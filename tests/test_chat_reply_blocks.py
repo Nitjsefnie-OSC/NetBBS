@@ -99,17 +99,11 @@ class _Mrc:
 
 
 class _Live:
-    def __init__(self, subscribed, roster):
-        self._subscribed, self._roster = subscribed, roster
+    def __init__(self, roster):
+        self._roster = roster  # channel_id -> [(node, user_id, label)]
 
-    def has_local_interest(self, channel_id):
-        return channel_id in self._subscribed
-
-    def remote_channel_presence(self, channel_id):
-        return dict(self._roster.get(channel_id, {}))
-
-    def remote_channel_origin_fingerprint(self, channel_id):
-        return "ab12cd" if channel_id in self._roster else None
+    def remote_channel_roster(self, channel_id):
+        return list(self._roster.get(channel_id, []))
 
 
 def _channel(name):
@@ -135,14 +129,18 @@ def test_list_falls_back_to_the_room_listing_when_nobody_here_is_in_the_room():
     assert chat_flow._list_presence(unknown, _channel("retro"), ", ") == "0 here, ? on MRC"
 
 
-def test_list_counts_a_linked_origin_only_while_a_caller_here_is_subscribed():
-    roster = {"id-general": {"u1": "ann", "u2": "ben"}}
-    ctx = _ctx(counts={"general": 1}, live=_Live({"id-general"}, roster))
-    # No peer table here: the origin is named by its fingerprint.
+def test_list_counts_the_callers_on_every_linked_node():
+    one = {"id-general": [("ab12cd", "u1", "ann"), ("ab12cd", "u2", "ben")]}
+    ctx = _ctx(counts={"general": 1}, live=_Live(one))
+    # No peer table here: the node is named by its fingerprint.
     assert chat_flow._list_presence(ctx, _channel("general"), " · ") == "1 here · 2 on ab12cd"
-    # Unsubscribed, the last roster is still held but no longer kept current.
-    stale = _ctx(counts={"general": 0}, live=_Live(set(), roster))
-    assert chat_flow._list_presence(stale, _channel("general"), " · ") == "0 here"
+    # Issue #1281: the origin hears from each subscriber, a subscriber from the
+    # origin about the others -- several nodes are counted, not listed.
+    several = {"id-general": [("ab12cd", "u1", "ann"), ("ef34gh", "u3", "cy"), ("ef34gh", "u4", "di")]}
+    ctx = _ctx(counts={"general": 0}, live=_Live(several))
+    assert chat_flow._list_presence(ctx, _channel("general"), " · ") == "0 here · 3 on 2 linked BBSes"
+    # No roster (not live, or the last caller here left): nothing to count.
+    assert chat_flow._list_presence(_ctx(live=_Live({})), _channel("general"), " · ") == "0 here"
 
 
 def test_a_hub_answer_is_collected_until_the_hub_goes_quiet():

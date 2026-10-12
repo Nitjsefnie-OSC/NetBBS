@@ -406,6 +406,14 @@ refuse the field as a malformed frame, so it is only ever sent to a peer that
 advertises this. The frame may also carry a `content_id`; it is accepted for
 compatibility and ignored, since nothing keys on an unverified id."""
 
+PRESENCE_RELAY_CAPABILITY = "presence_relay"
+"""Issue #1281: this node reports its callers in a linked channel to the
+channel's origin, and takes a `presence_delta` or presence-snapshot entry's
+optional `node_fingerprint`, with which an origin relays one subscriber's
+callers to the others. A node without it would refuse the field as a malformed
+frame, so presence goes up only to an origin advertising this and is relayed
+only to subscribers advertising it."""
+
 SEALED_ATTESTATIONS_CAPABILITY = "sealed_attestations"
 """Issue #632: this node takes sealed attestation bundles -- as a relay, into
 its mailbox for a node it relays for, and as a recipient, by direct push or
@@ -416,6 +424,7 @@ the unknown type, and an older recipient would never pick it up."""
 LINK_CAPABILITIES: tuple[str, ...] = (
     INVENTORY_NOT_CARRIED_CAPABILITY, INVENTORY_PAGES_CAPABILITY, CHANNEL_RELAY_CAPABILITY, CHAT_BOTS_CAPABILITY,
     SEALED_ATTESTATIONS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY,
+    PRESENCE_RELAY_CAPABILITY,
 )
 """Every optional behaviour this version advertises in its own descriptor."""
 
