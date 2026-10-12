@@ -8,22 +8,49 @@ sets its rules, and can help with your account.
 
 ## Connect and sign in
 
-Use the web address or terminal connection details your SysOp provides.
-A browser needs no terminal software. An SSH connection looks like
-`ssh -p 2222 yourname@bbs.example.org`; substitute the actual port and address.
-Use SSH or HTTPS when available: plain Telnet does not encrypt your login.
+| At a glance | |
+| --- | --- |
+| **You need** | The web address or terminal connection details your SysOp provides |
+| **New here?** | Type `new` at the username prompt |
+| **Later** | Change your password under **Profile ▸ Password** |
+
+#### Connect
+
+Use the web address or terminal connection details your SysOp provides:
+
+- **A browser** needs no terminal software.
+- **SSH** looks like `ssh -p 2222 yourname@bbs.example.org`; substitute the
+  actual port and address.
+
+> [!TIP]
+> Use SSH or HTTPS when available: plain Telnet does not encrypt your login.
+
+#### Sign in or create an account
 
 Log in with your account. If registration is offered, type `new` at the
-username prompt (over SSH, connect as `new`). Usernames use the letters A-Z
-without accents, digits, `_`, `-` and `.`, up to 32 characters; the name is
-checked before you choose a password. Some nodes require approval before you
-can log in: until the SysOp approves your account, logging in tells you it is
-still waiting, and you cannot look around in the meantime. If registration is
-closed, contact the SysOp. Accounts and access rules belong to each node.
+username prompt (over SSH, connect as `new`).
 
-Change your password under **Profile → Password**: you type the
-current one, then the new one twice, and nothing is echoed. If you have
-forgotten it, ask the SysOp to set a new one; nobody can recover the old one.
+Usernames use:
+
+- the letters A-Z without accents, digits, `_`, `-` and `.`;
+- up to 32 characters.
+
+The name is checked before you choose a password.
+
+Some nodes require approval before you can log in. Until the SysOp approves
+your account, logging in tells you it is still waiting, and you cannot look
+around in the meantime. If registration is closed, contact the SysOp.
+
+> [!NOTE]
+> Accounts and access rules belong to each node.
+
+#### Change your password
+
+Under **Profile ▸ Password**, you type the current password, then the new one
+twice, and nothing is echoed.
+
+If you have forgotten it, ask the SysOp to set a new one; nobody can recover
+the old one.
 
 ## Find your way around
 
