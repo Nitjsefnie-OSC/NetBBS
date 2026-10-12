@@ -255,7 +255,7 @@ def deletable_bot(db: Database, bot_id: int, *, actor: User) -> Bot:
     bot = get_bot(db, bot_id)
     state = db.connection.execute("SELECT runtime_state FROM chat_bots WHERE id=?", (bot_id,)).fetchone()[0]
     if bot.enabled or state != "stopped":
-        raise BotError("Kill this bot first and wait for its status to become stopped before deleting it.")
+        raise BotError("Stop this bot with [K]ill selected, wait until its state reads off, then delete it.")
     return bot
 
 

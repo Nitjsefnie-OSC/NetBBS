@@ -224,12 +224,12 @@ def test_delete_requires_stopped_process_and_removes_only_its_store(tmp_path, db
         write_state(db, "Baud", {"reminders": ["old"]})
         write_state(db, "Other", {"kept": True})
         record_message(db, channel, kind="message", author_label=bot.label, body="kept history")
-        with pytest.raises(BotError, match="Kill"):
+        with pytest.raises(BotError, match=r"\[K\]ill selected"):
             delete_bot(db, bot.id, actor=sysop)
         stop_bots(db, actor=sysop)
         db.connection.execute("UPDATE chat_bots SET runtime_state='running'")
         db.connection.commit()
-        with pytest.raises(BotError, match="Kill"):
+        with pytest.raises(BotError, match=r"\[K\]ill selected"):
             delete_bot(db, bot.id, actor=sysop)
 
     async def run():

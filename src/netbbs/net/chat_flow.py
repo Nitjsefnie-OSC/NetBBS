@@ -95,7 +95,7 @@ from netbbs.auth.users import (
     list_users,
 )
 from netbbs.chat.bots import (
-    BOT_POLICIES, BotPolicyError, bot_label_origin, bot_origin, bot_origin_allowed,
+    BOT_POLICIES, BotNotice, BotPolicyError, bot_label_origin, bot_origin, bot_origin_allowed,
     channel_bot_policy, set_channel_bot_policy,
     bot_message_visible, mute_remote_bot, remote_bot_visible,
 )
@@ -3812,6 +3812,24 @@ def _local_bot_labels(db: Database, hub: ChatHub, channel: Channel) -> list[str]
     return active_labels(db, channel, hub.bot_runtime.running_ids)
 
 
+def _bot_notice_line(notice: BotNotice) -> str:
+    """A bot system line, styled as a notice rather than as speech (#1241).
+
+    One caller's notice is a muted aside in brackets, like "(not sent to
+    MRC: ...)"; a channel-wide one is a muted `***` line carrying the badge
+    bot lines carry, so a disclosure reads as being about a bot."""
+    text = sanitize_text(str(notice))
+    if notice.private:
+        return colored(f"({text})", fg_color=MUTED_COLOR)
+    return (colored("*** ", fg_color=MUTED_COLOR) + colored("[BOT] ", fg_color=MUTED_COLOR, bold=True)
+            + colored(text, fg_color=MUTED_COLOR))
+
+
+def _bot_presence_readers(db: Database, channel: Channel) -> set[str]:
+    from netbbs.bots.registry import list_bots
+    return {bot.label for bot in list_bots(db) if channel.name in bot.event_channels}
+
+
 def _bot_readers(db: Database, hub: ChatHub, channel: Channel) -> list[str]:
     from netbbs.bots.registry import channel_readers
     from netbbs.link.node_profiles import identity_for_fingerprint, link_address_label
@@ -3897,7 +3915,7 @@ async def _handle_who(ctx: ChatCommandContext, args: str) -> None:
     bot_labels = await ctx.lane.run(_local_bot_labels, ctx.hub, ctx.channel)
     readers = await ctx.lane.run(_bot_readers, ctx.hub, ctx.channel)
     for label in readers:
-        await ctx.session.write_line(f"[BOT] {label} reads this channel.")
+        await ctx.session.write_line(_bot_notice_line(BotNotice(f"{label} reads this channel.")))
     if not usernames and not remote_entries and not _mrc_roster_entries(ctx) and not bot_labels and not readers:
         await ctx.session.write_line(colored("No one is here.", fg_color=MUTED_COLOR))
         return
@@ -3911,9 +3929,12 @@ async def _handle_who(ctx: ChatCommandContext, args: str) -> None:
         return result
 
     labels_by_username = await ctx.lane.run(_labels)
+    presence = await ctx.lane.run(_bot_presence_readers, ctx.channel)
     for label in bot_labels:
         if label not in readers:
-            await ctx.session.write_line(f"[BOT] {label} (addressed messages only; optional presence events)")
+            # Say what this bot actually receives here, not what it might.
+            sees = "addressed messages; joins and leaves" if label in presence else "addressed messages only"
+            await ctx.session.write_line(f"[BOT] {label} ({sees})")
     for username in usernames:
         label = labels_by_username.get(username)
         if label is None:
@@ -5383,7 +5404,7 @@ async def _chat_loop(
         await session.write_line(f"\r\n{heading}")
         # The gates this channel applies, named under its title (issue #1105).
         for reader in await lane.run(_bot_readers, hub, channel):
-            await session.write_line(f"[BOT] {reader} reads this channel.")
+            await session.write_line(_bot_notice_line(BotNotice(f"{reader} reads this channel.")))
         gates_note = gates_line(
             await lane.run(resource_gates, channel), width=session.terminal_width, unicode_style=unicode_style,
             ellipsis=ellipsis_for(session, unicode_style=unicode_style),
@@ -5584,6 +5605,9 @@ async def _chat_loop(
                             fg_color=MUTED_COLOR,
                         )
                     )
+                    continue
+                if isinstance(message, BotNotice):
+                    await deliver(_bot_notice_line(message))
                     continue
                 await deliver(message)
 
@@ -5944,7 +5968,7 @@ async def _chat_loop(
                                 hub.bot_runtime, channel, user, recorded_message, participant_id, link_context,
                             )
                             if bot_problem:
-                                await session.write_line(sanitize_text(bot_problem))
+                                await session.write_line(colored(sanitize_text(bot_problem), fg_color=MUTED_COLOR))
                         # Issue #275: the MRC sibling of the live-Link push
                         # above -- a no-op unless this channel is bridged.
                         # After local delivery, as the `/me` path does: the

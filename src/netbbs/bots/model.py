@@ -61,6 +61,26 @@ def settings(db):
     return ModelSettings(**json.loads(raw)) if raw else ModelSettings()
 
 
+# What the Model conversation screen calls each setting. A rejection names the
+# field the SysOp is looking at, never its storage key (issue #1241).
+FIELD_LABELS = {
+    "enabled": "Model service", "endpoint": "API base URL", "model": "Provider model name",
+    "token_parameter": "Output-limit parameter", "persona": "System prompt",
+    "context_lines": "Prior exchange lines", "log_prompts": "Log submitted prompts",
+    "min_level": "Minimum caller level", "allow_guests": "Allow designated guests",
+    "day_tokens": "Node daily token budget", "month_tokens": "Node monthly token budget",
+    "user_daily": "Requests per caller per day", "cooldown": "Caller cooldown (seconds)",
+    "channel_per_minute": "Model requests per channel/minute", "reply_chars": "Maximum reply characters",
+    "output_tokens": "Maximum output tokens", "input_price": "Price per million input tokens",
+    "output_price": "Price per million output tokens", "day_money": "Daily money budget",
+    "month_money": "Monthly money budget",
+}
+MONEY_KEYS = frozenset({"input_price", "output_price", "day_money", "month_money"})
+# Limit reasons are recorded for the console's usage screen and also told to
+# the caller who hit them; the caller's wording ("your ...") is theirs.
+LIMIT_LABELS = {"your daily model quota": "caller daily quota", "your model cooldown": "caller cooldown"}
+
+
 def validate_settings(value):
     try:
         url = urlsplit(value.endpoint)
@@ -81,7 +101,9 @@ def validate_settings(value):
     for key, (low, high) in bounds.items():
         n = getattr(value, key)
         if type(n) is not int or not low <= n <= high:
-            raise BotError(f"{key.replace('_', ' ')} must be {low}-{high}.")
+            # Prices and money budgets are stored in millionths; show units.
+            scale = 1000000 if key in MONEY_KEYS else 1
+            raise BotError(f"{FIELD_LABELS[key]} must be {low // scale:,}-{high // scale:,}.")
     if value.token_parameter not in {"max_tokens", "max_completion_tokens"}:
         raise BotError("Choose max_tokens or max_completion_tokens for this provider.")
     if (not isinstance(value.model, str) or len(value.model) > 80 or
@@ -89,7 +111,7 @@ def validate_settings(value):
             sanitize_text(value.model) != value.model):
         raise BotError("Enter the provider's model name (up to 80 characters).")
     if not isinstance(value.persona, str) or not 1 <= len(value.persona) <= 2000 or sanitize_text(value.persona) != value.persona:
-        raise BotError("Persona must contain 1-2000 printable characters.")
+        raise BotError(f"{FIELD_LABELS['persona']} must contain 1-2,000 printable characters.")
     if (value.day_money or value.month_money) and not (value.input_price or value.output_price):
         raise BotError("Money budgets require at least one operator-supplied token price.")
     return replace(value, endpoint=value.endpoint.rstrip("/"), model=value.model.strip())
