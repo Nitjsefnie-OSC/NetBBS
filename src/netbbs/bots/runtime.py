@@ -123,6 +123,10 @@ class BotRuntime:
             raise BotError(f"{bot.label} is not ready. The SysOp can check its status in Chat bots.")
         if len(worker.pending) >= MAX_PENDING or worker.events.full():
             raise BotError(f"{bot.label} is busy; try again shortly.")
+        # Link request text arrives unsanitized; a control kept here would be
+        # stored by the bot and refused by publish on every later attempt.
+        # Ordinary spacing is the caller's and passes through unchanged.
+        text = sanitize_text(text).replace("\t", " ")
         request = uuid.uuid4().hex
         worker.pending[request] = (channel.name, participant_id, time.monotonic() + REQUEST_SECONDS, completed, dict(caller), text)
         worker.events.put_nowait({"type": "message", "request": request, "channel": channel.name,
@@ -305,18 +309,23 @@ class _Worker:
             self.proc = None
 
     async def _read(self) -> dict:
+        # BotError is a ValueError: keep the specific reasons out of the
+        # JSON handler, or every crash would read as "invalid JSON".
         try:
             line = await self.proc.stdout.readline()
-            if not line:
-                raise BotError("Bot closed its output pipe.")
-            if len(line) > MAX_LINE_BYTES:
-                raise BotError("Bot exceeded the 32 KiB protocol line limit.")
+        except ValueError as exc:
+            raise BotError("Bot exceeded the 32 KiB protocol line limit.") from exc
+        if not line:
+            raise BotError("Bot closed its output pipe.")
+        if len(line) > MAX_LINE_BYTES:
+            raise BotError("Bot exceeded the 32 KiB protocol line limit.")
+        try:
             value = json.loads(line)
-            if not isinstance(value, dict):
-                raise BotError("Bot protocol requires JSON objects.")
-            return value
         except (ValueError, UnicodeError, RecursionError) as exc:
-            raise BotError("Bot sent invalid or oversized JSON.") from exc
+            raise BotError("Bot sent invalid JSON.") from exc
+        if not isinstance(value, dict):
+            raise BotError("Bot protocol requires JSON objects.")
+        return value
 
     async def _write(self, value: dict) -> None:
         raw = (json.dumps(value, ensure_ascii=True, allow_nan=False) + "\n").encode("ascii")

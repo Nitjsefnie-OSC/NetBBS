@@ -11,6 +11,9 @@ import time
 from collections import deque
 
 VERSION = 1
+# A refused reminder is retried with backoff, then dropped; it never blocks
+# the reminders behind it (a deleted channel or removed grant never heals).
+MAX_DELIVERY_ATTEMPTS = 8
 
 
 class Baud:
@@ -30,7 +33,7 @@ class Baud:
         self.sequence = 0
         self.waiting = None
         self.backlog = deque(maxlen=32)
-        self.retry_at = 0
+        self.failures = {}
 
     def action(self, action, **fields):
         self.sequence += 1
@@ -44,6 +47,16 @@ class Baud:
     def store(self, state, event=None, text=None):
         identity = self.action("state.set", value=state)
         self.waiting = (identity, "store", state, event, text)
+
+    def delivered(self, reminder_id, ok):
+        attempts = self.failures.pop(reminder_id, (0, 0))[0] + (0 if ok else 1)
+        if not ok and attempts < MAX_DELIVERY_ATTEMPTS:
+            self.failures[reminder_id] = (attempts, time.time() + min(3600, 60 * 2 ** (attempts - 1)))
+            return
+        # Forget it in memory first: if the store fails, the next tick must
+        # not deliver it again, and the next successful store omits it.
+        self.state = {**self.state, "reminders": [r for r in self.state["reminders"] if r["id"] != reminder_id]}
+        self.store(self.state)
 
     def handle(self, event):
         if event.get("type") in {"post", "file"}:
@@ -69,11 +82,8 @@ class Baud:
                         self.state = value
                     if request:
                         self.reply(request, text if event["ok"] else "Could not save that reminder; ask the SysOp.")
-                elif event["ok"]:
-                    state = {**self.state, "reminders": [r for r in self.state["reminders"] if r["id"] != value]}
-                    self.store(state)
                 else:
-                    self.retry_at = time.time() + 60
+                    self.delivered(value, event["ok"])
                 while not self.waiting and self.backlog:
                     self.handle(self.backlog.popleft())
             return
@@ -85,10 +95,8 @@ class Baud:
                     self.backlog.append(event)
             return
         if event["type"] == "tick":
-            if event["time"] < self.retry_at:
-                return
             for reminder in self.state["reminders"]:
-                if reminder["due"] <= event["time"]:
+                if reminder["due"] <= event["time"] and self.failures.get(reminder["id"], (0, 0))[1] <= event["time"]:
                     identity = self.action("say", channel=reminder["channel"],
                                            text=f"{reminder['name']}: reminder #{reminder['id']}: {reminder['text']}")
                     self.waiting = (identity, "deliver", reminder["id"], None, None)
@@ -143,7 +151,8 @@ class Baud:
         elif self.model_conversation:
             self.action("model", request=event["request"])
         else:
-            self.reply(event, "I know help, remind, reminders and cancel. Conversation and other abilities are not enabled.")
+            known = ["help", "remind", "reminders", "cancel", *sorted(self.queries & {"seen", "stats"})]
+            self.reply(event, f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
 
 
 def main():

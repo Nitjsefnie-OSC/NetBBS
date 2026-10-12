@@ -15,6 +15,7 @@ from netbbs.chat.channels import create_channel
 from netbbs.chat.hub import ParticipantId
 from netbbs.chat.scrollback import record_message
 from netbbs.session_history import record_session_start, set_session_history_name_visible
+from netbbs.timeutil import format_for_display, set_display_timezone
 from tests.test_bot_runtime import (  # noqa: F401
     db, lane, hub, sysop, alice, channel, presence, install, eventually, next_line,
 )
@@ -50,6 +51,10 @@ def test_seen_respects_history_privacy_even_for_sysop_and_never_names_private_ac
 
     result = seen()
     assert result["basis"] == "logout" and "11:00:00" in result["at"]
+    # The public reply uses the node's display clock, not a stored ISO stamp.
+    set_display_timezone(db, "Europe/Berlin")
+    assert seen()["text"] == f"alice: last recorded logout {format_for_display(result['at'], db)}."
+    assert "12:00" in seen()["text"] and "+00:00" not in seen()["text"]
     set_session_history_name_visible(db, alice, False)
     assert seen() == seen("unknown-person")
     assert seen()["available"] is False

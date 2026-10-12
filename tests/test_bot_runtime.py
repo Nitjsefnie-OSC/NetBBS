@@ -103,6 +103,93 @@ def test_addressing_selects_one_and_never_ordinary_chat(db, sysop, channel):
     assert select_request(db, channel, "talking about a.bot: something") is None
     with pytest.raises(BotError, match="Remote"):
         select_request(db, channel, "Baud.bot@Node: help")
+    # "!" opens a command word; exclamations are ordinary chat.
+    for text in ("!!! nice", "! help", "!?"):
+        assert select_request(db, channel, text) is None
+
+
+def test_shorthand_is_ordinary_chat_where_no_bot_may_speak(db, sysop, channel):
+    other = create_channel(db, "quiet-room", creator=sysop)
+    # A node without bots never answers "!" with bot advice.
+    assert select_request(db, channel, "!help") is None
+    bot = install(db, sysop, channel, defaults=[])
+    # A channel where a bot is allowed but none is default explains addressing.
+    with pytest.raises(BotError, match="No default bot"):
+        select_request(db, channel, "!help")
+    # A channel the bot is not allowed in stays quiet.
+    assert select_request(db, other, "!help") is None
+    install(db, sysop, channel, bot_id=bot.id, defaults=[channel.name])
+    set_channel_bot_policy(db, channel, "none", changed_by=sysop)
+    assert select_request(db, channel, "!help") is None
+
+
+def test_shorthand_is_ordinary_chat_in_mrc_rooms(db, sysop, channel):
+    install(db, sysop, channel)
+    db.connection.execute("UPDATE channels SET mrc_room = 'lobby' WHERE id = ?", (channel.id,))
+    db.connection.commit()
+    assert select_request(db, channel, "!help") is None
+
+
+def _baud(reminders, sent):
+    from netbbs.bots.baud import Baud
+    return Baud({"state": {"next": len(reminders) + 1, "reminders": reminders}}, sent.append)
+
+
+def _reminder(ident, channel="general"):
+    return {"id": ident, "user": 7, "name": "alice", "channel": channel, "due": 0, "text": f"note {ident}"}
+
+
+def test_baud_refused_reminder_does_not_block_the_others(monkeypatch):
+    import netbbs.bots.baud as baud_module
+    clock = [1000.0]
+    monkeypatch.setattr(baud_module.time, "time", lambda: clock[0])
+    sent = []
+    baud = _baud([_reminder(1, "gone"), _reminder(2)], sent)
+
+    def tick():
+        baud.handle({"type": "tick", "time": clock[0]})
+        return sent[-1] if sent else None
+
+    def answer(ok):
+        baud.handle({"type": "result", "id": sent[-1]["id"], "ok": ok})
+
+    assert tick()["channel"] == "gone"
+    answer(False)
+    # The refused one backs off; the next due reminder goes out at once.
+    assert tick()["channel"] == "general"
+    answer(True)
+    assert sent[-1]["action"] == "state.set"
+    answer(True)
+    assert [r["id"] for r in baud.state["reminders"]] == [1]
+    # Retried with backoff, then dropped instead of retried forever.
+    for _ in range(baud_module.MAX_DELIVERY_ATTEMPTS - 1):
+        clock[0] += 3601
+        assert tick()["channel"] == "gone"
+        answer(False)
+    assert sent[-1]["action"] == "state.set" and sent[-1]["value"]["reminders"] == []
+    answer(True)
+    assert baud.state["reminders"] == []
+
+
+def test_baud_failed_removal_after_delivery_does_not_repeat_the_reminder():
+    sent = []
+    baud = _baud([_reminder(1)], sent)
+    baud.handle({"type": "tick", "time": 1})
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
+    assert sent[-1]["action"] == "state.set"
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": False})
+    count = len(sent)
+    baud.handle({"type": "tick", "time": 2})
+    assert len(sent) == count
+
+
+def test_baud_fallback_lists_granted_queries():
+    from netbbs.bots.baud import Baud
+    sent = []
+    baud = Baud({"queries": ["seen", "stats"]}, sent.append)
+    baud.handle({"type": "message", "request": "a", "caller": {"id": 7, "name": "alice"},
+                 "channel": "general", "text": "dance"})
+    assert sent[-1]["text"] == "alice: I know help, remind, reminders, cancel, seen and stats. Conversation is not enabled."
 
 
 def test_state_bound_and_old_value_survives_refused_write(db):
@@ -150,6 +237,29 @@ def test_real_baud_help_persistent_reminder_restart_and_stop(db, lane, hub, syso
             stop_bots(db, actor=sysop)
             await eventually(lambda: not runtime.workers)
             assert not get_bot(db, bot.id).enabled
+        finally:
+            await runtime.close()
+            hub.leave(channel.name, pid)
+
+    asyncio.run(run())
+
+
+def test_request_text_reaches_bots_as_plain_text(db, lane, hub, sysop, alice, channel):
+    # Link requests are only length-checked on the wire. A tab or control kept
+    # in a reminder would be refused by publish on every delivery attempt.
+    bot = install(db, sysop, channel)
+
+    async def run():
+        pid = ParticipantId(alice.username, 1)
+        queue = hub.join(channel.name, pid)
+        runtime = BotRuntime(lane, hub, poll_seconds=.03)
+        runtime.start()
+        try:
+            await eventually(lambda: bot.id in runtime.running_ids)
+            caller = {"id": "link:abc:bob", "name": "bob@Elsewhere"}
+            await runtime.enqueue(bot, channel, caller, "remind 1h tab\there\x1b[2J\u202eend  keeps  spacing")
+            await next_line(queue, "Saved reminder")
+            assert read_state(db, bot.storage_name)["reminders"][0]["text"] == "tab here[2Jend  keeps  spacing"
         finally:
             await runtime.close()
             hub.leave(channel.name, pid)
@@ -288,6 +398,7 @@ def test_process_failure_is_bounded_and_owned(db, lane, hub, sysop, channel, mod
         "version": "import json; print(json.dumps({'type':'ready','version':99}), flush=True)",
         "hang": "import time; time.sleep(300)",
     }[mode]
+    reason = {"crash": "closed its output pipe", "oversized": "32 KiB", "version": "BOT_API_VERSION", "hang": ""}[mode]
     bot = install(db, sysop, channel, command=[sys.executable, "-u", "-c", code])
 
     async def run():
@@ -298,7 +409,8 @@ def test_process_failure_is_bounded_and_owned(db, lane, hub, sysop, channel, mod
             proc = runtime.workers[bot.id].proc
             if mode != "hang":
                 await eventually(lambda: runtime_status(db)[bot.id][0] == "restarting")
-                assert runtime_status(db)[bot.id][1]
+                # The SysOp sees the real reason, not a generic JSON complaint.
+                assert reason in runtime_status(db)[bot.id][1]
             await asyncio.wait_for(runtime.close(), 5)
             assert proc.returncode is not None
             assert not runtime.workers

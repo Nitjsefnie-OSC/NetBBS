@@ -62,7 +62,12 @@ node. Remote caller names are node-qualified for display. A message comes only
 from an accepted live human send, locally or through an authenticated bot
 request from the caller's home node; bot output, announcements and scrollback cannot create
 requests. `Baud.bot: help` names an instance. `!help` selects at most one local
-default for the channel, even in Linked chat. `Baud.bot@Node: help` names one
+default for the channel, even in Linked chat. Shorthand is `!` followed by a
+command word: `!!!` or `! help` is ordinary chat. So is any `!` line in an MRC
+channel, in a channel whose bot policy is *none*, or in a channel no enabled
+bot may use; elsewhere a channel without a default explains explicit naming.
+The host strips terminal controls from request text, Linked or local, and
+turns tabs into spaces before a bot sees it. `Baud.bot@Node: help` names one
 remote instance, using Link's unique friendly name, DNS name or fingerprint
 resolution. Unknown or ambiguous names are refused. Both nodes must carry
 the Linked channel and advertise live bot support. Ordinary chat creates no
@@ -276,11 +281,14 @@ per caller and 48 per instance, also subject to the state byte limit. Listing
 and cancelling work only for the caller's reminders in the current channel,
 so a public query cannot expose a reminder from a private channel.
 
-Due reminders wait through shutdowns and retry after refused output. They are
-removed after successful publication; a crash between publication and saving
-that removal can repeat one. This is not an exactly-once delivery guarantee.
-If a channel is renamed or a grant removed, old reminders retain their original
-destination and cannot migrate to another channel automatically.
+Due reminders wait through shutdowns. A refused reminder backs off on its own
+(one minute, doubling to an hour) while other due reminders are still
+delivered, and is dropped after eight refusals. They are removed after
+successful publication; a crash between publication and saving that removal
+can repeat one. This is not an exactly-once delivery guarantee. If a channel
+is renamed or a grant removed, old reminders retain their original
+destination, cannot migrate to another channel automatically, and are dropped
+once their refusals run out.
 
 Baud's standalone implementation in `src/netbbs/bots/baud.py` is an API example:
 it uses standard input/output only and has no database or filesystem access.

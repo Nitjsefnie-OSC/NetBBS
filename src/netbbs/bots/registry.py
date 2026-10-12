@@ -318,8 +318,16 @@ def active_labels(db: Database, channel: Channel, running_ids: frozenset[int]) -
 
 def select_request(db: Database, channel: Channel, line: str) -> tuple[Bot, str] | None:
     text = line.strip()
-    if text.startswith("!"):
-        candidates = [b for b in list_bots(db) if channel.name in b.defaults]
+    if re.match(r"!\w", text):
+        # Shorthand is a command word ("!help"), never "!!!" or "!?". Where
+        # no bot may speak -- MRC, a "none" policy, a node without bots --
+        # a "!" line is ordinary chat (MRC rooms have hub bots of their own).
+        bots = list_bots(db)
+        row = db.connection.execute("SELECT mrc_room FROM channels WHERE id = ?", (channel.id,)).fetchone()
+        if ((row is not None and row["mrc_room"]) or channel_bot_policy(db, channel) == "none"
+                or not any(b.enabled and channel.name in b.channels for b in bots)):
+            return None
+        candidates = [b for b in bots if channel.name in b.defaults]
         if not candidates:
             raise BotError("No default bot here. Address one explicitly, for example Baud.bot: help.")
         return candidates[0], text[1:]
