@@ -364,10 +364,13 @@ async def capture_chat(tmp: Path) -> str:
     Baud runs for real: its own process under `BotRuntime`, answering what
     the caller types into the channel. It greets the caller on joining,
     answers `seen` and `stats`, and saves a reminder and then delivers it.
-    The scrollback is stamped minutes before now, so it and Baud's live
-    replies read as one evening rather than two dates.
+    The channel's clock is pinned to one evening, scrollback and live lines
+    alike, so a recapture shows the same times whenever it is run and the
+    dialogue's "evening" is true of them.
     """
     import datetime
+    import re
+    import time
 
     from netbbs.bots.registry import save_bot
     from netbbs.bots.runtime import BotRuntime
@@ -383,10 +386,10 @@ async def capture_chat(tmp: Path) -> str:
     from netbbs.net import chat_flow
     from netbbs.net.char_input import InputHistory
 
-    now = datetime.datetime.now(datetime.timezone.utc)
+    evening = datetime.datetime(2026, 10, 12, 20, 12, tzinfo=datetime.timezone.utc)
 
     def ago(minutes: float) -> str:
-        return (now - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        return (evening - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     db, lane = _node(tmp)
     try:
@@ -429,6 +432,11 @@ async def capture_chat(tmp: Path) -> str:
         for name in ("keeper", "wren", "otto"):
             presence.enter(name)
 
+        # From here on the channel's clock runs from `evening` at real speed:
+        # every live line, Baud's included, is stamped through it.
+        started = time.monotonic()
+        original_clock = scrollback_module.utc_now_iso
+        scrollback_module.utc_now_iso = lambda: ago(-(time.monotonic() - started) / 60)
         hub = ChatHub()
         # wren and otto are in the channel too, and answer live: real
         # traffic is also what scrolls the join's blank block off the screen.
@@ -451,18 +459,21 @@ async def capture_chat(tmp: Path) -> str:
                 raise RuntimeError(f"timed out waiting for {what}")
 
             def shown(needle: str) -> bool:
-                return needle in "".join(session.written)
+                # As the caller reads it: colour codes can split a phrase.
+                return needle in re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", "".join(session.written))
 
             await until(lambda: runtime.running_ids, "Baud to start")
             # Run as a task and cancel it, the way `website_capture_chat_mrc.py`
             # does: `_chat_loop` is a live screen with background receive and
             # clock tasks, so it does not "finish" the way a menu render does.
+            session.location = ("Chat",)  # where the walk came from
             task = asyncio.create_task(chat_flow._chat_loop(
                 session, lane, hub, presence, MessageMailbox(), InputHistory(),
                 channel, people["keeper"],
             ))
-            await until(lambda: hub.participant_count(channel.name) > 0 and session.written,
-                        "the caller to join the channel")
+            # wren, otto and Baud are already in the channel; only the
+            # caller's own join notice says the caller is.
+            await until(lambda: shown("Joined #lobby"), "the caller to join the channel")
             await until(lambda: shown("Welcome, keeper!"), "Baud's greeting")
             async def say(who: str, body: str) -> None:
                 recorded = record_message(db, channel, kind="message", author_label=who, body=body)
@@ -503,6 +514,7 @@ async def capture_chat(tmp: Path) -> str:
             await runtime.close()
             for pid in others.values():
                 hub.leave(channel.name, pid)
+            scrollback_module.utc_now_iso = original_clock
     finally:
         lane.close()
         db.close()
