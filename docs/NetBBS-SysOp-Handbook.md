@@ -939,144 +939,241 @@ records it.
 
 ## Content and Communities
 
-Create resources under **Content**, or use **Create** in a resource picker.
-An empty picker remains usable for creating the first resource. Review the
-draft and save it explicitly.
+| At a glance | |
+| --- | --- |
+| **Where** | **Content** in the SysOp console |
+| **Callers find it under** | <kbd>M</kbd> **Message boards**, <kbd>C</kbd> **Chat**, <kbd>F</kbd> **Files**, <kbd>G</kbd> **Games** and <kbd>T</kbd> **Topics** on the main menu |
+| **Decide first** | Whether you need categories or Communities at all; a node with a handful of boards needs neither |
 
-**A resource's screen is its editor.** Choosing a Community, category,
-message board, file area, chat channel or door opens it on its own fields,
-with the cursor on the first: type a field's number, or move with Up and
-Down and press Enter (or Space), to change it, and Left and Right step a
-choice. A line above the
-fields says what the screen is about: a board's posts and latest activity, its
-place in the list and whether it is Linked; a channel's MRC room; a door's
-compatibility. Longer details follow the fields: a Linked board's or area's
-**NetBBS Link** section, a channel's **Sharing**, a door's companion service.
-When the screen is paged with **<** **>** or PgUp/PgDn, they are on the last
-page. The
-resource's actions keep their letters (**Up**, **Down**, **Remove**, **Pending
-posts**, **History**, **Link**, **Restrictions**, **Compatibility**, the
-service controls and the rest) and are offered while nothing waits to be
-saved. Once a field has changed, only **Save** and **Back** are offered, and
-**Back** asks before discarding the change. Creating a resource uses the same
-screen, empty and without actions.
+In this chapter: [Create and edit resources](#create-and-edit-resources) ·
+[Each kind of resource](#each-kind-of-resource) ·
+[Where callers find it](#where-callers-find-it) ·
+[Categories and Communities](#categories-and-communities) ·
+[Moderators and grants](#moderators-and-grants)
 
-- **Message boards:** set read/write levels, moderation, retention, and gates.
-  Pending posts remain in an approval queue. Edits retain revision identity.
-- **File areas:** set access, upload policy, size/retention rules, and moderation.
-  Uploads may include a description extracted from `FILE_ID.DIZ`. A remote
-  catalogue entry is metadata; fetching its bytes is a separate action.
-  Posts and letters can point at files in your areas, and readers download
-  them from here: deleting or expiring a file turns those into "no longer
-  available", and raising an area's read level hides the file's and area's
-  names from readers it now shuts out.
-- **Order of boards and file areas:** callers' lists follow your order, not
-  the latest activity, so the number a caller remembers keeps its board. A
-  new board or area goes last. **Up** and **Down** on its screen move it among
-  the others in the same category and Community; pinned ones stay first and
-  move among themselves. **Remove** deletes it. A caller can still sort a list by
-  activity with **[O]rder**.
-- **Chat channels:** set join gates, visibility, invitations, and moderation.
-  Hidden or invite-only channels need more than a sufficient account level.
-- **Communities:** group related resources and provide inherited defaults.
-  Inspect effective gates on child resources before changing a shared default.
-  A Community is not an automatic grant to every resource inside it.
-  Callers see Communities in your order: a new one goes last, and **Up** and
-  **Down** on its screen move it. **Remove** deletes it; its resources stay,
-  without a Community.
-- **Doors:** attach registered games to a Community, or to none.
+### Create and edit resources
 
-**Where callers find it.** The main menu's **Message boards**, **Chat** and
-**Files** list everything of that kind on the node, whichever Community it
-belongs to; a resource with no Community is simply listed there, so you do
-not need a Community to make a board easy to find. **Games** appears for a
-caller once a registered door is open to their level. **Communities** (key **O**) appears once one exists and
-shows each Community's description and what it holds; give each a
-description, because that is what callers read first.
-
-**Categories and Communities are different things.** A category groups the
-list of one kind (board categories group boards) and shows up as a folder in
-that list. A Community is a topic that holds every kind at once. A resource
-can have both. Create categories under **Content → Categories** and pick one
-in a board's, area's or channel's **Category** field; Communities are under
-**Content → Topics**. Ctrl-H on the Categories screen says the same. A
-node with a handful of boards needs neither.
+Create resources under **Content**, or use <kbd>C</kbd> **Create** in a
+resource picker. An empty picker remains usable for creating the first
+resource. Review the draft and save it explicitly.
 
 Until the node has a board, chat channel or file area, your own main menu
 shows where to create one.
 
+**A resource's screen is its editor.** Choosing a Community, category,
+message board, file area, chat channel or door opens it on its own fields,
+with the cursor on the first.
+
+- To change a field, type its number, or move with <kbd>Up</kbd> and
+  <kbd>Down</kbd> and press <kbd>Enter</kbd> (or <kbd>Space</kbd>).
+  <kbd>Left</kbd> and <kbd>Right</kbd> step a choice.
+- A line above the fields says what the screen is about: a board's posts and
+  latest activity, its place in the list and whether it is Linked; a
+  channel's MRC room; a door's compatibility.
+- Longer details follow the fields: a Linked board's or area's
+  **NetBBS Link** section, a channel's **Sharing**, a door's companion
+  service. When the screen is paged with <kbd>&lt;</kbd> <kbd>&gt;</kbd> or
+  <kbd>PgUp</kbd>/<kbd>PgDn</kbd>, they are on the last page.
+- The resource's actions keep their letters (**Up**, **Down**, **Remove**,
+  **Pending posts**, **History**, **Link**, **Restrictions**,
+  **Compatibility**, the service controls and the rest) and are offered while
+  nothing waits to be saved.
+- Once a field has changed, only **Save** and **Back** are offered, and
+  **Back** asks before discarding the change.
+
+Creating a resource uses the same screen, empty and without actions.
+
+### Each kind of resource
+
+| Resource | What you set and how it behaves |
+| --- | --- |
+| **Message boards** | Set read/write levels, moderation, retention, and gates. Pending posts remain in an approval queue. Edits retain revision identity. |
+| **File areas** | Set access, upload policy, size/retention rules, and moderation. Uploads may include a description extracted from `FILE_ID.DIZ`. A remote catalogue entry is metadata; fetching its bytes is a separate action. |
+| **Chat channels** | Set join gates, visibility, invitations, and moderation. Hidden or invite-only channels need more than a sufficient account level. |
+| **Communities** | Group related resources and provide inherited defaults. A Community is not an automatic grant to every resource inside it. |
+| **Doors** | Attach registered games to a Community, or to none. See [Door games](#door-games). |
+
+Posts and letters can point at files in your areas, and readers download them
+from here:
+
+- deleting or expiring a file turns those into "no longer available";
+- raising an area's read level hides the file's and area's names from readers
+  it now shuts out.
+
+> [!TIP]
+> Inspect effective gates on child resources before changing a Community's
+> shared default.
+
+#### Order boards, file areas and Communities
+
+Callers' lists follow your order, not the latest activity, so the number a
+caller remembers keeps its board.
+
+- A new board, area or Community goes last.
+- <kbd>U</kbd> **Up** and <kbd>D</kbd> **Down** on its screen move it. A board
+  or area moves among the others in the same category and Community; pinned
+  ones stay first and move among themselves.
+- <kbd>R</kbd> **Remove** deletes it. A removed Community's resources stay,
+  without a Community.
+- A caller can still sort a list by activity with <kbd>O</kbd> **Order**.
+
+### Where callers find it
+
+- The main menu's <kbd>M</kbd> **Message boards**, <kbd>C</kbd> **Chat** and
+  <kbd>F</kbd> **Files** list everything of that kind on the node, whichever
+  Community it belongs to. A resource with no Community is simply listed
+  there, so you do not need a Community to make a board easy to find.
+- <kbd>G</kbd> **Games** appears for a caller once a registered door is open
+  to their level.
+- <kbd>T</kbd> **Topics** appears once a Community exists and shows each
+  Community's description and what it holds. Give each a description,
+  because that is what callers read first.
+
+The [user handbook](NetBBS-User-Handbook.md) covers posting, drafts, follows,
+search, mail, and everyday chat. **New scan** and **Find** only show content
+the caller can access on this node, including carried linked content.
+
+### Categories and Communities
+
+They are different things, and a resource can have both:
+
+| | Category | Community |
+| --- | --- | --- |
+| **Groups** | The list of one kind (board categories group boards) | Every kind at once, around a topic |
+| **Shows up as** | A folder in that list | An entry under **Topics** |
+| **Create under** | **Content ▸ Categories** | **Content ▸ Topics** |
+
+Pick a category in a board's, area's or channel's **Category** field.
+<kbd>Ctrl</kbd>+<kbd>H</kbd> on the Categories screen says the same. A node
+with a handful of boards needs neither.
+
+### Moderators and grants
+
 Moderator grants belong to a resource or Community. Membership alone does not
 make someone a moderator. Grant only the scope required; use approval queues
-and the audit log to review actions. When a moderator rejects a post, its
-author gets a mail from **System** -- the BBS, not the moderator's own
-account -- with the reason, who decided, and the text; it cannot be
-replied to. Such a notice counts toward the author's mailbox limit but is
-the first read mail removed to make room. Chat moderation commands are used inside
+and the audit log to review actions. Chat moderation commands are used inside
 the channel by someone with the appropriate authority.
+
+When a moderator rejects a post, its author gets a mail from **System** --
+the BBS, not the moderator's own account -- with the reason, who decided, and
+the text.
+
+- It cannot be replied to.
+- It counts toward the author's mailbox limit but is the first read mail
+  removed to make room.
+
+#### Let a helper past a level
 
 A read or write grant on a board or file area lets its holder past that
 resource's minimum read or write level. To let a helper post on an
-announcements board whose write level is 255, grant them the **Read and post**
-preset on that board rather than raising their level (**Read only** opens
-reading alone). A grant opens only what its scope covers: one board or area,
-or, with a blanket scope, every board or area of that kind on the node or in
-one Community, so pick the scope with care. The minimum age and
-verified-name requirements still apply.
+announcements board whose write level is 255, grant them the
+**Read and post** preset on that board rather than raising their level
+(**Read only** opens reading alone).
 
-The [user handbook](NetBBS-User-Handbook.md) covers posting, drafts, follows,
-search, mail, and everyday chat. **New scan** and **Find** only show content the
-caller can access on this node, including carried linked content.
+> [!WARNING]
+> A grant opens only what its scope covers: one board or area, or, with a
+> blanket scope, every board or area of that kind on the node or in one
+> Community. Pick the scope with care.
+
+The minimum age and verified-name requirements still apply.
 
 ## Door games
 
-Open **Content → Doors → Gallery** to register Retro Trivia, Voidrunner, or
+| At a glance | |
+| --- | --- |
+| **Where** | **Content ▸ Doors** in the SysOp console |
+| **Callers find it under** | <kbd>G</kbd> **Games** on the main menu, or a Community's page |
+| **Outside NetBBS** | Games, licenses, runtimes and installation directories: see the [door setup guide](NetBBS-door-guide.md) |
+
+### Register a bundled game
+
+Open **Content ▸ Doors ▸ Gallery** to register Retro Trivia, Voidrunner, or
 War Dialer. Gallery entries fill a draft with the installed interpreter and
-sensible defaults; review and Save. Callers reach games through **Games** on
-the main menu or a Community's page.
+sensible defaults; review and <kbd>S</kbd> **Save**.
+
+### Set up any other door
 
 Third-party native programs, DOS games through DOSBox-X, doors built only for
 another platform (in a per-caller qemu VM you provision), remote RLogin
-services and BBSLink use compatibility profiles. Start with minimum play level 255,
-choose a template, set your actual paths, run **Check setup**, then **Test as
-SysOp**. Testing launches real programs and may change game data, even if you
-later discard the configuration draft. Test normal quit, disconnect, timeout,
-and each offered caller transport before opening it to users.
+services and BBSLink use compatibility profiles.
 
-Your own door scripts can be sent from inside NetBBS: **Content → Doors →
-Upload** asks for the file's name, then takes one file over Zmodem or a
-browser link into the node's doors folder, the one **From disk** lists.
-Replacing a file of the same name asks first. The upload registers nothing and
-changes no permissions; register it with **From disk**. It is capped at the
-node's upload limit and recorded in the audit log.
+1. Start with minimum play level 255.
+2. Choose a template.
+3. Set your actual paths.
+4. Run **Check setup**.
+5. Run **Test as SysOp**.
+6. Test normal quit, disconnect, timeout, and each offered caller transport
+   before opening it to users.
 
-**MANUAL — outside NetBBS:** obtain games and licenses, install their runtimes,
-prepare writable installation directories, and configure any remote-service
-tunnel and credentials. NetBBS does not install these components. Use the
-[door setup guide](NetBBS-door-guide.md) for exact profiles, game versions,
-DOSBox-X patches, service controls, and troubleshooting.
+> [!WARNING]
+> Testing launches real programs and may change game data, even if you later
+> discard the configuration draft.
 
-Native doors run as the NetBBS service account. Resource limits do **not**
-prevent them reading files or using the network as that account. Install only
-trusted programs. A door's temporary launch directory is deleted afterward;
-persistent game data must live elsewhere.
+> [!IMPORTANT]
+> **MANUAL — outside NetBBS:** obtain games and licenses, install their
+> runtimes, prepare writable installation directories, and configure any
+> remote-service tunnel and credentials. NetBBS does not install these
+> components. Use the [door setup guide](NetBBS-door-guide.md) for exact
+> profiles, game versions, DOSBox-X patches, service controls, and
+> troubleshooting.
+
+#### Upload your own door scripts
+
+Your own door scripts can be sent from inside NetBBS:
+**Content ▸ Doors ▸ Upload** asks for the file's name, then takes one file
+over Zmodem or a browser link into the node's doors folder, the one
+<kbd>F</kbd> **From disk** lists.
+
+- Replacing a file of the same name asks first.
+- The upload registers nothing and changes no permissions; register it with
+  **From disk**.
+- It is capped at the node's upload limit and recorded in the audit log.
+
+### What a door can reach
+
+> [!CAUTION]
+> Native doors run as the NetBBS service account. Resource limits do **not**
+> prevent them reading files or using the network as that account. Install
+> only trusted programs.
+
+A door's temporary launch directory is deleted afterward; persistent game
+data must live elsewhere.
+
+### Companion services
 
 A companion service keeps a game's world process alive between callers.
-NetBBS can supervise it and exposes Start, Halt, Restart, and its recent log
-on the door detail screen. Install/update the service yourself; stop it before
-copying its data. Do not raise a game's session count until its concurrent
-save handling has been tested.
+NetBBS can supervise it, and the door detail screen offers
+<kbd>S</kbd> **Start service**, <kbd>H</kbd> **Halt service**,
+<kbd>R</kbd> **Restart service** and <kbd>V</kbd> **View service log** (its
+recent log).
 
-A War Dialer door's detail screen adds **[W]orld**: the world's status and recent
-SysOp operations, a maintenance switch that closes it to new callers, and, on a
-live node with maintenance on, **[N]ext season** and **Reset [c]ompetition**. Both
-take a verified node backup first and ask for a reason and the world's filename.
-The [door guide](NetBBS-door-guide.md) has the details and the stopped-node CLI.
+- Install/update the service yourself.
+- Stop it before copying its data.
+- Do not raise a game's session count until its concurrent save handling has
+  been tested.
 
-A door may request permission to post to message boards. **Outbound** is off
-by default and configured per door: choose an allowlist and posting limit.
-Posts use a distinct door label, not the caller's identity. Normal board
-moderation applies. Allowing a linked board can distribute posts to peers;
-local deletion cannot retrieve copies already received elsewhere.
+### War Dialer's world
+
+A War Dialer door's detail screen adds <kbd>W</kbd> **World**: the world's
+status and recent SysOp operations, and a maintenance switch
+(<kbd>M</kbd>) that closes it to new callers. On a live node with maintenance
+on, it also offers <kbd>N</kbd> **Next season** and
+<kbd>C</kbd> **Competition reset**. Both take a verified node backup first and
+ask for a reason and the world's filename. The
+[door guide](NetBBS-door-guide.md) has the details and the stopped-node CLI.
+
+### Doors that post to boards
+
+A door may request permission to post to message boards.
+<kbd>O</kbd> **Outbound** is off by default and configured per door: choose an
+allowlist and posting limit.
+
+- Posts use a distinct door label, not the caller's identity.
+- Normal board moderation applies.
+
+> [!WARNING]
+> Allowing a linked board can distribute posts to peers; local deletion
+> cannot retrieve copies already received elsewhere.
 
 ## NetBBS Link
 
@@ -1580,97 +1677,188 @@ restores the old key.
 
 ## Chat bot policy
 
-In a channel, `/bots` shows which bot messages this node displays. A SysOp
-or a moderator with that channel's moderation permission can set:
+| At a glance | |
+| --- | --- |
+| **Where** | **Content ▸ Open chat bots** in the SysOp console; `/bots` inside a channel |
+| **Reference** | The [bot API guide](NetBBS-bot-api.md) describes each grant and how to install an external bot |
+| **Decide first** | Which bot messages each channel shows, and which grants a bot gets beyond answering what is addressed to it |
 
-- `/bots all`: show all bots (the initial receiving policy);
-- `/bots local`: show only this node's own bots;
-- `/bots none`: hide bot messages.
+In this chapter: [Which bots a channel shows](#which-bots-a-channel-shows) ·
+[Run a bot](#run-a-bot) · [Manage running bots](#manage-running-bots) ·
+[Linked channels and external bots](#linked-channels-and-external-bots) ·
+[Reminders](#reminders) · [Model conversation](#model-conversation)
 
-Changes are audited and apply to new live output, history replay, search
-results and remote rosters. They do not erase retained messages or change
-another node's policy. Already displayed terminal text is not recalled.
-MRC-bridged channels refuse bots even when the mapping is paused.
+### Which bots a channel shows
+
+In a channel, `/bots` shows which bot messages this node displays. A SysOp or
+a moderator with that channel's moderation permission can set:
+
+| Command | Effect |
+| --- | --- |
+| `/bots all` | Show all bots (the initial receiving policy) |
+| `/bots local` | Show only this node's own bots |
+| `/bots none` | Hide bot messages |
+
+- Changes are audited and apply to new live output, history replay, search
+  results and remote rosters.
+- They do not erase retained messages or change another node's policy.
+  Already displayed terminal text is not recalled.
+- MRC-bridged channels refuse bots even when the mapping is paused.
 
 Bot authors use a reserved `.bot` label and a `[BOT]` marker. Existing local
 accounts with that suffix remain people; an older peer's account with the
-suffix is classified as a bot on this node. Receiving policy alone does not
-enable or authorize a bot.
+suffix is classified as a bot on this node.
 
-**Content > Open chat bots** installs and edits bot instances. Create Baud,
-choose its local channels, optionally select it as their default, enable it
-and Save. It reads only messages addressed to it. Its replies and reminders
-are public in the channel. Friendly, terse and retro temperaments change its
-fixed phrases. Everything else is a separate grant in the editor, off until
-you set it: reading whole channels, joins and leaves (for greetings),
-statistics and last-seen queries, board and file-area announcements, Linked
-participation and model conversation. The [bot API guide](NetBBS-bot-api.md)
-describes each.
+> [!NOTE]
+> Receiving policy alone does not enable or authorize a bot.
+
+### Run a bot
+
+**Content ▸ Open chat bots** installs and edits bot instances.
+
+1. Create Baud.
+2. Choose its local channels, and optionally select it as their default.
+3. Enable it and <kbd>S</kbd> **Save**.
+
+Baud reads only messages addressed to it. Its replies and reminders are
+public in the channel. Friendly, terse and retro temperaments change its
+fixed phrases.
+
+Everything else is a separate grant in the editor, off until you set it:
+
+- reading whole channels;
+- joins and leaves (for greetings);
+- statistics and last-seen queries;
+- board and file-area announcements;
+- Linked participation;
+- model conversation.
+
+The [bot API guide](NetBBS-bot-api.md) describes each. The editor groups its
+fields under Bot, Channels, Greetings and announcements, Queries and
+conversation, and Behaviour and program.
+
+### Manage running bots
 
 The catalogue lists each bot's state (running in green, restarting in red,
 off once its process is gone), how many channels it may use and its last
-error. The editor groups its fields under
-Bot, Channels, Greetings and announcements, Queries and conversation, and
-Behaviour and program. **Kill selected** stops one bot; **Stop all** stops
-every bot; **Delete selected** removes a bot whose state reads off, with its
-state directory, while channel history and existing backups remain. Each
-action reports its outcome above the prompt. Both persist across node restarts;
-enable an instance again in its editor to resume. Changes are applied within
-about a second. Moderators can `/mute Baud.bot [duration] [reason]` and
-`/unmute Baud.bot`. Output limits apply per bot and channel and survive a
-restart. `/who`, `/names` and the status line distinguish bots from people.
+error.
+
+| Action | Effect |
+| --- | --- |
+| <kbd>K</kbd> **Kill selected** | Stops one bot |
+| <kbd>S</kbd> **Stop all** | Stops every bot |
+| <kbd>D</kbd> **Delete selected** | Removes a bot whose state reads off, with its state directory; channel history and existing backups remain |
+
+- Each action reports its outcome above the prompt.
+- Both stops persist across node restarts; enable an instance again in its
+  editor to resume.
+- Changes are applied within about a second.
+
+In channels:
+
+- Moderators can `/mute Baud.bot [duration] [reason]` and `/unmute Baud.bot`.
+- Output limits apply per bot and channel and survive a restart.
+- `/who`, `/names` and the status line distinguish bots from people.
+
+### Linked channels and external bots
 
 A Linked channel also needs its own **Linked approvals** entry, confirmed on
 Save; callers on other nodes then address it as `Baud.bot@Node`. MRC channels
-are refused, even while the bridge is paused. See the [bot API guide](NetBBS-bot-api.md) to install an external bot. External
-programs run as the NetBBS OS user; the API is not an operating-system sandbox.
+are refused, even while the bridge is paused.
+
+See the [bot API guide](NetBBS-bot-api.md) to install an external bot.
+
+> [!CAUTION]
+> External programs run as the NetBBS OS user; the API is not an
+> operating-system sandbox.
+
+### Reminders
 
 Reminders survive process and node restarts in `<db>.bots/<original-name>/`.
-Renaming an instance keeps its original state directory. Node backups include
-these directories and restore them with the database. Reminders can be delayed by mutes,
-disabled channels or output limits; a reminder refused eight times is
-dropped so it cannot hold up the others. A crash just after delivery may repeat
-a reminder; delivery is not an exactly-once guarantee.
 
-Model conversation is optional and stays off until you set up a provider
-under **Chat bots > Model settings** (any OpenAI-compatible endpoint, such as
-a local Ollama server) and grant it to an instance. Install `netbbs[bots]` or
-`netbbs[web]` for its HTTP client. A caller's first request only shows a
-notice naming the provider; replies are public. Token and optional money
-budgets, per-caller quotas and channel rates bound it, and **Usage** shows
-today's and this month's requests, tokens and cost, the busiest callers and
-which limits callers reached. Prompt logging is off by default.
+- Renaming an instance keeps its original state directory.
+- Node backups include these directories and restore them with the database.
+- Reminders can be delayed by mutes, disabled channels or output limits; a
+  reminder refused eight times is dropped so it cannot hold up the others.
+- A crash just after delivery may repeat a reminder; delivery is not an
+  exactly-once guarantee.
+
+### Model conversation
+
+Model conversation is optional and stays off until you set it up:
+
+1. Set up a provider under **Content ▸ Open chat bots ▸ Model settings** (any
+   OpenAI-compatible endpoint, such as a local Ollama server).
+2. Install `netbbs[bots]` or `netbbs[web]` for its HTTP client.
+3. Grant it to an instance.
+
+What callers and you see:
+
+- A caller's first request only shows a notice naming the provider; replies
+  are public.
+- Token and optional money budgets, per-caller quotas and channel rates bound
+  it.
+- <kbd>U</kbd> **Usage** shows today's and this month's requests, tokens and
+  cost, the busiest callers and which limits callers reached.
+- Prompt logging is off by default.
 
 ## MRC chat bridge
 
-MRC is a separate, public inter-BBS chat network. It is not NetBBS Link and
-does not provide Link's authenticated identities or trust model.
+| At a glance | |
+| --- | --- |
+| **Set up under** | **Settings ▸ Inter-BBS chat (MRC)** |
+| **Watch under** | **Node ▸ Inter-BBS chat (MRC)** |
+| **Decide first** | Which channels to bridge, and whether callers may open rooms themselves |
 
-1. Under **Settings → Inter-BBS chat (MRC)**, configure and enable the hub
+> [!IMPORTANT]
+> MRC is a separate, public inter-BBS chat network. It is not NetBBS Link and
+> does not provide Link's authenticated identities or trust model.
+
+### Bridge a channel
+
+1. Under **Settings ▸ Inter-BBS chat (MRC)**, configure and enable the hub
    connection and the site name/details it announces. Saving applies live.
 2. Set **MRC room** on each channel you want bridged. One room maps to one
-   channel. Callers see an MRC badge and a notice that their handle is visible.
-3. Optionally enable **Open rooms** so callers can select or name rooms through
-   the Multi Relay Chat picker. Set its access gates, room cap, retention, and
-   blocklist. Adopt a room to retain it, or retire it deliberately.
+   channel. Callers see an MRC badge and a notice that their handle is
+   visible.
+3. Optionally enable **Open rooms** so callers can select or name rooms
+   through the Multi Relay Chat picker. Set its access gates, room cap,
+   retention, and blocklist. Adopt a room to retain it, or retire it
+   deliberately.
 
-IP-address reporting and extra caller metadata are separate opt-in settings.
-Terminal size is sent for reply formatting. Private MRC messages require each
-caller's opt-in and are not confidential from the network. Do not type MRC
-passwords as ordinary chat; `/mrc register`, `/mrc identify`, and the related
-password commands ask separately without echo.
+### What MRC sees
 
-Use **Node → Inter-BBS chat (MRC)** for connection state, round-trip time, errors,
-and reconnect. Pause one channel's bridge or disable the whole bridge without
-removing local chat. MRC moderation and room rules also depend on the remote hub.
+- IP-address reporting and extra caller metadata are separate opt-in
+  settings.
+- Terminal size is sent for reply formatting.
+- Private MRC messages require each caller's opt-in and are not confidential
+  from the network.
 
-The room picker learns the network directory when a caller enters an MRC
-room; `/rooms` refreshes it. Reported user counts are snapshots, with stale
-readings marked. The chat status bar labels local occupancy separately from
-MRC occupancy; the hub roster does not supply a remote away count. A hub
-nickname or room correction that cannot identify one of several local callers
-produces a notice and diagnostic instead of being applied to an arbitrary
-account.
+> [!WARNING]
+> Do not type MRC passwords as ordinary chat; `/mrc register`,
+> `/mrc identify`, and the related password commands ask separately without
+> echo.
+
+### Run the bridge
+
+Use **Node ▸ Inter-BBS chat (MRC)** for connection state, round-trip time,
+errors, and reconnect. Pause one channel's bridge or disable the whole bridge
+without removing local chat. MRC moderation and room rules also depend on the
+remote hub.
+
+<details>
+<summary>Room directory, user counts and roster corrections</summary>
+
+- The room picker learns the network directory when a caller enters an MRC
+  room; `/rooms` refreshes it.
+- Reported user counts are snapshots, with stale readings marked.
+- The chat status bar labels local occupancy separately from MRC occupancy;
+  the hub roster does not supply a remote away count.
+- A hub nickname or room correction that cannot identify one of several local
+  callers produces a notice and diagnostic instead of being applied to an
+  arbitrary account.
+
+</details>
 
 ## FTN networks (FidoNet, fsxNet)
 
@@ -2286,6 +2474,16 @@ Classic terminals:
 
 ## State, backup, and recovery
 
+| At a glance | |
+| --- | --- |
+| **Where** | **Operations ▸ Full backups** in the SysOp console |
+| **From the shell** | `python -m netbbs.backup create`, `python -m netbbs.backup restore` |
+| **Decide first** | Where backups go, how often, and how you copy them off the machine |
+
+In this chapter: [Know what belongs to the node](#know-what-belongs-to-the-node) ·
+[Create and verify a backup](#create-and-verify-a-backup) ·
+[Restore](#restore)
+
 ### Know what belongs to the node
 
 The database stores accounts, configuration, metadata, and network state.
@@ -2306,18 +2504,27 @@ Files, keys, and game saves also live outside it. For `/var/lib/netbbs/netbbs.db
 
 Keep your configuration, service settings, and external-game state with your
 recovery records. The built-in backup is not a copy of every file the service
-account can access. Do not copy only a running `.db` file: SQLite's write-ahead
-log can contain changes not yet written into that file.
+account can access.
+
+> [!WARNING]
+> Do not copy only a running `.db` file: SQLite's write-ahead log can contain
+> changes not yet written into that file.
 
 ### Create and verify a backup
 
-Stop active games before capture; halt companion services. The BBS itself may
-stay running for a supported database backup. From a live SysOp console,
-**Full backups → Create backup now** writes a timestamped directory under
-`netbbs_backups/` beside the database, or under the destination you set. Check
-the reported path and game coverage.
+#### Back up from the console
 
-**Full backups → Schedule & destination** sets both without a cron job:
+1. Stop active games before capture, and halt companion services. The BBS
+   itself may stay running for a supported database backup.
+2. From a live SysOp console, open **Operations ▸ Full backups** and press
+   <kbd>C</kbd> **Create backup now**. It writes a timestamped directory under
+   `netbbs_backups/` beside the database, or under the destination you set.
+3. Check the reported path and game coverage.
+
+#### Schedule backups
+
+<kbd>S</kbd> **Schedule & destination** on the same screen sets both without a
+cron job:
 
 - **Frequency** off, daily or weekly, at a **Time** (24-hour, in the node's
   display timezone) and, for weekly, a **Weekday**. A node that was not running
@@ -2332,8 +2539,13 @@ the reported path and game coverage.
 
 The Backup screen and the dashboard show the next run, and the backup history
 lists each scheduled run's outcome, including a skipped one and why. A failed
-run is not retried until the next scheduled time. The running node makes the
-backups; `python -m netbbs.admin` only changes the settings.
+run is not retried until the next scheduled time.
+
+> [!NOTE]
+> The running node makes the backups; `python -m netbbs.admin` only changes
+> the settings.
+
+#### Back up from the shell
 
 For a one-off destination or a script, use the installed backup CLI. Run it
 as an account able to read all node state:
@@ -2347,134 +2559,201 @@ sudo -u netbbs /var/lib/netbbs/.venv/bin/python -m netbbs.backup create \
 
 The destination must not already exist; choose a fresh name for each backup.
 
+#### Voidrunner careers
+
 Voidrunner careers live beside the database, in `netbbs.db.doors/voidrunner/`,
 so the CLI finds them from `--db` alone. The node also records the directory it
 uses at startup, and the CLI reads that first, so a `VOIDRUNNER_SAVE_DIR`
-override is followed too. They used to live under the home directory of
-whichever account started the node, which a CLI run from your own shell does
-not share: up to v7.4.0 that silently captured no careers at all
-([#555](https://github.com/Thiesi/NetBBS/issues/555)). Two cases still need you:
+override is followed too. Two cases still need you:
 
-- A node upgraded from that home-directory default that has not yet started
-  since. The CLI says so in as many words -- `Voidrunner: NOT CAPTURED` or
-  `GUESSED LOCATION` -- rather than reporting an empty directory as an empty
-  node. Start the node once (it copies the careers into place), or pass
-  `--voidrunner-save-dir` with the old directory. A node upgraded straight from
-  v7.4.0 or earlier never recorded that directory, so it does **not** copy the
-  careers: set `VOIDRUNNER_SAVE_DIR` to the old directory before its first start,
-  or copy its contents into `netbbs.db.doors/voidrunner/` with the node stopped.
-- A directory you chose yourself, when the node has not recorded it. Pass
+- **A node upgraded from the old home-directory default that has not yet
+  started since.** The CLI says so in as many words -- `Voidrunner: NOT
+  CAPTURED` or `GUESSED LOCATION` -- rather than reporting an empty directory
+  as an empty node. Start the node once (it copies the careers into place), or
+  pass `--voidrunner-save-dir` with the old directory.
+- **A directory you chose yourself, when the node has not recorded it.** Pass
   `--voidrunner-save-dir` with the path shown on the live Backup screen.
+
+> [!IMPORTANT]
+> A node upgraded straight from v7.4.0 or earlier never recorded that
+> directory, so it does **not** copy the careers: set `VOIDRUNNER_SAVE_DIR` to
+> the old directory before its first start, or copy its contents into
+> `netbbs.db.doors/voidrunner/` with the node stopped.
 
 Read the coverage output either way. An absent Voidrunner component will not
 magically reappear during restore.
 
-War Dialer has separate world capture and restore rules; see the
-[door guide](NetBBS-door-guide.md). Third-party installation directories are
-excluded unless **Full backups → Door installations** is enabled. The Backup screen
-shows the door sections, and that option, only once a door is set up. That option copies
-them without stopping their writers and does not automatically restore them.
-Stop games/services first. A missing or unreadable requested installation fails
-the backup. Symlinks are copied as links, not followed to external data.
+<details>
+<summary>Why older nodes need this</summary>
 
-**MANUAL — outside NetBBS:** copy completed backups off the machine, protect
-them as secrets, and encrypt them if needed. Backups contain private keys and
-account data. Off-site transfer is not built in, and retention covers only the
-schedule's own backups on this machine.
-Also preserve TOML, service configuration, and any game data outside the captured
-paths. Inspect `manifest.json` and the coverage messages before relying on an archive.
+Careers used to live under the home directory of whichever account started
+the node, which a CLI run from your own shell does not share: up to v7.4.0
+that silently captured no careers at all
+([#555](https://github.com/Thiesi/NetBBS/issues/555)).
+
+</details>
+
+#### Other games and door installations
+
+War Dialer has separate world capture and restore rules; see the
+[door guide](NetBBS-door-guide.md).
+
+Third-party installation directories are excluded unless you include them:
+press <kbd>D</kbd> on the Backup screen to switch its **Door installations**
+setting on or off. The Backup screen shows the door sections, and that option,
+only once a door is set up.
+
+- That option copies them without stopping their writers and does not
+  automatically restore them. Stop games/services first.
+- A missing or unreadable requested installation fails the backup.
+- Symlinks are copied as links, not followed to external data.
 
 Door outbound result receipts (`door-outbound/` beside the database) are
-included automatically and need no separate copy. Restore replaces them with the
-archive's own, so receipts a door wrote after that backup was taken go to the
-rollback generation rather than staying beside an older database; an archive made
-before NetBBS captured receipts clears them for the same reason. After recovery,
-a missing receipt still does not mean its post was never published.
+included automatically and need no separate copy. Restore replaces them with
+the archive's own, so receipts a door wrote after that backup was taken go to
+the rollback generation rather than staying beside an older database; an
+archive made before NetBBS captured receipts clears them for the same reason.
+After recovery, a missing receipt still does not mean its post was never
+published.
+
+#### Keep backups safe
+
+> [!CAUTION]
+> Backups contain private keys and account data. Copy completed backups off
+> the machine, protect them as secrets, and encrypt them if needed.
+
+This is **manual work outside NetBBS**:
+
+- Off-site transfer is not built in, and retention covers only the schedule's
+  own backups on this machine.
+- Also preserve TOML, service configuration, and any game data outside the
+  captured paths.
+- Inspect `manifest.json` and the coverage messages before relying on an
+  archive.
 
 ### Restore
 
-Stop the node and every game/service. Keep the current state until the restored
-node has been verified. Use the backup tool, which validates and stages the
-restore and refuses to overwrite an active node:
+1. Stop the node and every game/service. Keep the current state until the
+   restored node has been verified.
+2. Run the backup tool, which validates and stages the restore and refuses to
+   overwrite an active node:
 
-```sh
-sudo -u netbbs /var/lib/netbbs/.venv/bin/python -m netbbs.backup restore \
-  --from /path/to/backup \
-  --db /var/lib/netbbs/netbbs.db \
-  --identity-dir /var/lib/netbbs/netbbs_identity \
-  --voidrunner-to /var/lib/netbbs/netbbs.db.doors/voidrunner \
-  --war-dialer-to 1=/var/lib/netbbs/netbbs.db.doors/war-dialer.db
-```
+   ```sh
+   sudo -u netbbs /var/lib/netbbs/.venv/bin/python -m netbbs.backup restore \
+     --from /path/to/backup \
+     --db /var/lib/netbbs/netbbs.db \
+     --identity-dir /var/lib/netbbs/netbbs_identity \
+     --voidrunner-to /var/lib/netbbs/netbbs.db.doors/voidrunner \
+     --war-dialer-to 1=/var/lib/netbbs/netbbs.db.doors/war-dialer.db
+   ```
 
-Use `--voidrunner-to` when the archive includes that component; omit it for an
-archive without it. The example also assumes one captured War Dialer world,
-key `1`. Every captured world requires an explicit `--war-dialer-to KEY=PATH`
-mapping, even for its default location; omit this option if there is no world
-component. Read the keys in the backup's manifest and follow the door guide for
-multiple or overridden worlds. Restore preserves replaced state in a rollback
-directory and reports its location; it does not delete that directory later.
+3. Do the **manual** part: restore external door installations from
+   `door-installs/` if included, restore service/TOML settings, and ensure the
+   service uses the restored game paths.
+4. Restart, log in, read a post, retrieve a file, check Link identity/peers,
+   and enter a real saved game.
 
-**MANUAL:** restore external door installations from `door-installs/` if included,
-restore service/TOML settings, and ensure the service uses the restored game paths.
-Careers restored into the node's own `netbbs.db.doors/voidrunner/` need no
-setting. Anywhere else, set `VOIDRUNNER_SAVE_DIR` to that destination; restore
-never changes that environment setting for you. Do not run the
-same restored Link identity on two live nodes.
+About the restore options:
 
-Restart, log in, read a post, retrieve a file, check Link identity/peers, and enter
-a real saved game. Rehearse this first on disposable state using the
-[disaster recovery drill](NetBBS-disaster-recovery-drill.md). Automated backup
-tests do not replace a recovery exercise on your host.
+- Use `--voidrunner-to` when the archive includes that component; omit it for
+  an archive without it.
+- The example assumes one captured War Dialer world, key `1`. Every captured
+  world requires an explicit `--war-dialer-to KEY=PATH` mapping, even for its
+  default location; omit this option if there is no world component. Read the
+  keys in the backup's manifest and follow the door guide for multiple or
+  overridden worlds.
+- Careers restored into the node's own `netbbs.db.doors/voidrunner/` need no
+  setting. Anywhere else, set `VOIDRUNNER_SAVE_DIR` to that destination;
+  restore never changes that environment setting for you.
+
+Restore preserves replaced state in a rollback directory and reports its
+location; it does not delete that directory later.
+
+> [!WARNING]
+> Do not run the same restored Link identity on two live nodes.
+
+> [!TIP]
+> Rehearse this first on disposable state using the
+> [disaster recovery drill](NetBBS-disaster-recovery-drill.md). Automated
+> backup tests do not replace a recovery exercise on your host.
 
 ## Upgrading and removing NetBBS
 
-The node checks GitHub Releases on startup and every 24 hours by default;
-a startup within 15 minutes of the last attempt skips another check. Results
-appear on the SysOp dashboard and **Settings → Update**. You can check manually,
-toggle the schedule, and set an optional GitHub token for a higher API limit.
+| At a glance | |
+| --- | --- |
+| **Where** | **Settings ▸ Update** in the SysOp console |
+| **From the shell** | `pip install` of the release wheel into the node's virtual environment |
+| **Decide first** | Whether NetBBS may restart itself after an install, and how you would roll back |
+
+In this chapter: [Update checks](#update-checks) ·
+[Install from the console](#install-from-the-console) ·
+[Upgrade by hand](#upgrade-by-hand) ·
+[Roll back](#roll-back) · [Remove NetBBS](#remove-netbbs)
+
+### Update checks
+
+The node checks GitHub Releases on startup and every 24 hours by default; a
+startup within 15 minutes of the last attempt skips another check. Results
+appear on the SysOp dashboard and **Settings ▸ Update**, where you can:
+
+- check manually with <kbd>C</kbd> **Check now**;
+- toggle the schedule with <kbd>A</kbd> (**Auto-check on** or **off**);
+- set an optional GitHub token for a higher API limit with
+  <kbd>T</kbd> **Token**.
+
 These checks do not download, install, restart, or interrupt callers.
 
-### Installing from Settings → Update
+### Install from the console
 
-When a check has found a newer release, **[I]nstall vX** appears on
-**Settings → Update** on the live node. It first shows the plan, and does
-nothing until you choose **[I]nstall now** and answer yes. Read the release
-notes first, and stop games and companion services, as for any upgrade. The
-steps run in order, and a failure stops the rest and says why:
+When a check has found a newer release, **Install vX** (<kbd>I</kbd>) appears on
+**Settings ▸ Update** on the live node. It first shows the plan, and does
+nothing until you choose <kbd>I</kbd> **Install now** and answer yes.
+
+> [!IMPORTANT]
+> Read the release notes first, and stop games and companion services, as for
+> any upgrade.
+
+The steps run in order, and a failure stops the rest and says why:
 
 1. Download the release's wheel from GitHub and check it against the SHA-256
    digest the release publishes. A wheel without a published digest is not
    installed.
 2. Back up this node to `netbbs_backups/` beside the database, the same as
-   **Full backups → Create backup now**.
+   <kbd>C</kbd> **Create backup now** under **Operations ▸ Full backups**.
 3. `pip install` the wheel into the environment NetBBS runs from, with the same
-   extras. pip also fetches any newer dependency the release needs. The install
-   is refused for a system Python (not a virtual environment), a development
-   checkout, or an environment the service account cannot write. A failed pip
-   run shows its last lines of output.
-4. Restart, or not, as **[R]estart after install** says:
-   - **auto** restarts under systemd, detected, and not under NetBSD rc.d.
-   - **yes** declares that your service manager restarts NetBBS when it exits.
-   - **no** always stops after installing.
+   extras. pip also fetches any newer dependency the release needs. A failed
+   pip run shows its last lines of output. The install is refused for:
+   - a system Python (not a virtual environment);
+   - a development checkout;
+   - an environment the service account cannot write.
+4. Restart, or not, as <kbd>R</kbd> **Restart after install** says:
+
+   | Setting | Effect |
+   | --- | --- |
+   | **auto** | Restarts under systemd, detected, and not under NetBSD rc.d |
+   | **yes** | Declares that your service manager restarts NetBBS when it exits |
+   | **no** | Always stops after installing |
 
    A restart warns callers and waits the configured shutdown delay. The node
    then exits with status 75, and the service manager starts the new version.
-   Without a restart, the screen tells you to restart the service yourself. Do
-   it promptly: until then, the old version runs with the new files on disk.
+
+> [!WARNING]
+> Without a restart, the screen tells you to restart the service yourself. Do
+> it promptly: until then, the old version runs with the new files on disk.
 
 After the restart, the Update screen says whether the node came back as the
 version that was installed.
 
-**MANUAL — on the host, units installed from an earlier release:** the shipped
-`netbbs.service` now carries `RestartForceExitStatus=75` and
-`SuccessExitStatus=75`. An older unit with `Restart=on-failure` already restarts
-on 75, but logs it as a failure. Add both lines, then run
-`systemctl daemon-reload`.
+> [!NOTE]
+> **Manual, on the host, for units installed from an earlier release:** the
+> shipped `netbbs.service` now carries `RestartForceExitStatus=75` and
+> `SuccessExitStatus=75`. An older unit with `Restart=on-failure` already
+> restarts on 75, but logs it as a failure. Add both lines, then run
+> `systemctl daemon-reload`.
 
-Rolling back stays a host procedure: stop the service, install the previous
-release's wheel, restore the backup from step 2, and start the service.
+### Upgrade by hand
 
-**MANUAL — on the host (the by-hand route, always available):**
+This route is **manual, on the host**, and always available:
 
 1. Read the selected release's notes. Record the current version and paths.
 2. Stop games/services and create a backup; verify its game coverage and keep
@@ -2482,68 +2761,239 @@ release's wheel, restore the backup from step 2, and start the service.
 3. Stop NetBBS through its service manager.
 4. Install the selected GitHub-release wheel into the same virtual environment,
    using the same extras as before.
-5. Start the service and verify a real login, content, file transfer, and games.
+5. Start the service and verify a real login, content, file transfer, and
+   games.
 
-Startup applies required database migrations. An older build refuses a database
-with a newer schema. To roll back after a migration, stop the service, reinstall
-the earlier release, and restore the pre-upgrade state using compatible tooling;
-do not attempt to downgrade the database by hand. Keep the newer state separately
-if callers have contributed since the upgrade.
+Startup applies required database migrations. An older build refuses a
+database with a newer schema.
 
-Uninstalling with the environment's `python -m pip uninstall netbbs` removes the
-package, not node data. Disable the service first. Removing state, keys, games,
-DNS registration, or backups is a separate, deliberate operator action.
+### Roll back
+
+Rolling back stays a host procedure:
+
+1. Stop the service.
+2. Install the previous release's wheel.
+3. Restore the pre-upgrade backup: the one the console install made in its
+   step 2, or the one you made by hand.
+4. Start the service.
+
+> [!CAUTION]
+> After a migration, restore the pre-upgrade state using compatible tooling;
+> do not attempt to downgrade the database by hand. Keep the newer state
+> separately if callers have contributed since the upgrade.
+
+### Remove NetBBS
+
+Disable the service first. Uninstalling with the environment's
+`python -m pip uninstall netbbs` removes the package, not node data. Removing
+state, keys, games, DNS registration, or backups is a separate, deliberate
+operator action.
 
 ## Troubleshooting
 
-| Symptom | Check and next action |
+| At a glance | |
 | --- | --- |
-| Service will not start | Read service output; check config paths, file permissions, selected interpreter, extras, and port conflicts. Do not treat a zero exit status alone as a working listener. |
-| A caller forgot their password, or you are locked out | Set a new password from the account's detail screen (**Password**), or run `python -m netbbs.admin reset-password USERNAME` on the host. Nothing recovers the old one. |
-| You think `signing.identity` or `transport.identity` leaked | Replace that key as **Compromised** under **Link status → Keys**, or with `python -m netbbs.admin rotate-key signing --compromised` while the node is stopped. The address and reputation stay; see [Node keys](#node-keys). If `root.identity` leaked too, as it does with a whole copied identity directory or backup, rotation is no remedy: the holder can authorize keys of their own, and only a new node identity ends that. |
-| SSH import fails on NetBSD | Check pkgsrc libraries and `LD_LIBRARY_PATH`; see installation above. |
-| An SSH client cannot connect, e.g. SyncTERM says "Error -20 activating session" or "Error -30 activating session" | "Error -30" with "an excessive number of consecutive no-op packets" means the node is older than the fix for issue #964; upgrade it. For "Error -20": the node offers an Ed25519 host key and, for clients without Ed25519 such as older SyncTERM builds, an RSA one (`netbbs_ssh_host_key_rsa`, created at the first start that lacks it). Make sure the node was restarted after upgrading so the RSA key exists. A caller who connected before sees a new fingerprint only if their client picks the RSA key. |
-| The log says an SSH host key "was readable by other accounts" | The key file was created before NetBBS restricted it, or restored from a backup taken then. NetBBS has already made it owner-only (0600). If other people have accounts on the host, assume they could have copied it: stop the node, delete `netbbs_ssh_host_key` and `netbbs_ssh_host_key_rsa`, and start it again to get new keys. Callers' SSH clients will then warn that the host key changed, so tell them first. On a host only you can log in to, no action is needed. |
-| Caller cannot log in | Check maintenance mode, pending approval, disabled account, and login throttling before resetting credentials. |
-| Caller can read but cannot contribute | Check write/join gates, age/name attestations, moderator grants, and inherited Community settings. |
-| Browser terminal or upload fails | Check HTTPS proxy/WebSocket forwarding, upload limits, web listener, and `public_url`. |
-| Callers or peers cannot reach the address you expect | Compare **Settings → Operating limits → Node configuration** (the configuration the node resolved at its last start, the addresses it advertises, and where each value came from; a listener whose optional extra is missing is listed but was not started, and the service output says so) with your TOML file and the service's command line. |
-| Terminal offers no file-transfer link | Enable/configure the web listener and its public URL, or use a Zmodem-capable client. |
-| Link will not start | Check the `web` extra, effective participation setting, and a non-placeholder node name. |
-| **Find** misses content callers can open, or lists removed content | **Operations → Search indexes**: check, then **Rebuild** if it reports drift. |
-| Peers connect but content is missing | Check **Link status → Offered** and **Excluded**, trust state, Outbox, and Diagnostics. Use Repair carried posts only for local materialization repair. |
-| Game is busy, fails, or loses state | Check its session limit, Compatibility setup, Last diagnostic, service state, and actual persistent paths. |
-| Backup says `Voidrunner: NOT CAPTURED` | The node has not started since v7.4.1, so it has recorded no save directory and the CLI fell back to your shell's home. Start the node once, or rerun with explicit `--voidrunner-save-dir`. |
-| Backup says `Voidrunner: no saves at ...` | The node named that directory itself and there is nothing in it -- nobody has played. Nothing to do. |
-| Startup refuses the database version | Install a compatible release or restore the matching pre-upgrade backup. Do not edit the schema number. |
+| **Where** | **Operations ▸ Error log**, **Operations ▸ Diagnostics**, **Operations ▸ Audit log** |
+| **From the shell** | `journalctl -u netbbs` (Linux), `netbbs.service.log` (NetBSD), `python -m netbbs.admin` |
+| **Start with** | The symptom below, then [the logs](#reading-the-logs) |
 
-On Linux, start with `journalctl -u netbbs`. On NetBSD, the example service's
-capture file is `netbbs.service.log` in the state directory; it catches failures
-before the application's rotating log opens. That service capture is not
-self-rotating, so arrange rotation or an appropriate output policy yourself.
-The application's `netbbs.log` rotates at 10 MiB with five retained backups
-(up to about 60 MiB including the active file).
+| Area | Symptoms |
+| --- | --- |
+| [Starting the node](#starting-the-node) | [Service will not start](#service-will-not-start) · [Startup refuses the database version](#startup-refuses-the-database-version) · [Link will not start](#link-will-not-start) |
+| [Callers and accounts](#callers-and-accounts) | [Caller cannot log in](#caller-cannot-log-in) · [Forgotten password or locked out](#forgotten-password-or-locked-out) · [Caller can read but cannot contribute](#caller-can-read-but-cannot-contribute) |
+| [Connections](#connections) | [SSH import fails on NetBSD](#ssh-import-fails-on-netbsd) · [SSH client cannot connect](#ssh-client-cannot-connect) · [SSH host key was readable by other accounts](#ssh-host-key-was-readable-by-other-accounts) · [Browser terminal or upload fails](#browser-terminal-or-upload-fails) · [No file-transfer link](#no-file-transfer-link) · [Callers or peers cannot reach your address](#callers-or-peers-cannot-reach-your-address) |
+| [Content, Link and games](#content-link-and-games) | [Find misses or lists the wrong content](#find-misses-or-lists-the-wrong-content) · [Peers connect but content is missing](#peers-connect-but-content-is-missing) · [Game is busy, fails, or loses state](#game-is-busy-fails-or-loses-state) |
+| [Keys and backups](#keys-and-backups) | [A node key may have leaked](#a-node-key-may-have-leaked) · [Voidrunner: NOT CAPTURED](#voidrunner-not-captured) · [Voidrunner: no saves at](#voidrunner-no-saves-at) |
 
-Some lines are routine and need nothing from you. A caller who hangs up is one
-`INFO` line naming their address. Every node yours meets on NetBBS Link starts
-on probation here, and the log says once per node, since the node started,
-that its content is held back. Your node is on probation at each peer in the
-same way, and the log says once per peer when one does not take what yours
-sends yet. A relay candidate that cannot be reached is also mentioned once. A `WARNING` or `ERROR` line, and any traceback, is worth
-reading.
+### Starting the node
 
-**Operations → Error log** reads that file from inside NetBBS, including from
-`python -m netbbs.admin` while the node is stopped. That console runs outside
-the node, so its health panel has no live controls; it says whether the node
-is running. It shows the newest 512 KiB,
-topped up from `netbbs.log.1` after a rotation, and says when older lines exist
-that it does not show. It cannot show failures from before the log opened; for
-those, use the service manager's output above.
+#### Service will not start
 
-Link Diagnostics is a bounded warning/error log, not a transcript of all
-content. The administrative Audit log answers who changed a setting or moderated
-an item. Inspect those before attempting filesystem repairs.
+- **Check:** read the service output; check config paths, file permissions,
+  selected interpreter, extras, and port conflicts.
+- Do not treat a zero exit status alone as a working listener.
+
+#### Startup refuses the database version
+
+- **Fix:** install a compatible release or restore the matching pre-upgrade
+  backup.
+- Do not edit the schema number.
+
+#### Link will not start
+
+- **Check:** the `web` extra, the effective participation setting, and a
+  non-placeholder node name.
+
+### Callers and accounts
+
+#### Caller cannot log in
+
+- **Check:** maintenance mode, pending approval, disabled account, and login
+  throttling before resetting credentials.
+
+#### Forgotten password or locked out
+
+A caller forgot their password, or you are locked out:
+
+- **Fix:** set a new password from the account's detail screen
+  (<kbd>P</kbd> **Password**), or run
+  `python -m netbbs.admin reset-password USERNAME` on the host.
+- Nothing recovers the old one.
+
+#### Caller can read but cannot contribute
+
+- **Check:** write/join gates, age/name attestations, moderator grants, and
+  inherited Community settings.
+
+### Connections
+
+#### SSH import fails on NetBSD
+
+- **Check:** pkgsrc libraries and `LD_LIBRARY_PATH`; see
+  [installation](#installing-netbbs).
+
+#### SSH client cannot connect
+
+For example, SyncTERM says "Error -20 activating session" or "Error -30
+activating session".
+
+- **"Error -30"** with "an excessive number of consecutive no-op packets"
+  means the node is older than the fix for issue #964; upgrade it.
+- **"Error -20":** the node offers an Ed25519 host key and, for clients
+  without Ed25519 such as older SyncTERM builds, an RSA one
+  (`netbbs_ssh_host_key_rsa`, created at the first start that lacks it). Make
+  sure the node was restarted after upgrading so the RSA key exists. A caller
+  who connected before sees a new fingerprint only if their client picks the
+  RSA key.
+
+#### SSH host key was readable by other accounts
+
+The log says an SSH host key "was readable by other accounts". The key file
+was created before NetBBS restricted it, or restored from a backup taken then.
+NetBBS has already made it owner-only (0600).
+
+- **On a host only you can log in to:** no action is needed.
+- **If other people have accounts on the host,** assume they could have copied
+  it:
+  1. Tell callers first: their SSH clients will warn that the host key
+     changed.
+  2. Stop the node.
+  3. Delete `netbbs_ssh_host_key` and `netbbs_ssh_host_key_rsa`.
+  4. Start it again to get new keys.
+
+#### Browser terminal or upload fails
+
+- **Check:** HTTPS proxy/WebSocket forwarding, upload limits, the web
+  listener, and `public_url`.
+
+#### No file-transfer link
+
+The terminal offers no file-transfer link.
+
+- **Fix:** enable/configure the web listener and its public URL, or use a
+  Zmodem-capable client.
+
+#### Callers or peers cannot reach your address
+
+Callers or peers cannot reach the address you expect.
+
+- **Check:** compare
+  **Settings ▸ Operating limits ▸ Node configuration** with your TOML file and
+  the service's command line. That screen shows the configuration the node
+  resolved at its last start, the addresses it advertises, and where each
+  value came from.
+- A listener whose optional extra is missing is listed there but was not
+  started, and the service output says so.
+
+### Content, Link and games
+
+#### Find misses or lists the wrong content
+
+**Find** misses content callers can open, or lists removed content.
+
+- **Fix:** open **Operations ▸ Search indexes**, which checks them, then press
+  <kbd>R</kbd> **Rebuild** if it reports drift.
+
+#### Peers connect but content is missing
+
+- **Check:** **Link status ▸ Offered** and **Link status ▸ Excluded**, trust
+  state, **Outbox**, and **Diagnostics**.
+- Use **Repair carried posts** only for local materialization repair.
+
+#### Game is busy, fails, or loses state
+
+- **Check:** its session limit, <kbd>C</kbd> **Compatibility** setup,
+  <kbd>L</kbd> **Last diagnostic**, service state, and actual persistent
+  paths.
+
+### Keys and backups
+
+#### A node key may have leaked
+
+You think `signing.identity` or `transport.identity` leaked.
+
+- **Fix:** replace that key as **Compromised** under **Link status ▸ Keys**,
+  or with `python -m netbbs.admin rotate-key signing --compromised` while the
+  node is stopped. The address and reputation stay; see
+  [Node keys](#node-keys).
+
+> [!CAUTION]
+> If `root.identity` leaked too, as it does with a whole copied identity
+> directory or backup, rotation is no remedy: the holder can authorize keys
+> of their own, and only a new node identity ends that.
+
+#### Voidrunner: NOT CAPTURED
+
+Backup says `Voidrunner: NOT CAPTURED`. The node has not started since
+v7.4.1, so it has recorded no save directory and the CLI fell back to your
+shell's home.
+
+- **Fix:** start the node once, or rerun with explicit
+  `--voidrunner-save-dir`.
+
+#### Voidrunner: no saves at
+
+Backup says `Voidrunner: no saves at ...`. The node named that directory
+itself and there is nothing in it -- nobody has played. Nothing to do.
+
+### Reading the logs
+
+| Where | What |
+| --- | --- |
+| Linux | Start with `journalctl -u netbbs`. |
+| NetBSD | The example service's capture file is `netbbs.service.log` in the state directory; it catches failures before the application's rotating log opens. That service capture is not self-rotating, so arrange rotation or an appropriate output policy yourself. |
+| `netbbs.log` | The application's log rotates at 10 MiB with five retained backups (up to about 60 MiB including the active file). |
+
+**Operations ▸ Error log** reads that file from inside NetBBS, including from
+`python -m netbbs.admin` while the node is stopped.
+
+- That console runs outside the node, so its health panel has no live
+  controls; it says whether the node is running.
+- It shows the newest 512 KiB, topped up from `netbbs.log.1` after a
+  rotation, and says when older lines exist that it does not show.
+- It cannot show failures from before the log opened; for those, use the
+  service manager's output above.
+
+Some lines are routine and need nothing from you:
+
+- A caller who hangs up is one `INFO` line naming their address.
+- Every node yours meets on NetBBS Link starts on probation here, and the log
+  says once per node, since the node started, that its content is held back.
+- Your node is on probation at each peer in the same way, and the log says
+  once per peer when one does not take what yours sends yet.
+- A relay candidate that cannot be reached is also mentioned once.
+
+A `WARNING` or `ERROR` line, and any traceback, is worth reading.
+
+Link **Diagnostics** is a bounded warning/error log, not a transcript of all
+content. The administrative **Audit log** answers who changed a setting or
+moderated an item. Inspect those before attempting filesystem repairs.
+
+### Filing an issue
 
 For unresolved problems, [file an issue](https://github.com/Thiesi/NetBBS/issues)
 with the release, operating system, transport, steps, and relevant error text.
-Remove passwords, private keys, tokens, personal data, and transfer URLs.
+
+> [!WARNING]
+> Remove passwords, private keys, tokens, personal data, and transfer URLs
+> before you post.
