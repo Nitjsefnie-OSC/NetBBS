@@ -1742,18 +1742,49 @@ Check a network's rules before gating its echoes anywhere else.
 
 ## Daily operation
 
-Check the dashboard's pending registrations, posts and files, backup
-recency, free disk space, and recent errors. Staff and moderators see what
-waits for them under **Moderation (n)** and on the Staff console, so a queue
-can empty while you are away. Choose welcome/masthead/banner presets through Settings;
-preview before applying, or place your own files as described under
-[Custom banners and mastheads](#custom-banners-and-mastheads). Timestamp format and display timezone are node-wide.
-Until you choose a timezone under **Settings → Timestamp format**, times are
-shown in UTC: the main-menu clock says `UTC`, and the node log reminds you at
-every start. The default welcome banner mentions NetBBS Link only when the
-node ran with Link on at its last start.
+| At a glance | |
+| --- | --- |
+| **Where** | The SysOp console's dashboard, **Settings** and **Operations** |
+| **From the shell** | `python -m netbbs.admin` (the console with the node stopped), `python -m netbbs.search check\|rebuild --db PATH` |
+| **Decide first** | Your display timezone, and whether guests may use mail, the node map and your own doors |
 
-**Settings → Limits & retention** holds six node-wide values, saved together
+In this chapter: [Routine checks](#routine-checks) ·
+[Limits and retention](#limits-and-retention) ·
+[The guest account](#the-guest-account) ·
+[Node and sessions](#node-and-sessions) ·
+[Logs and search indexes](#logs-and-search-indexes) ·
+[Custom banners and mastheads](#custom-banners-and-mastheads)
+
+### Routine checks
+
+Check the dashboard's:
+
+- pending registrations, posts and files;
+- backup recency;
+- free disk space;
+- recent errors.
+
+Staff and moderators see what waits for them under **Moderation (n)** and on
+the Staff console, so a queue can empty while you are away.
+
+Choose welcome/masthead/banner presets through **Settings**; preview before
+applying, or place your own files as described under
+[Custom banners and mastheads](#custom-banners-and-mastheads). The default
+welcome banner mentions NetBBS Link only when the node ran with Link on at its
+last start.
+
+> [!NOTE]
+> Timestamp format and display timezone are node-wide. Until you choose a
+> timezone under **Settings ▸ Timestamp format**, times are shown in UTC: the
+> main-menu clock says `UTC`, and the node log reminds you at every start.
+
+**Settings ▸ Recent callers** cycles through three states: the panel after
+login in its default neon style, the same panel plain (your header colour and
+a quiet heading), and hidden.
+
+### Limits and retention
+
+**Settings ▸ Limits & retention** holds six node-wide values, saved together
 and applied without a restart:
 
 | Setting | Default | Effect |
@@ -1762,117 +1793,200 @@ and applied without a restart:
 | Grace before deletion | 7 days | How long an expired post or file waits before it is deleted. An expired file can be recovered from its area until then. |
 | Invitation expiry | 7 days | When an unaccepted channel invitation lapses. Clear the field for invitations that never expire. |
 | Chat scrollback | 100 messages | Lines each channel keeps, carried Link channels included. Lowering it trims a channel the next time someone speaks there. |
-| Node map level | 0 | The lowest level that may open **Directory → Node map**. A guest is an ordinary account: set this above the guest account's level to keep the map from guests. |
+| Node map level | 0 | The lowest level that may open **Directory ▸ Node map**. A guest is an ordinary account: set this above the guest account's level to keep the map from guests. |
 | Mail level | 0 | The lowest level that may open **E-mail**: read, write and reply, here and to other BBSes. Below it the main menu offers no E-mail. Mail sent to an account below it still arrives and waits until you raise the account's level. |
 
-The guest account (**Settings → Guest access**) never has mail, whatever its
-level and the mail level: every guest signs in as the same account, so its
-inbox would be shared by strangers and its letters sent under one name. A
-caller who writes to it is told the account has no mailbox; Link mail to it
-bounces, and the sender is told the account takes no mail. If the guest
-account has mail from before this rule, it stays in the database, unreadable
-by guests; turn guest login off and sign in as the account to read or delete
-it.
+### The guest account
 
-A session that came in through guest login also can't change what other
-callers see of the guest account: its bio, signature, name and details, who it
+Guest login is set under **Settings ▸ Guest access**. Every guest signs in as
+the same account.
+
+#### Set what every guest starts with
+
+1. Open the guest account under **Users ▸ User list**.
+2. Press <kbd>E</kbd> **Edit profile**. The screen is titled
+   **Guest defaults**.
+
+It offers:
+
+- the guest account's bio and signature;
+- whether it takes messages;
+- who it blocks (their live messages to guests are refused);
+- its MRC settings;
+- whether its name is shown to other callers;
+- the display settings.
+
+Each guest can still change the display settings (except the MRC nick
+colour), the fullscreen editor and stylized MRC names for their own call; the
+rest is the same for every guest. Name and details, read receipts, sort
+preferences, keys and password are not on it. Only a SysOp can set the guest
+defaults, and each change goes into the account's **History**.
+
+#### What a guest call cannot change
+
+A session that came in through guest login can't change what other callers
+see of the guest account: its bio, signature, name and details, who it
 blocks, whether it takes messages, its MRC settings, its chat alias or its MRC
-hub registration. Without that, any anonymous caller could rewrite the profile
-every caller sees, and a self-entered birthdate would open age-gated areas for
-every later guest. A guest may still change display settings (character set,
+hub registration. A guest may still change display settings (character set,
 colors, redraw style, banners, sort orders), but only for that call.
 
-To set what every guest starts with, open the guest account in **Users** and
-press **[E]dit profile**: the screen is titled **Guest defaults**. It offers the
-guest account's bio and signature, whether it takes messages, who it blocks
-(their live messages to guests are refused), its MRC settings, whether its name
-is shown to other callers, and the display settings. Each guest can still
-change the display settings (except the MRC nick colour), the fullscreen editor
-and stylized MRC names for their own call; the rest is the same for every guest. Name and details, read
-receipts, sort preferences, keys and password are not on it. Only a SysOp can
-set the guest defaults, and each change goes into the account's **History**.
+<details>
+<summary>Why guests can't change the shared profile</summary>
 
-Each guest call is kept apart from the next in three more ways. Its drafts are
-its own and are deleted at hang-up. It may edit, withdraw or describe only the
-posts and files it wrote during that call; whatever earlier guests wrote under
-the account stays as it is, and says so. And it plays Voidrunner, War Dialer
-and Retro Trivia under an identity of its own, with a save that is thrown away
-at hang-up: a guest sees the real Hall of Fame and the real War Dialer world,
-but its career, its callsign and its moves never reach them. Your own
-(non-bundled) doors still see the guest account; gate them by level if a guest
-should not reach them.
+Without that rule, any anonymous caller could rewrite the profile every caller
+sees, and a self-entered birthdate would open age-gated areas for every later
+guest.
 
-The guest account can't be given staff permissions, identity verification or a
-moderator grant: anyone who signs in as the guest would hold it. Each screen
-that grants one says so, an account holding one can't be designated as the
-guest, and a guest account that somehow holds one signs nobody in until you
-remove it. Read and post grants still work, to open an area to guests above
-its level.
+</details>
 
-Under **Operations → Node and sessions**:
+Each guest call is kept apart from the next in three more ways:
 
-- **Observe live** opens the Monitor, a live table of everyone connected, refreshed every two
-  seconds:
-  - It shows each caller's transport, address, time on, idle time, terminal
-    size and where they are, for example "Boards › Retro" or
-    "Doors › Voidrunner".
-  - Up/Down selects a caller. **Snoop** shows their screen live, as they see
-    it, until you press any key. The caller is not told at the time. Chat's
-    `/help` and the User Handbook say that you can do this, and the node log
-    records every snoop: who watched whom, and for how long.
-    **Chat** breaks into their session for a two-pane chat: you type in the
-    top pane, they type in the bottom one, and Esc ends it. Their screen is
-    then repainted exactly as they left it, with anything it printed during
-    the chat and any half-typed line included, and they carry on. It is
-    refused during a file transfer. For a caller in a door you are warned
-    first, because the door keeps running while they chat. The node log
-    records every chat.
-    **Message** sends them a line. **Kick** opens
-    the same disconnect screen as **Who**: an optional message, then
-    **Disconnect**, which is recorded in the audit log. **Unwind** sends them
-    back to the main menu.
-  - **Order** sorts by time on, idle time or name; a mark in the heading
-    shows which. Below the table are the
-    most recent logins, logoffs and disconnects. A message or broadcast sent
-    to you while the Monitor is open appears on the line above the keys.
-  - On a terminal narrower than 80 columns, the address, terminal size and
-    transport columns are left out, in that order.
-- **Who** lists sessions and disconnects one.
-- **Maintenance** blocks new non-SysOp logins.
-- **Drain** warns and disconnects non-SysOp sessions after a delay.
-- **Lock & drain** combines both for planned work.
-- **Shutdown** stops the node after warning callers.
+- **Drafts:** its drafts are its own and are deleted at hang-up.
+- **Posts and files:** it may edit, withdraw or describe only the posts and
+  files it wrote during that call. Whatever earlier guests wrote under the
+  account stays as it is, and says so.
+- **Bundled games:** it plays Voidrunner, War Dialer and Retro Trivia under an
+  identity of its own, with a save that is thrown away at hang-up. A guest
+  sees the real Hall of Fame and the real War Dialer world, but its career,
+  its callsign and its moves never reach them.
 
-These controls require a live node session. For a stopped node, use the host's
-service controls. Use **Audit log** to see administrative and moderation
-activity, and **Error log** to read the newest part of `netbbs.log`: warnings and
-errors first, **Level** to show errors only or everything, **Follow** to watch
-new lines. Storage garbage collection and draft pruning show the proposed work
-before confirmation; review it instead of deleting files directly.
+> [!WARNING]
+> Your own (non-bundled) doors still see the guest account; gate them by
+> level if a guest should not reach them.
 
-**Operations → Search indexes** compares what **Find** searches with the posts,
+#### Guests and mail
+
+The guest account never has mail, whatever its level and the mail level:
+every guest signs in as the same account, so its inbox would be shared by
+strangers and its letters sent under one name.
+
+- A caller who writes to it is told the account has no mailbox.
+- Link mail to it bounces, and the sender is told the account takes no mail.
+- If the guest account has mail from before this rule, it stays in the
+  database, unreadable by guests. Turn guest login off and sign in as the
+  account to read or delete it.
+
+#### Permissions the guest account can't hold
+
+The guest account can't be given staff permissions, identity verification or
+a moderator grant: anyone who signs in as the guest would hold it.
+
+- Each screen that grants one says so.
+- An account holding one can't be designated as the guest.
+- A guest account that somehow holds one signs nobody in until you remove it.
+
+Read and post grants still work, to open an area to guests above its level.
+
+### Node and sessions
+
+Under **Operations ▸ Node and sessions**:
+
+| Entry | What it does |
+| --- | --- |
+| <kbd>W</kbd> **Who** | Lists sessions and disconnects one. |
+| <kbd>O</kbd> **Observe live** | Opens the Monitor (below). |
+| <kbd>M</kbd> **Maintenance mode** | Blocks new non-SysOp logins. |
+| <kbd>D</kbd> **Drain** | Warns and disconnects non-SysOp sessions after a delay. |
+| <kbd>L</kbd> **Lock & drain** | Combines both for planned work. |
+| <kbd>S</kbd> **Shutdown** | Stops the node after warning callers. |
+
+> [!IMPORTANT]
+> These controls require a live node session. For a stopped node, use the
+> host's service controls.
+
+#### Watch callers live: the Monitor
+
+The Monitor is a live table of everyone connected, refreshed every two
+seconds. It shows each caller's transport, address, time on, idle time,
+terminal size and where they are, for example "Boards › Retro" or
+"Doors › Voidrunner". On a terminal narrower than 80 columns, the address,
+terminal size and transport columns are left out, in that order.
+
+Up/Down selects a caller. Then:
+
+| Key | What it does |
+| --- | --- |
+| <kbd>S</kbd> **Snoop** | Shows their screen live, as they see it, until you press any key. |
+| <kbd>C</kbd> **Chat** | Breaks into their session for a two-pane chat. |
+| <kbd>M</kbd> **Message** | Sends them a line. |
+| <kbd>K</kbd> **Kick** | Opens the same disconnect screen as **Who**: an optional message, then <kbd>D</kbd> **Disconnect**, which is recorded in the audit log. |
+| <kbd>U</kbd> **Unwind** | Sends them back to the main menu. |
+| <kbd>O</kbd> **Order** | Sorts by time on, idle time or name; a mark in the heading shows which. |
+
+**Snoop:** the caller is not told at the time. Chat's `/help` and the User
+Handbook say that you can do this, and the node log records every snoop: who
+watched whom, and for how long.
+
+**Chat:** you type in the top pane, they type in the bottom one, and
+<kbd>Esc</kbd> ends it. Their screen is then repainted exactly as they left
+it, with anything it printed during the chat and any half-typed line
+included, and they carry on.
+
+- It is refused during a file transfer.
+- For a caller in a door you are warned first, because the door keeps running
+  while they chat.
+- The node log records every chat.
+
+Below the table are the most recent logins, logoffs and disconnects. A message
+or broadcast sent to you while the Monitor is open appears on the line above
+the keys.
+
+### Logs and search indexes
+
+Under **Operations**:
+
+- **Audit log** shows administrative and moderation activity.
+- **Error log** reads the newest part of `netbbs.log`: warnings and errors
+  first, <kbd>L</kbd> **Level** to show errors only or everything,
+  <kbd>F</kbd> **Follow** to watch new lines.
+
+Storage garbage collection and draft pruning show the proposed work before
+confirmation; review it instead of deleting files directly.
+
+**Operations ▸ Search indexes** compares what **Find** searches with the posts,
 files, chat messages and mail themselves, and shows how many entries are
-missing, stale or left over: counts only, never a letter's words. **Rebuild** replaces the indexes from that content; it
-cannot lose any. It also works from `python -m netbbs.admin`, and
-`python -m netbbs.search check|rebuild --db PATH` does the same from a script.
+missing, stale or left over: counts only, never a letter's words.
+<kbd>R</kbd> **Rebuild** replaces the indexes from that content; it cannot lose
+any. It also works from `python -m netbbs.admin`, and this does the same from a
+script:
+
+```sh
+python -m netbbs.search check|rebuild --db PATH
+```
 
 ### Custom banners and mastheads
 
-**Settings → Mastheads & banners** holds eight optional pieces of caller-facing
-art. **Session banners** are the welcome greeting, the log-off screen, and the screens
-shown before and after self-service signup. **Mastheads** sit above the main
-menu, the message-board list, the file-area list, and the chat channel picker.
-Each has a gallery of bundled samples, **From disk** loads a file you have
-already put on the node, and **Upload** sends one from your own computer. You
-can also put your own `.ans` file where the node looks for it.
+**Settings ▸ Mastheads & banners** holds eight optional pieces of
+caller-facing art:
 
-**Upload** needs the same route a caller's file upload does: a terminal that
-speaks Zmodem, NetBBS's own browser terminal (which needs no `public_url`), or,
-from any other terminal, a single-use browser link, which needs the web listener
-and its `public_url`. Whatever you send is saved as that piece's own file, whatever it
-was called on your side, up to 256 KiB. Uploading over an existing file asks
-first; if that piece is enabled, callers see the new art at once. An upload
-never enables a piece by itself, and it is recorded in the audit log.
+- **Session banners** are the welcome greeting, the log-off screen, and the
+  screens shown before and after self-service signup.
+- **Mastheads** sit above the main menu, the message-board list, the
+  file-area list, and the chat channel picker.
+
+Each piece has three ways in:
+
+- <kbd>G</kbd> **Gallery**: bundled samples.
+- <kbd>F</kbd> **From disk**: loads a file you have already put on the node.
+- <kbd>U</kbd> **Upload**: sends one from your own computer.
+
+You can also put your own `.ans` file where the node looks for it.
+
+#### Upload a file
+
+**Upload** needs the same route a caller's file upload does:
+
+- a terminal that speaks Zmodem;
+- NetBBS's own browser terminal (which needs no `public_url`);
+- or, from any other terminal, a single-use browser link, which needs the web
+  listener and its `public_url`.
+
+Whatever you send is saved as that piece's own file, whatever it was called on
+your side, up to 256 KiB. Uploading over an existing file asks first; if that
+piece is enabled, callers see the new art at once. An upload never enables a
+piece by itself, and it is recorded in the audit log.
+
+#### Place a file yourself
 
 The file goes beside the database and is named after the database file, minus
 `.db`, plus a suffix for the piece. A node whose `[database] path` is
@@ -1889,44 +2003,64 @@ The file goes beside the database and is named after the database file, minus
 | File-area masthead | `EmptinessMachine_file_area_banner.ans` |
 | Chat-channel masthead | `EmptinessMachine_chat_channel_picker_banner.ans` |
 
-For the `netbbs.db` in this handbook's examples, the prefix is `netbbs_`. Press
-**Ctrl-H** (F1 in SyncTERM) on a piece's own screen to see the exact path for your node.
+For the `netbbs.db` in this handbook's examples, the prefix is `netbbs_`.
 
-Placing the file does not turn it on. Each piece has its own switch, off by
-default, and callers keep seeing the built-in default until you open that
-piece's screen under **Settings → Mastheads & banners** and choose **Enable**.
-Its status line shows `disabled -- file: <name> (N bytes)` until you do.
-**Preview** shows your saved art even while it is switched off, and says under
-it what callers see meanwhile; with nothing saved it says that too. Enable
-refuses a missing file or one over 256 KiB. If a file that was enabled later
-goes missing or grows past that limit, callers get the default silently and the
-node logs a warning.
+> [!TIP]
+> Press <kbd>Ctrl</kbd>+<kbd>H</kbd> (<kbd>F1</kbd> in SyncTERM) on a piece's
+> own screen to see the exact path for your node.
 
-**Disable** turns a piece off and leaves its file in place. To get rid of the
-file, **Remove file** (offered while one is saved) deletes it after one yes/no
-and switches the piece off with it. It is recorded in the audit trail. The
-piece's **Mode** and **Speed** stay as they were and apply to the next file you
-place.
+#### Turn a piece on and off
+
+> [!IMPORTANT]
+> Placing the file does not turn it on. Each piece has its own switch, off by
+> default, and callers keep seeing the built-in default until you open that
+> piece's screen under **Settings ▸ Mastheads & banners** and choose
+> <kbd>E</kbd> **Enable**.
+
+- Until you do, its status line shows `disabled -- file: <name> (N bytes)`.
+- <kbd>P</kbd> **Preview** shows your saved art even while it is switched off,
+  and says under it what callers see meanwhile; with nothing saved it says
+  that too.
+- **Enable** refuses a missing file or one over 256 KiB. If a file that was
+  enabled later goes missing or grows past that limit, callers get the default
+  silently and the node logs a warning.
+- <kbd>D</kbd> **Disable** turns a piece off and leaves its file in place.
+- To get rid of the file, <kbd>R</kbd> **Remove file** (offered while one is
+  saved) deletes it after one yes/no and switches the piece off with it. It is
+  recorded in the audit trail. The piece's **Mode** and **Speed** stay as they
+  were and apply to the next file you place.
 
 Empty rows at the bottom of a piece are not sent, so a banner drawn in the top
 seven rows of the 24-row editor takes seven rows on a caller's screen. Empty
 rows between parts of the art are kept.
 
-**Open editor** opens the art editor on an 80x24 canvas. Typing (a space too) paints
-over whatever is at the cursor. At the end of a row the cursor stays put, so
-press **Enter** for the next row; **End** goes to just after the row's last
-character. Retyping a shorter line leaves the end of the old one in place:
-**Ctrl+K** clears from the cursor to the end of the row. **Ctrl+T** picks a
-block or line glyph, **Ctrl+P** and **Ctrl+B** the foreground and background
-colour, **Ctrl+L** repaints the screen, **Ctrl+G** lists every key, **Ctrl+O**
-saves, and **Ctrl+X** quits.
+#### Draw in the art editor
+
+<kbd>O</kbd> **Open editor** opens the art editor on an 80x24 canvas. Typing
+(a space too) paints over whatever is at the cursor. At the end of a row the
+cursor stays put, so press <kbd>Enter</kbd> for the next row; <kbd>End</kbd>
+goes to just after the row's last character. Retyping a shorter line leaves the
+end of the old one in place: <kbd>Ctrl</kbd>+<kbd>K</kbd> clears it.
+
+| Key | Action |
+| --- | --- |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> | Clear from the cursor to the end of the row |
+| <kbd>Ctrl</kbd>+<kbd>T</kbd> | Pick a block or line glyph |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> | Pick the foreground colour |
+| <kbd>Ctrl</kbd>+<kbd>B</kbd> | Pick the background colour |
+| <kbd>Ctrl</kbd>+<kbd>L</kbd> | Repaint the screen |
+| <kbd>Ctrl</kbd>+<kbd>G</kbd> | List every key |
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Save |
+| <kbd>Ctrl</kbd>+<kbd>X</kbd> | Quit |
+
+#### Bundled designs and scene art
 
 The welcome gallery ends with three quiet designs for clubs that don't want
-neon: **Paper & Ink**, **Library Card** and **Garden Gate**.
-Every bundled design uses only characters CP437 has, so it looks the same in
-SyncTERM, PuTTY's default font and a browser. Your own art can use anything;
-on a classic terminal, a character CP437 lacks is drawn as the nearest
-shape it has.
+neon: **Paper & Ink**, **Library Card** and **Garden Gate**. Every bundled
+design uses only characters CP437 has, so it looks the same in SyncTERM,
+PuTTY's default font and a browser. Your own art can use anything; on a
+classic terminal, a character CP437 lacks is drawn as the nearest shape it
+has.
 
 Art from scene tools such as PabloDraw or Moebius works as it is:
 
@@ -1944,17 +2078,18 @@ Art from scene tools such as PabloDraw or Moebius works as it is:
   the same symbols on a modern one, and as plain stand-ins in ASCII.
 - **iCE colours** (blink used as a bright background) show as bright
   backgrounds everywhere, not as blinking text.
-- **Credit line:** on the welcome banner's screen, **Credit line** switches on
-  a line under your banner crediting the art from its SAUCE record, for
-  example `art: Nib Logo by InkWell/Quill`. It is off by default.
+- **Credit line:** on the welcome banner's screen, <kbd>C</kbd> **Credit line**
+  switches on a line under your banner crediting the art from its SAUCE
+  record, for example `art: Nib Logo by InkWell/Quill`. It is off by default.
 
 #### The main menu as your own art
 
-The main-menu masthead can also be the menu itself. On its screen, **Mode**
-switches between *above the menu* (the default) and *the menu itself*. In the
-second mode your art is the whole main menu, and NetBBS draws each caller's own
-items and a few live values into places you mark in it. You mark a place by
-drawing a token in plain text, in the colour its content should take:
+The main-menu masthead can also be the menu itself. On its screen,
+<kbd>M</kbd> **Mode** switches between *above the menu* (the default) and
+*the menu itself*. In the second mode your art is the whole main menu, and
+NetBBS draws each caller's own items and a few live values into places you
+mark in it. You mark a place by drawing a token in plain text, in the colour
+its content should take:
 
 | Token | What goes there |
 | --- | --- |
@@ -1967,31 +2102,37 @@ drawing a token in plain text, in the colour its content should take:
 | `{time 5}`, `{date 10}` | The node's time and date, in its timezone |
 | `{online 3}` | How many callers are signed in, such as `4` |
 
-Without a number, a field is as wide as its token. Brace text that is not one
-of these stays part of the art. Counts and levels are bare numbers, so draw
-the words around them yourself (`mail {mail 4}`, `{online 3} online`). A value
-wider than its field is cut; a field too narrow for `...` plus two characters
-is cut without it, so a number keeps its digits.
+- Without a number, a field is as wide as its token.
+- Brace text that is not one of these stays part of the art.
+- Counts and levels are bare numbers, so draw the words around them yourself
+  (`mail {mail 4}`, `{online 3} online`).
+- A value wider than its field is cut; a field too narrow for `...` plus two
+  characters is cut without it, so a number keeps its digits.
 
 The art only decorates. Each caller sees exactly the items the normal menu
 would show them, with the same keys; the art can't add or hide any. A caller
 gets the normal menu instead whenever the art can't be used as drawn:
-- **their items don't fit** the `{menu}` region (a SysOp's menu is the longest);
+
+- **their items don't fit** the `{menu}` region (a SysOp's menu is the
+  longest);
 - **the art has a problem**, such as no `{menu}` and no drawn items, or two
   slots overlapping;
 - **their terminal is too small**, narrower than the art or too short for it;
 - **they read plain ASCII.**
 
-**Check** lists the tokens it found and any problems, and says whether your menu
-and a level-0 caller's fit, on a terminal the size of yours. **Preview** shows
-the menu as you see it, then as a level-0 caller sees it. The gallery's
-**Quill Ledger** and **Inkwell Blocks** samples are drawn this way, in 16
-colours with characters classic terminals have; applying one switches the mode
-for you.
+<kbd>C</kbd> **Check** lists the tokens it found and any problems, and says
+whether your menu and a level-0 caller's fit, on a terminal the size of yours.
+**Preview** shows the menu as you see it, then as a level-0 caller sees it.
+The gallery's **Quill Ledger** and **Inkwell Blocks** samples are drawn this
+way, in 16 colours with characters classic terminals have; applying one
+switches the mode for you.
+
+##### Draw the menu items yourself
 
 You can also draw the menu's items into the art yourself, such as
 `[M]essage boards` or `[A]pprovals`, instead of leaving all of them to
 `{menu}`:
+
 - **Any bracketed key is an item.** You don't need a token. The item is the
   text around the key, up to two spaces or a frame character on either side,
   which is also what a browser caller can click. Put at least two spaces or
@@ -2009,15 +2150,17 @@ You can also draw the menu's items into the art yourself, such as
   Approvals and Invitations appear only for some callers. Leave a `{menu}`
   region for them: without one, a caller with an item you didn't draw gets the
   normal menu.
-- **Redraw items whose key moved.** Every main-menu key is now its label's
-  first letter, so Communities moved from `[O]` to `[T]opics` and the staff
-  list from `[T]` to `[O]perators`. Art that still draws `C[o]mmunities` or
-  `S[t]aff list` would send a caller to the wrong screen, so those drawn items
-  are blanked and the real ones go into `{menu}` until you redraw them.
-  `P[r]evious callers` and `Moder[a]tion` keep working (now `[R]ecent callers`
-  and `[A]pprovals`), but read better redrawn.
 - **Other bracketed text stays as drawn.** `[x] marks the spot` is decoration,
   since X is no menu key.
+
+> [!WARNING]
+> **Redraw items whose key moved.** Every main-menu key is now its label's
+> first letter, so Communities moved from `[O]` to `[T]opics` and the staff
+> list from `[T]` to `[O]perators`. Art that still draws `C[o]mmunities` or
+> `S[t]aff list` would send a caller to the wrong screen, so those drawn items
+> are blanked and the real ones go into `{menu}` until you redraw them.
+> `P[r]evious callers` and `Moder[a]tion` keep working (now `[R]ecent callers`
+> and `[A]pprovals`), but read better redrawn.
 
 **Check** lists the items it found and says which items it blanks, and which
 go into `{menu}`, for you and for a level-0 caller. **Preview** shows both
@@ -2038,78 +2181,106 @@ page of the list is drawn into a region you mark:
 | `{count 5}` | How many entries, such as `14` |
 
 `{prompt}`, `{user}`, `{node}`, `{level}`, `{time}` and `{date}` work as on the
-main menu. Each row shows the number to press, the name, and one value: what is
-new on a board, how many files an area holds, or who is in a channel. A board,
-area or channel the caller can't use yet because it asks for a verified name
-says `needs verification` there instead. Descriptions stay on the normal list.
-A page holds as many entries as the region has rows, and the keys work as on
-the normal list: type the number, move with the arrow keys, page with **N** and
-**P**, and search with **S**.
+main menu.
 
-A caller gets the normal list when the art has a problem, when they read plain
-ASCII, when their terminal is too small, and when the region is under 3 rows or
-leaves names fewer than 12 columns. **Check** says whether a list fits,
-including one with a `needs verification` entry, whose value is the widest.
-**Preview** draws the first page of your own list into the art. Each gallery
-has a sample drawn this way: **Board Ledger**, **Filing Cabinet** and
-**Parlour**; applying one switches the mode for you.
+- Each row shows the number to press, the name, and one value: what is new on
+  a board, how many files an area holds, or who is in a channel.
+- A board, area or channel the caller can't use yet because it asks for a
+  verified name says `needs verification` there instead.
+- Descriptions stay on the normal list.
+- A page holds as many entries as the region has rows, and the keys work as on
+  the normal list: type the number, move with the arrow keys, page with
+  <kbd>N</kbd> and <kbd>P</kbd>, and search with <kbd>S</kbd>.
+
+A caller gets the normal list:
+
+- when the art has a problem;
+- when they read plain ASCII;
+- when their terminal is too small;
+- when the region is under 3 rows or leaves names fewer than 12 columns.
+
+**Check** says whether a list fits, including one with a `needs verification`
+entry, whose value is the widest. **Preview** draws the first page of your own
+list into the art. Each gallery has a sample drawn this way: **Board Ledger**,
+**Filing Cabinet** and **Parlour**; applying one switches the mode for you.
+
+#### Tokens in the welcome and log-off banners
 
 The welcome and log-off banners take the field tokens too, but not `{menu}`
-or `{prompt}`. The welcome banner is shown before anyone signs in, so it fills
-only `{node}`, `{time}`, `{date}` and `{online}`. The log-off banner adds
-`{user}` and `{level}`. Any other field is left blank, and SSH's sign-in banner
-fills `{node}`, `{time}` and `{date}`. A banner without tokens is sent exactly
-as before.
+or `{prompt}`. Any other field is left blank, and a banner without tokens is
+sent exactly as before.
+
+| Banner | Fills |
+| --- | --- |
+| Welcome (shown before anyone signs in) | `{node}`, `{time}`, `{date}`, `{online}` |
+| Log-off | The welcome banner's, plus `{user}` and `{level}` |
+| SSH's sign-in banner | `{node}`, `{time}`, `{date}` |
+
+#### Opening animations
 
 The welcome banner, the main-menu masthead and the three list mastheads
-(Boards, file areas, Chat channels) can play as an opening animation. On the piece's screen, **Speed** steps through off (the default),
-2400, 9600 and 38400 bps: NetBBS then draws the art at that speed, the way a
-modem of the day would have, so ANSI art made as an animation plays as one and
-still art builds up from the top. Any key draws the rest at once, and that key
-is used up, so it doesn't also act at the prompt that follows. A paced draw
-plays to the end. If you'd rather a slow piece not hold callers up, **Time
-limit** next to **Speed** steps through off (the default), 10, 30 and 60
-seconds: after that long the rest is drawn at once. Each piece plays once per
-connection: the welcome
-banner when a caller connects, the masthead on their first main menu, a list's
-art on the first visit to that list, never on a redraw, a page change or a
-cursor move. Callers who read plain ASCII, and callers who set **Profile → Banner
-animations** to quick, get the art at once. The piece's **Preview**
-plays it at its speed every time you use it, so you can see the animation
-without signing in as a caller.
+(Boards, file areas, Chat channels) can play as an opening animation.
 
-Every caller gets text in the character set their terminal reads:
+- On the piece's screen, <kbd>S</kbd> **Speed** steps through off (the
+  default), 2400, 9600 and 38400 bps: NetBBS then draws the art at that speed,
+  the way a modem of the day would have, so ANSI art made as an animation
+  plays as one and still art builds up from the top.
+- Any key draws the rest at once, and that key is used up, so it doesn't also
+  act at the prompt that follows. A paced draw plays to the end.
+- If you'd rather a slow piece not hold callers up, **Time limit**
+  (<kbd>T</kbd>) next to **Speed** steps through off (the default), 10, 30 and
+  60 seconds: after that long the rest is drawn at once.
 
-- **Detection when they connect:**
-  - A Telnet caller's terminal is asked what it is. SyncTERM and other classic
-    BBS terminals get CP437, so your art arrives exactly as drawn.
-  - Modern terminals get Unicode.
-  - A Telnet client that doesn't say gets plain ASCII for everything before
-    sign-in, your banner included: boxes become `+`, `-` and `|`.
-  - SSH callers are detected from their terminal type, but the banner SSH shows
-    during login is always ASCII.
-  - The browser always gets Unicode.
-  - The node log has one line per Telnet or SSH connection saying what the
-    terminal called itself and which character set it got, for example
-    `telnet caller 203.0.113.9 terminal type: 'syncterm' (answered); character
-    set cp437 (certain)`. Look there if a caller's screen looks wrong.
-  - Classic terminals such as SyncTERM jump to the next line as soon as they
-    fill the last column. NetBBS lays out every screen one column narrower for
-    them, so nothing gets double-spaced and the screen doesn't scroll when the
-    bottom row is written. Your banners keep their full width. Plain spaces at
-    the end of each banner row are dropped when it's shown, so draw background
-    colours out to the edge if a row should reach it.
-  - SyncTERM also gets full colour (truecolor), so doors and colourful
-    presets look the way they do in a modern terminal. Other classic terminals
-    get 256 colours. A caller can still pick a colour depth in their Profile.
-- **After sign-in:**
-  - Each caller's own **Profile → Character set** choice applies.
-  - A caller whose terminal wasn't recognised is asked once which of two sample
-    lines looks right.
+Each piece plays once per connection: the welcome banner when a caller
+connects, the masthead on their first main menu, a list's art on the first
+visit to that list, never on a redraw, a page change or a cursor move.
+Callers who read plain ASCII, and callers who set
+**Profile ▸ Banner animations** to quick, get the art at once. The piece's
+**Preview** plays it at its speed every time you use it, so you can see the
+animation without signing in as a caller.
 
-**Settings → Recent callers** cycles through three states: the panel after
-login in its default neon style, the same panel plain (your header colour and
-a quiet heading), and hidden.
+#### Character sets callers get
+
+Every caller gets text in the character set their terminal reads.
+
+**Detection when they connect:** a Telnet caller's terminal is asked what
+it is.
+
+| Caller | Gets |
+| --- | --- |
+| SyncTERM and other classic BBS terminals | CP437, so your art arrives exactly as drawn |
+| Modern terminals | Unicode |
+| A Telnet client that doesn't say | Plain ASCII for everything before sign-in, your banner included: boxes become `+`, `-` and `\|` |
+| SSH | Detected from their terminal type, but the banner SSH shows during login is always ASCII |
+| Browser | Always Unicode |
+
+The node log has one line per
+Telnet or SSH connection saying what the terminal called itself and which
+character set it got, for example:
+
+```text
+telnet caller 203.0.113.9 terminal type: 'syncterm' (answered); character set cp437 (certain)
+```
+
+Look there if a caller's screen looks wrong.
+
+Classic terminals:
+
+- Classic terminals such as SyncTERM jump to the next line as soon as they
+  fill the last column. NetBBS lays out every screen one column narrower for
+  them, so nothing gets double-spaced and the screen doesn't scroll when the
+  bottom row is written. Your banners keep their full width.
+- Plain spaces at the end of each banner row are dropped when it's shown, so
+  draw background colours out to the edge if a row should reach it.
+- SyncTERM also gets full colour (truecolor), so doors and colourful presets
+  look the way they do in a modern terminal. Other classic terminals get 256
+  colours. A caller can still pick a colour depth in their Profile.
+
+**After sign-in:**
+
+- Each caller's own **Profile ▸ Character set** choice applies.
+- A caller whose terminal wasn't recognised is asked once which of two sample
+  lines looks right.
 
 ## State, backup, and recovery
 
