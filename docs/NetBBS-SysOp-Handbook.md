@@ -385,23 +385,29 @@ expiry. The node's upload limit and any lower proxy limit both apply.
 
 ## Using the SysOp console
 
-Log in as a level-255 account and press **[S]ysOp**. The dashboard shows
-node mode, active sessions, pending approvals, backup/update status, and
-NetBBS Link health when enabled. Refresh it after making changes elsewhere.
-Helpers you give staff permissions get a smaller **[S]taff** console instead
-([Sharing the work](#sharing-the-work-staff-permissions)).
+| At a glance | |
+| --- | --- |
+| **Open it** | Log in as a level-255 account and press <kbd>S</kbd> **SysOp** |
+| **From the shell** | `python -m netbbs.admin --db /var/lib/netbbs/netbbs.db` |
+| **Helpers** | Staff get a smaller <kbd>S</kbd> **Staff** console instead ([Sharing the work](#sharing-the-work-staff-permissions)) |
+
+The dashboard shows node mode, active sessions, pending approvals,
+backup/update status, and NetBBS Link health when enabled. Refresh it after
+making changes elsewhere.
 
 | Area | Purpose |
 | --- | --- |
-| Users | Accounts, registration, levels, approval, staff permissions, identity-verifier grants |
-| Content | Message boards, file areas, chat channels, Communities, doors, moderation |
-| Operations | Sessions, maintenance, audit log, backups, Link diagnostics |
-| Settings | Branding, timestamps, node name, network participation, update checks, limits and retention |
+| <kbd>U</kbd> **Users** | Accounts, registration, levels, approval, staff permissions, identity-verifier grants |
+| <kbd>C</kbd> **Content** | Message boards, file areas, chat channels, Communities, doors, moderation |
+| <kbd>O</kbd> **Operations** | Sessions, maintenance, audit log, backups, Link diagnostics |
+| <kbd>S</kbd> **Settings** | Branding, timestamps, node name, network participation, update checks, limits and retention |
 
-**A first day, in order.** Most first-time SysOps get furthest by doing these
-before telling anyone the address:
+### A first day, in order
 
-1. Choose who may sign up under **Users → Registration**
+Most first-time SysOps get furthest by doing these before telling anyone the
+address:
+
+1. Choose who may sign up under **Users ▸ Registration**
    ([Accounts](#accounts-permissions-and-identity)).
 2. Decide what, if anything, levels will mean on your node
    ([Levels](#levels)). Everyone starts at 0, which is enough for a club
@@ -419,27 +425,47 @@ before telling anyone the address:
 7. Join NetBBS Link later, if at all, once the node works on its own
    ([Join and share](#join-and-share)).
 
+### Keys that work on every screen
+
 Quick actions lead to the same screens. Use the displayed keys rather than
-old menu letters from release notes. A few keys mean the same on every
-screen: **[B]ack** or Esc leaves it (Esc first clears a highlighted row or
-field), **<** **>** or PgUp/PgDn turn a page or a form's section, **/** finds,
-and **?**, F1 or Ctrl+H show help. On a list Left/Right turn the page too; on
-a form they step the highlighted field's value. Draft editors keep changes
-local until **Save**; Back discards the draft after asking. Fields are
-numbered **01**, **02** and on through every section of the screen: type a
-field's number (two digits, or one and Enter) to open it from any page, or
-move with Up/Down and press Enter or Space. Letters on these screens are only
-their actions.
+old menu letters from release notes.
+
+| Key | What it does |
+| --- | --- |
+| <kbd>B</kbd> **Back** or <kbd>Esc</kbd> | Leaves the screen. <kbd>Esc</kbd> first clears a highlighted row or field. |
+| <kbd>&lt;</kbd> <kbd>&gt;</kbd> or <kbd>PgUp</kbd>/<kbd>PgDn</kbd> | Turn a page or a form's section |
+| <kbd>←</kbd>/<kbd>→</kbd> | On a list, turn the page too; on a form, step the highlighted field's value |
+| <kbd>/</kbd> | Finds |
+| <kbd>?</kbd>, <kbd>F1</kbd> or <kbd>Ctrl</kbd>+<kbd>H</kbd> | Show help |
+
+### Forms and fields
+
+- Draft editors keep changes local until <kbd>S</kbd> **Save**; Back
+  discards the draft after asking.
+- Fields are numbered **01**, **02** and on through every section of the
+  screen. Type a field's number (two digits, or one and <kbd>Enter</kbd>) to
+  open it from any page, or move with <kbd>↑</kbd>/<kbd>↓</kbd> and press
+  <kbd>Enter</kbd> or <kbd>Space</kbd>.
+- Letters on these screens are only their actions.
 
 In current field prompts, the existing value is already in the input line:
-Enter accepts it, Escape cancels the field edit, and deleting all text clears
-it where the field permits an empty value. Do not assume an empty line means
-“keep the old value.”
+
+- <kbd>Enter</kbd> accepts it.
+- <kbd>Esc</kbd> cancels the field edit.
+- Deleting all text clears it where the field permits an empty value.
+
+> [!WARNING]
+> Do not assume an empty line means "keep the old value."
+
+### The console from the shell
 
 `python -m netbbs.admin --db /var/lib/netbbs/netbbs.db` is a second,
 **interactive** route to account/content administration without a caller
-connection. It cannot control a running process's sessions, maintenance, or
-live networking. Its Backup screen is status-only; use the backup CLI there.
+connection.
+
+- It cannot control a running process's sessions, maintenance, or live
+  networking.
+- Its Backup screen is status-only; use the backup CLI there.
 
 ## Accounts, permissions, and identity
 
