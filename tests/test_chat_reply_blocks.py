@@ -54,6 +54,20 @@ def test_a_name_too_wide_for_its_column_stands_alone_and_is_never_cut():
     assert all(display_width(line) <= 40 for line in lines[1:])
 
 
+
+def test_an_overflowing_middle_cell_leaves_no_blank_line_at_40_columns():
+    # Review of #1257: a presence cell wider than its capped column flushed
+    # the row, and the short-room and empty-description paths then flushed
+    # the leftover padding as blank lines.
+    rows = [
+        (("#chess", 220), ("0 here · 1 on MRC (stale)", None), ("", None)),
+        (("#retro", 220), ("0 here · 4 on MRC (3 h ago)", None), ("Old machines", 248)),
+    ]
+    lines = [strip_ansi(line) for line in table_rows(rows, width=40)]
+    assert all(line.strip() for line in lines), lines
+    assert any("Old machines" in line for line in lines)
+    assert all(display_width(line) <= 40 for line in lines)
+
 def test_prose_wraps_inside_the_block():
     lines = [strip_ansi(line) for line in paragraph("alice, bob, " * 10, width=30)]
     assert len(lines) > 1 and all(line.startswith(" ") and display_width(line) <= 30 for line in lines)

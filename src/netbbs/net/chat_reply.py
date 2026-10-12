@@ -110,13 +110,17 @@ def _row_lines(row: Sequence[Cell], widths: list[int], width: int) -> list[str]:
         column += cell_width + 2
     room = width - column
     if room < MIN_LAST_COLUMN and leading:
-        lines.append(line.rstrip())
+        # An overflowing cell may already have flushed this row's content,
+        # leaving only padding: that is no line of its own.
+        if line.strip():
+            lines.append(line.rstrip())
         indent = 3
         line, room = " " * indent, width - indent
         column = indent
     wrapped = wrap_to_width(last_text, max(1, room)) if last_text else []
     if not wrapped:
-        lines.append(line.rstrip())
+        if line.strip():
+            lines.append(line.rstrip())
         return lines
     lines.append(line + _style(wrapped[0], last_color))
     lines.extend(" " * column + _style(part, last_color) for part in wrapped[1:])
