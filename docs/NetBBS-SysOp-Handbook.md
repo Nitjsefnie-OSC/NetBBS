@@ -2113,6 +2113,16 @@ a quiet heading), and hidden.
 
 ## State, backup, and recovery
 
+| At a glance | |
+| --- | --- |
+| **Where** | **Operations ▸ Full backups** in the SysOp console |
+| **From the shell** | `python -m netbbs.backup create`, `python -m netbbs.backup restore` |
+| **Decide first** | Where backups go, how often, and how you copy them off the machine |
+
+In this chapter: [Know what belongs to the node](#know-what-belongs-to-the-node) ·
+[Create and verify a backup](#create-and-verify-a-backup) ·
+[Restore](#restore)
+
 ### Know what belongs to the node
 
 The database stores accounts, configuration, metadata, and network state.
@@ -2133,18 +2143,27 @@ Files, keys, and game saves also live outside it. For `/var/lib/netbbs/netbbs.db
 
 Keep your configuration, service settings, and external-game state with your
 recovery records. The built-in backup is not a copy of every file the service
-account can access. Do not copy only a running `.db` file: SQLite's write-ahead
-log can contain changes not yet written into that file.
+account can access.
+
+> [!WARNING]
+> Do not copy only a running `.db` file: SQLite's write-ahead log can contain
+> changes not yet written into that file.
 
 ### Create and verify a backup
 
-Stop active games before capture; halt companion services. The BBS itself may
-stay running for a supported database backup. From a live SysOp console,
-**Full backups → Create backup now** writes a timestamped directory under
-`netbbs_backups/` beside the database, or under the destination you set. Check
-the reported path and game coverage.
+#### Back up from the console
 
-**Full backups → Schedule & destination** sets both without a cron job:
+1. Stop active games before capture, and halt companion services. The BBS
+   itself may stay running for a supported database backup.
+2. From a live SysOp console, open **Operations ▸ Full backups** and press
+   <kbd>C</kbd> **Create backup now**. It writes a timestamped directory under
+   `netbbs_backups/` beside the database, or under the destination you set.
+3. Check the reported path and game coverage.
+
+#### Schedule backups
+
+<kbd>S</kbd> **Schedule & destination** on the same screen sets both without a
+cron job:
 
 - **Frequency** off, daily or weekly, at a **Time** (24-hour, in the node's
   display timezone) and, for weekly, a **Weekday**. A node that was not running
@@ -2159,8 +2178,13 @@ the reported path and game coverage.
 
 The Backup screen and the dashboard show the next run, and the backup history
 lists each scheduled run's outcome, including a skipped one and why. A failed
-run is not retried until the next scheduled time. The running node makes the
-backups; `python -m netbbs.admin` only changes the settings.
+run is not retried until the next scheduled time.
+
+> [!NOTE]
+> The running node makes the backups; `python -m netbbs.admin` only changes
+> the settings.
+
+#### Back up from the shell
 
 For a one-off destination or a script, use the installed backup CLI. Run it
 as an account able to read all node state:
@@ -2174,84 +2198,123 @@ sudo -u netbbs /var/lib/netbbs/.venv/bin/python -m netbbs.backup create \
 
 The destination must not already exist; choose a fresh name for each backup.
 
+#### Voidrunner careers
+
 Voidrunner careers live beside the database, in `netbbs.db.doors/voidrunner/`,
 so the CLI finds them from `--db` alone. The node also records the directory it
 uses at startup, and the CLI reads that first, so a `VOIDRUNNER_SAVE_DIR`
-override is followed too. They used to live under the home directory of
-whichever account started the node, which a CLI run from your own shell does
-not share: up to v7.4.0 that silently captured no careers at all
-([#555](https://github.com/Thiesi/NetBBS/issues/555)). Two cases still need you:
+override is followed too. Two cases still need you:
 
-- A node upgraded from that home-directory default that has not yet started
-  since. The CLI says so in as many words -- `Voidrunner: NOT CAPTURED` or
-  `GUESSED LOCATION` -- rather than reporting an empty directory as an empty
-  node. Start the node once (it copies the careers into place), or pass
-  `--voidrunner-save-dir` with the old directory. A node upgraded straight from
-  v7.4.0 or earlier never recorded that directory, so it does **not** copy the
-  careers: set `VOIDRUNNER_SAVE_DIR` to the old directory before its first start,
-  or copy its contents into `netbbs.db.doors/voidrunner/` with the node stopped.
-- A directory you chose yourself, when the node has not recorded it. Pass
+- **A node upgraded from the old home-directory default that has not yet
+  started since.** The CLI says so in as many words -- `Voidrunner: NOT
+  CAPTURED` or `GUESSED LOCATION` -- rather than reporting an empty directory
+  as an empty node. Start the node once (it copies the careers into place), or
+  pass `--voidrunner-save-dir` with the old directory.
+- **A directory you chose yourself, when the node has not recorded it.** Pass
   `--voidrunner-save-dir` with the path shown on the live Backup screen.
+
+> [!IMPORTANT]
+> A node upgraded straight from v7.4.0 or earlier never recorded that
+> directory, so it does **not** copy the careers: set `VOIDRUNNER_SAVE_DIR` to
+> the old directory before its first start, or copy its contents into
+> `netbbs.db.doors/voidrunner/` with the node stopped.
 
 Read the coverage output either way. An absent Voidrunner component will not
 magically reappear during restore.
 
-War Dialer has separate world capture and restore rules; see the
-[door guide](NetBBS-door-guide.md). Third-party installation directories are
-excluded unless **Full backups → Door installations** is enabled. The Backup screen
-shows the door sections, and that option, only once a door is set up. That option copies
-them without stopping their writers and does not automatically restore them.
-Stop games/services first. A missing or unreadable requested installation fails
-the backup. Symlinks are copied as links, not followed to external data.
+<details>
+<summary>Why older nodes need this</summary>
 
-**MANUAL — outside NetBBS:** copy completed backups off the machine, protect
-them as secrets, and encrypt them if needed. Backups contain private keys and
-account data. Off-site transfer is not built in, and retention covers only the
-schedule's own backups on this machine.
-Also preserve TOML, service configuration, and any game data outside the captured
-paths. Inspect `manifest.json` and the coverage messages before relying on an archive.
+Careers used to live under the home directory of whichever account started
+the node, which a CLI run from your own shell does not share: up to v7.4.0
+that silently captured no careers at all
+([#555](https://github.com/Thiesi/NetBBS/issues/555)).
+
+</details>
+
+#### Other games and door installations
+
+War Dialer has separate world capture and restore rules; see the
+[door guide](NetBBS-door-guide.md).
+
+Third-party installation directories are excluded unless you include them:
+press <kbd>D</kbd> on the Backup screen to switch its **Door installations**
+setting on or off. The Backup screen shows the door sections, and that option,
+only once a door is set up.
+
+- That option copies them without stopping their writers and does not
+  automatically restore them. Stop games/services first.
+- A missing or unreadable requested installation fails the backup.
+- Symlinks are copied as links, not followed to external data.
 
 Door outbound result receipts (`door-outbound/` beside the database) are
-included automatically and need no separate copy. Restore replaces them with the
-archive's own, so receipts a door wrote after that backup was taken go to the
-rollback generation rather than staying beside an older database; an archive made
-before NetBBS captured receipts clears them for the same reason. After recovery,
-a missing receipt still does not mean its post was never published.
+included automatically and need no separate copy. Restore replaces them with
+the archive's own, so receipts a door wrote after that backup was taken go to
+the rollback generation rather than staying beside an older database; an
+archive made before NetBBS captured receipts clears them for the same reason.
+After recovery, a missing receipt still does not mean its post was never
+published.
+
+#### Keep backups safe
+
+> [!CAUTION]
+> Backups contain private keys and account data. Copy completed backups off
+> the machine, protect them as secrets, and encrypt them if needed.
+
+This is **manual work outside NetBBS**:
+
+- Off-site transfer is not built in, and retention covers only the schedule's
+  own backups on this machine.
+- Also preserve TOML, service configuration, and any game data outside the
+  captured paths.
+- Inspect `manifest.json` and the coverage messages before relying on an
+  archive.
 
 ### Restore
 
-Stop the node and every game/service. Keep the current state until the restored
-node has been verified. Use the backup tool, which validates and stages the
-restore and refuses to overwrite an active node:
+1. Stop the node and every game/service. Keep the current state until the
+   restored node has been verified.
+2. Run the backup tool, which validates and stages the restore and refuses to
+   overwrite an active node:
 
-```sh
-sudo -u netbbs /var/lib/netbbs/.venv/bin/python -m netbbs.backup restore \
-  --from /path/to/backup \
-  --db /var/lib/netbbs/netbbs.db \
-  --identity-dir /var/lib/netbbs/netbbs_identity \
-  --voidrunner-to /var/lib/netbbs/netbbs.db.doors/voidrunner \
-  --war-dialer-to 1=/var/lib/netbbs/netbbs.db.doors/war-dialer.db
-```
+   ```sh
+   sudo -u netbbs /var/lib/netbbs/.venv/bin/python -m netbbs.backup restore \
+     --from /path/to/backup \
+     --db /var/lib/netbbs/netbbs.db \
+     --identity-dir /var/lib/netbbs/netbbs_identity \
+     --voidrunner-to /var/lib/netbbs/netbbs.db.doors/voidrunner \
+     --war-dialer-to 1=/var/lib/netbbs/netbbs.db.doors/war-dialer.db
+   ```
 
-Use `--voidrunner-to` when the archive includes that component; omit it for an
-archive without it. The example also assumes one captured War Dialer world,
-key `1`. Every captured world requires an explicit `--war-dialer-to KEY=PATH`
-mapping, even for its default location; omit this option if there is no world
-component. Read the keys in the backup's manifest and follow the door guide for
-multiple or overridden worlds. Restore preserves replaced state in a rollback
-directory and reports its location; it does not delete that directory later.
+3. Do the **manual** part: restore external door installations from
+   `door-installs/` if included, restore service/TOML settings, and ensure the
+   service uses the restored game paths.
+4. Restart, log in, read a post, retrieve a file, check Link identity/peers,
+   and enter a real saved game.
 
-**MANUAL:** restore external door installations from `door-installs/` if included,
-restore service/TOML settings, and ensure the service uses the restored game paths.
-Careers restored into the node's own `netbbs.db.doors/voidrunner/` need no
-setting. Anywhere else, set `VOIDRUNNER_SAVE_DIR` to that destination; restore
-never changes that environment setting for you. Do not run the
-same restored Link identity on two live nodes.
+About the restore options:
 
-Restart, log in, read a post, retrieve a file, check Link identity/peers, and enter
-a real saved game. Rehearse this first on disposable state using the
-[disaster recovery drill](NetBBS-disaster-recovery-drill.md). Automated backup
-tests do not replace a recovery exercise on your host.
+- Use `--voidrunner-to` when the archive includes that component; omit it for
+  an archive without it.
+- The example assumes one captured War Dialer world, key `1`. Every captured
+  world requires an explicit `--war-dialer-to KEY=PATH` mapping, even for its
+  default location; omit this option if there is no world component. Read the
+  keys in the backup's manifest and follow the door guide for multiple or
+  overridden worlds.
+- Careers restored into the node's own `netbbs.db.doors/voidrunner/` need no
+  setting. Anywhere else, set `VOIDRUNNER_SAVE_DIR` to that destination;
+  restore never changes that environment setting for you.
+
+Restore preserves replaced state in a rollback directory and reports its
+location; it does not delete that directory later.
+
+> [!WARNING]
+> Do not run the same restored Link identity on two live nodes.
+
+> [!TIP]
+> Rehearse this first on disposable state using the
+> [disaster recovery drill](NetBBS-disaster-recovery-drill.md). Automated
+> backup tests do not replace a recovery exercise on your host.
 
 ## Upgrading and removing NetBBS
 
