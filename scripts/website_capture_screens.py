@@ -324,31 +324,58 @@ async def capture_directory(tmp: Path) -> str:
 
 
 async def capture_mainmenu(tmp: Path) -> str:
-    """The main menu under a SysOp-chosen masthead.
+    """The main menu as Harbor Lights' own art.
+
+    The node's SysOp has drawn the whole menu (`website_harbor_lights_menu.py`)
+    and switched the masthead's mode to *the menu itself*: NetBBS fills its
+    slots with keeper's name, level, mail, the callers online and the node's
+    clock, and puts keeper's items it doesn't draw into the `{menu}` row.
 
     The window title on the site says `telnet harborlights.example.net` --
-    that is the mock terminal's title bar, not the screen. The screen is
-    this: a masthead, the three menu columns, and the clock the node
-    controls prefix onto the prompt.
+    that is the mock terminal's title bar, not the screen.
     """
+    from website_harbor_lights_menu import art
+
     from netbbs.chat.mailbox import MessageMailbox
-    from netbbs.net.banner_presets import MAIN_MENU_BANNER_PRESETS, load_main_menu_banner_preset
+    from netbbs.communities import create_community
+    from netbbs.config import set_node_display_name
+    from netbbs.net import main_menu as main_menu_module
     from netbbs.net.main_menu import _draw_main_menu
-    from netbbs.net.main_menu_banner import main_menu_banner_path, set_main_menu_banner_enabled
+    from netbbs.net.main_menu_banner import (
+        main_menu_banner_path, set_main_menu_art_mode, set_main_menu_banner_enabled,
+    )
 
     db, _lane = _node(tmp)
     _lane.close()
     try:
+        set_node_display_name(db, NODE_NAME)
         people = _people(db)
-        preset = next(p for p in MAIN_MENU_BANNER_PRESETS if p.key == "outrun_sunset_strip")
-        main_menu_banner_path(db).write_bytes(load_main_menu_banner_preset(preset))
+        main_menu_banner_path(db).write_bytes(art())
         set_main_menu_banner_enabled(db, True)
+        set_main_menu_art_mode(db, "slots")
         # A node with content: an empty one tells its SysOp where to start.
         create_board(db, "Announcements", creator=people["keeper"])
+        # A Community gives keeper [T]opics, an item the art doesn't draw:
+        # NetBBS puts it into the art's {menu} row.
+        create_community(db, "Makers", description="Hardware, solder and smoke",
+                         creator=people["keeper"])
+        controls = _controls()
+        for name in ("keeper", "wren", "otto"):
+            registered = CaptureSession(width=80)
+            registered.username = name
+            controls.session_registry.enter(registered)
+            controls.session_registry.mark_authenticated(registered, name)
 
-        session = CaptureSession(width=80)
-        await _draw_main_menu(session, db, MessageMailbox(), people["keeper"],
-                              node_controls=_controls())
+        # The node's clock -- the art's date and time, the prompt's -- reads
+        # just before keeper walks into the chat capture's channel.
+        original_clock = main_menu_module.utc_now_iso
+        main_menu_module.utc_now_iso = lambda: "2026-10-12T20:11:37.000000Z"
+        try:
+            session = CaptureSession(width=80, height=24)
+            await _draw_main_menu(session, db, MessageMailbox(), people["keeper"],
+                                  node_controls=controls)
+        finally:
+            main_menu_module.utc_now_iso = original_clock
         return session.take()
     finally:
         db.close()
@@ -364,9 +391,11 @@ async def capture_chat(tmp: Path) -> str:
     Baud runs for real: its own process under `BotRuntime`, answering what
     the caller types into the channel. It greets the caller on joining,
     answers `seen` and `stats`, and saves a reminder and then delivers it.
-    The channel's clock is pinned to one evening, scrollback and live lines
-    alike, so a recapture shows the same times whenever it is run and the
-    dialogue's "evening" is true of them.
+    The channel's clock is pinned to one evening, and each live line is
+    stamped with its own minute, so the half hour keeper spends there reads
+    as one and a recapture shows the same times whenever it is run. The
+    reminder is for twenty minutes: Baud saves it with its own clock, and the
+    host's tick that delivers it is moved those twenty minutes on.
     """
     import datetime
     import re
@@ -386,10 +415,24 @@ async def capture_chat(tmp: Path) -> str:
     from netbbs.net import chat_flow
     from netbbs.net.char_input import InputHistory
 
+    from netbbs.bots import runtime as runtime_module
+
     evening = datetime.datetime(2026, 10, 12, 20, 12, tzinfo=datetime.timezone.utc)
 
     def ago(minutes: float) -> str:
         return (evening - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    class _Later:
+        """`time` for the bot host, `skip` seconds ahead: what the twenty
+        minutes a reminder waits would have done to its ticks."""
+
+        skip = 0.0
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+        def time(self) -> float:
+            return time.time() + self.skip
 
     db, lane = _node(tmp)
     try:
@@ -432,11 +475,14 @@ async def capture_chat(tmp: Path) -> str:
         for name in ("keeper", "wren", "otto"):
             presence.enter(name)
 
-        # From here on the channel's clock runs from `evening` at real speed:
-        # every live line, Baud's included, is stamped through it.
-        started = time.monotonic()
+        # From here on every live line, Baud's included, is stamped at
+        # `minute[0]` past `evening`, set before each line is said.
+        minute = [2.0]
         original_clock = scrollback_module.utc_now_iso
-        scrollback_module.utc_now_iso = lambda: ago(-(time.monotonic() - started) / 60)
+        scrollback_module.utc_now_iso = lambda: ago(-minute[0])
+        later = _Later()
+        original_time = runtime_module.time
+        runtime_module.time = later
         hub = ChatHub()
         # wren and otto are in the channel too, and answer live: real
         # traffic is also what scrolls the join's blank block off the screen.
@@ -475,36 +521,36 @@ async def capture_chat(tmp: Path) -> str:
             # caller's own join notice says the caller is.
             await until(lambda: shown("Joined #lobby"), "the caller to join the channel")
             await until(lambda: shown("Welcome, keeper!"), "Baud's greeting")
-            async def say(who: str, body: str) -> None:
+            async def say(at: float, who: str, body: str) -> None:
+                minute[0] = at
                 recorded = record_message(db, channel, kind="message", author_label=who, body=body)
                 await hub.broadcast(channel.name, recorded, exclude={others[who]})
                 await until(lambda: shown(body), f"{who}'s line")
 
-            await say("otto", "evening keeper")
-            await asyncio.sleep(0.8)
-            await session.inputs.put("evening both. 7.21.0 is out")
-            await until(lambda: shown("7.21.0 is out"), "keeper's greeting")
-            await say("wren", "saw it! the breadcrumbs finally all match")
-            await say("otto", "and the outbox lets go of dead letters now")
-            await say("wren", "hi keeper! ask Baud about alice, she was on earlier")
-            for line, answer in (
-                ("!seen alice", "last recorded"),
-                ("Baud.bot: remind 3s stretch, then the sync window", "Saved reminder #1"),
-                ("!stats", "human accounts online"),
-            ):
+            async def type_(at: float, line: str, answer: str) -> None:
+                """keeper types `line`; wait until `answer` is on screen."""
+                minute[0] = at
                 await asyncio.sleep(0.8)               # a person types; no burst
                 await session.inputs.put(line)
-                await until(lambda answer=answer: shown(answer), f"Baud's answer to {line!r}")
-                if answer == "last recorded":
-                    await say("otto", "ha, missed her. her ANSI is up in the art area though")
-                elif answer == "human accounts online":
-                    await say("otto", "four hours and not a hiccup. nice wheel")
+                await until(lambda: shown(answer), f"the answer to {line!r}")
+
+            await say(2.4, "otto", "evening keeper")
+            await type_(3, "evening both. 7.21.0 is out", "7.21.0 is out")
+            await say(4, "wren", "saw it! the breadcrumbs finally all match")
+            await say(5, "otto", "and the outbox lets go of dead letters now")
+            await say(7, "wren", "hi keeper! ask Baud about alice, she was on earlier")
+            await type_(8, "!seen alice", "last recorded")
+            await say(9, "otto", "ha, missed her. her ANSI is up in the art area though")
+            await type_(11, "Baud.bot: remind 20m stretch, then the sync window", "Saved reminder #1")
+            await type_(14, "!stats", "human accounts online")
+            await say(15, "otto", "four hours and not a hiccup. nice wheel")
+            # Twenty minutes on: the next tick finds the reminder due.
+            minute[0] = 31
+            later.skip = 20 * 60 + 5
             await until(lambda: shown("reminder #1: stretch"), "the reminder", seconds=15)
-            await say("wren", "a bot that remembers things. better than me")
-            await asyncio.sleep(0.8)
-            await session.inputs.put("thanks Baud. right, back to the outbox")
-            await until(lambda: shown("back to the outbox"), "keeper's last line")
-            await say("otto", "o/")
+            await say(32, "wren", "a bot that remembers things. better than me")
+            await type_(33, "thanks Baud. right, back to the outbox", "back to the outbox")
+            await say(34, "otto", "o/")
             await asyncio.sleep(0.4)                   # let the status line settle
             return "".join(session.written)
         finally:
@@ -515,6 +561,7 @@ async def capture_chat(tmp: Path) -> str:
             for pid in others.values():
                 hub.leave(channel.name, pid)
             scrollback_module.utc_now_iso = original_clock
+            runtime_module.time = original_time
     finally:
         lane.close()
         db.close()
