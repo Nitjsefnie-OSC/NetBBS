@@ -8367,13 +8367,30 @@ def test_outbox_deletes_a_dead_lettered_item(db, lane, sysop):
     from netbbs.link.work_items import list_work_items
 
     link_context = _link_context()
-    session = FakeSession(["o", "o", "i", "0", "1", "d", "b", "b", "b"])
+    session = FakeSession(["o", "o", "i", "0", "1", "d", "y", "b", "b", "b"])
     asyncio.run(admin_menu(session, lane, sysop, link_context=link_context))
 
     text = _normalized_visible(_written_text(session))
+    assert "Delete this work item for good? The letter stays expired." in text
     assert "Deleted the link_mail_delivery to " in text
     assert "No outbound work items recorded yet." in text
     assert list_work_items(db) == []
+
+
+def test_outbox_keeps_a_dead_lettered_item_when_delete_is_declined(db, lane, sysop):
+    from netbbs.link.work_items import KIND_LINK_MAIL_DELIVERY, _MAX_ATTEMPTS, enqueue_work_item_without_commit, record_failure
+
+    item = enqueue_work_item_without_commit(db, kind=KIND_LINK_MAIL_DELIVERY, reference_id="msg1", target_fingerprint="fp1")
+    for _ in range(_MAX_ATTEMPTS):
+        item = record_failure(db, item, error="unreachable")
+
+    from netbbs.link.work_items import list_work_items
+
+    session = FakeSession(["o", "o", "i", "0", "1", "d", "n", "b", "b", "b"])
+    asyncio.run(admin_menu(session, lane, sysop, link_context=_link_context()))
+
+    assert "Kept -- nothing was deleted." in _normalized_visible(_written_text(session))
+    assert [entry.status for entry in list_work_items(db)] == ["dead_lettered"]
 
 
 def test_outbox_cancels_a_retrying_item(db, lane, sysop):

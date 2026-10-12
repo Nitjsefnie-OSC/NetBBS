@@ -12896,6 +12896,11 @@ async def _outbox_item_screen(
         cancelled = await lane.run(_cancel)
         return colored(f"Cancelled -- status is now {cancelled.status!r}.", fg_color=SUCCESS_COLOR)
     if choice == "d" and dead:
+        await session.write_line("")
+        if not await prompt_yes_no(
+            session, "Delete this work item for good? The letter stays expired.", default=False,
+        ):
+            return colored("Kept -- nothing was deleted.", fg_color=MUTED_COLOR)
         await lane.run(delete_work_item, selected.id, deleted_by=actor)
         return colored(
             f"Deleted the {selected.kind} to {target_labels[selected.target_fingerprint]}.",
