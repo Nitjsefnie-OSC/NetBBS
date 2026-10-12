@@ -619,15 +619,26 @@ def _validate_channel_id_only_payload(payload: dict, *, path: str) -> None:
     _validate_bounded_id(payload["channel_id"], path=f"{path}.channel_id")
 
 
-def _validate_presence_entry(entry: object, *, path: str) -> None:
-    if not isinstance(entry, dict) or set(entry) != {"user_id", "display_label"}:
-        raise LinkProtocolError(f"{path} must contain exactly user_id and display_label")
+def _validate_presence_entry(entry: object, *, path: str, node_optional: bool = False) -> None:
+    keys = set(entry) if isinstance(entry, dict) else set()
+    extra = keys - {"user_id", "display_label"}
+    if not isinstance(entry, dict) or not {"user_id", "display_label"} <= keys or (
+        extra and not (node_optional and extra == {"node_fingerprint"})
+    ):
+        raise LinkProtocolError(
+            f"{path} must contain exactly user_id and display_label"
+            + (", optionally with node_fingerprint" if node_optional else "")
+        )
     _validate_bounded_id(entry["user_id"], path=f"{path}.user_id")
     _validate_bounded_text(
         entry["display_label"], path=f"{path}.display_label", max_bytes=_REALTIME_MAX_DISPLAY_LABEL_BYTES
     )
+    if "node_fingerprint" in entry:
+        _validate_bounded_id(entry["node_fingerprint"], path=f"{path}.node_fingerprint")
 
 
+# Issue #1281: channel presence may name the caller's node, sent only to a peer
+# advertising `PRESENCE_RELAY_CAPABILITY`. Absent, the caller is the sender's own.
 def _validate_presence_snapshot_payload(payload: dict, *, path: str) -> None:
     if set(payload) != {"channel_id", "entries"}:
         raise LinkProtocolError(f"{path} must contain exactly channel_id and entries")
@@ -638,12 +649,19 @@ def _validate_presence_snapshot_payload(payload: dict, *, path: str) -> None:
     if len(entries) > _REALTIME_MAX_PRESENCE_ENTRIES:
         raise LinkProtocolError(f"{path}.entries exceeds {_REALTIME_MAX_PRESENCE_ENTRIES} entries")
     for index, entry in enumerate(entries):
-        _validate_presence_entry(entry, path=f"{path}.entries[{index}]")
+        _validate_presence_entry(entry, path=f"{path}.entries[{index}]", node_optional=True)
 
 
 def _validate_presence_delta_payload(payload: dict, *, path: str) -> None:
-    if set(payload) != {"channel_id", "change", "user_id", "display_label"}:
-        raise LinkProtocolError(f"{path} must contain exactly channel_id, change, user_id, and display_label")
+    keys = set(payload)
+    required = {"channel_id", "change", "user_id", "display_label"}
+    if not required <= keys or keys - required - {"node_fingerprint"}:
+        raise LinkProtocolError(
+            f"{path} must contain exactly channel_id, change, user_id, and display_label, "
+            "optionally with node_fingerprint"
+        )
+    if "node_fingerprint" in payload:
+        _validate_bounded_id(payload["node_fingerprint"], path=f"{path}.node_fingerprint")
     _validate_bounded_id(payload["channel_id"], path=f"{path}.channel_id")
     if payload["change"] not in _REALTIME_PRESENCE_CHANGES:
         raise LinkProtocolError(f"{path}.change must be 'join' or 'leave'")
@@ -1005,12 +1023,18 @@ def build_presence_snapshot_frame(
 
 
 def build_presence_delta_frame(
-    channel_id: str, change: str, user_id: str, display_label: str, *, message_id: str | None = None
+    channel_id: str, change: str, user_id: str, display_label: str, *, message_id: str | None = None,
+    node_fingerprint: str | None = None,
 ) -> RealtimeFrame:
+    """`node_fingerprint` (issue #1281) only for a peer advertising
+    `PRESENCE_RELAY_CAPABILITY`: an origin relaying another node's caller."""
+    payload = {"channel_id": channel_id, "change": change, "user_id": user_id, "display_label": display_label}
+    if node_fingerprint is not None:
+        payload["node_fingerprint"] = node_fingerprint
     frame = RealtimeFrame(
         type="presence_delta",
         message_id=message_id or new_realtime_message_id(),
-        payload={"channel_id": channel_id, "change": change, "user_id": user_id, "display_label": display_label},
+        payload=payload,
     )
     validate_realtime_frame_payload(frame)
     return frame

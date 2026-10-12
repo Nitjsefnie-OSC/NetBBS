@@ -727,6 +727,9 @@ def test_remote_channel_presence_is_populated_from_the_origins_initial_snapshot(
                 {"dave": "dave", "erin": "erin"}
             )
 
+            # As chat does it: the caller leaves the hub, then the leave goes out
+            # (a leave while another session of the account stays is no leave).
+            origin.hub.leave(origin_channel.name, ParticipantId(username="dave", session_key=1))
             await origin.bridge.broadcast_local_presence_live(origin_channel, change="leave", username="dave")
             assert await _wait_until(
                 lambda: subscriber.bridge.remote_channel_presence(subscriber_channel.channel_id) == {"erin": "erin"}
@@ -1513,5 +1516,325 @@ def test_a_refused_relayed_author_leaves_no_trust_subject_row(tmp_path):
         finally:
             await origin.teardown()
             await subscriber.teardown()
+
+    asyncio.run(scenario())
+
+
+async def _three_nodes(tmp_path, tag: str, *, capable=lambda node, fingerprint: True):
+    """An origin and two subscribers of one linked channel, trusting each
+    other as the relay test above does. `capable(node, fingerprint)`: whether
+    `node` treats that peer as advertising the presence capability (issue
+    #1281)."""
+    from netbbs.link.channels import materialize_carried_channel as carry
+    from netbbs.link.events import ChannelGenesis
+    import json as _json
+
+    origin = _Node(tmp_path, f"origin-{tag}")
+    first = _Node(tmp_path, f"first-{tag}")
+    second = _Node(tmp_path, f"second-{tag}")
+    origin_channel, first_channel = _setup_linked_channel(origin, first, name=f"room-{tag}")
+    genesis_json = origin.db.connection.execute(
+        "SELECT link_genesis_json FROM channels WHERE id = ?", (origin_channel.id,)
+    ).fetchone()[0]
+    second_channel = carry(second.db, ChannelGenesis.from_dict(_json.loads(genesis_json)))
+    for node in (origin, first, second):
+        node.bridge._presence_capable = lambda fingerprint, node=node: capable(node, fingerprint)
+    for a, b in ((origin, first), (origin, second), (first, second)):
+        _establish_trust(a.db, b.identity.fingerprint)
+        _establish_trust(b.db, a.identity.fingerprint)
+    server = LinkRealtimeServer(
+        host="127.0.0.1", port=0, identity=origin.identity, registry=origin.registry,
+        on_frame=origin.bridge.on_frame, lane=origin.lane, enforce_trust_policy=True,
+    )
+    await server.start()
+    return origin, first, second, origin_channel, first_channel, second_channel, server
+
+
+async def _subscribe(subscriber: _Node, channel, server):
+    """What `ensure_live_subscription` does once its session is up:
+    subscribe, then tell the origin who is already here."""
+    session = await dial_realtime_session(
+        "127.0.0.1", server.port, subscriber.identity, on_frame=subscriber.bridge.on_frame,
+        registry=subscriber.registry,
+    )
+    await subscriber.bridge.track_session(session)
+    await session.send(build_subscribe_frame(channel.channel_id))
+    await subscriber.bridge.send_local_roster_upstream(channel)
+    return session
+
+
+def _names(node: _Node, channel) -> set[tuple[str, str]]:
+    return {(fingerprint, user) for fingerprint, user, _label in node.bridge.remote_channel_roster(channel.channel_id)}
+
+
+def test_every_node_sees_every_other_nodes_callers_in_a_linked_channel(tmp_path):
+    # Issue #1281: presence used to travel origin -> subscribers only.
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(tmp_path, "all")
+        o, f, s = (node.identity.fingerprint for node in (origin, first, second))
+        try:
+            origin.hub.join(o_channel.name, ParticipantId(username="olga", session_key=1))
+            watching = origin.hub.join(o_channel.name, ParticipantId(username="olga", session_key=2))
+            first.hub.join(f_channel.name, ParticipantId(username="fred", session_key=3))
+            await _subscribe(first, f_channel, server)
+            assert await _wait_until(lambda: _names(origin, o_channel) == {(f, "fred")})
+            joined = await asyncio.wait_for(watching.get(), timeout=2.0)
+            assert (joined.kind, joined.author_label, joined.author_fingerprint) == ("join", f"fred@{f}", f)
+
+            second.hub.join(s_channel.name, ParticipantId(username="sara", session_key=4))
+            second_session = await _subscribe(second, s_channel, server)
+            assert await _wait_until(lambda: _names(origin, o_channel) == {(f, "fred"), (s, "sara")})
+            # The origin's snapshot names the first subscriber's caller by
+            # node; the first hears of the second's caller by a relayed delta.
+            assert await _wait_until(lambda: _names(second, s_channel) == {(o, "olga"), (f, "fred")})
+            assert await _wait_until(lambda: _names(first, f_channel) == {(o, "olga"), (s, "sara")})
+
+            # Leaving: the account's last session goes, then the leave.
+            first.hub.leave(f_channel.name, ParticipantId(username="fred", session_key=3))
+            await first.bridge.broadcast_local_presence_live(f_channel, change="leave", username="fred")
+            assert await _wait_until(lambda: _names(origin, o_channel) == {(s, "sara")})
+            assert await _wait_until(lambda: _names(second, s_channel) == {(o, "olga")})
+
+            # A dropped subscriber's callers go from the origin and the others.
+            await second_session.close(reason="test_done")
+            assert await _wait_until(lambda: _names(origin, o_channel) == set())
+            assert await _wait_until(lambda: _names(first, f_channel) == {(o, "olga")})
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_a_second_session_of_the_same_account_leaving_is_no_leave(tmp_path):
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(tmp_path, "twice")
+        f = first.identity.fingerprint
+        try:
+            first.hub.join(f_channel.name, ParticipantId(username="fred", session_key=1))
+            first.hub.join(f_channel.name, ParticipantId(username="fred", session_key=2))
+            await _subscribe(first, f_channel, server)
+            assert await _wait_until(lambda: _names(origin, o_channel) == {(f, "fred")})
+            first.hub.leave(f_channel.name, ParticipantId(username="fred", session_key=1))
+            await first.bridge.broadcast_local_presence_live(f_channel, change="leave", username="fred")
+            await asyncio.sleep(0.3)
+            assert _names(origin, o_channel) == {(f, "fred")}
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_unsubscribing_takes_that_nodes_callers_out_of_the_channel(tmp_path):
+    from netbbs.link.protocol import build_unsubscribe_frame
+
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(tmp_path, "unsub")
+        f = first.identity.fingerprint
+        try:
+            first.hub.join(f_channel.name, ParticipantId(username="fred", session_key=1))
+            first_session = await _subscribe(first, f_channel, server)
+            await _subscribe(second, s_channel, server)
+            assert await _wait_until(lambda: _names(second, s_channel) == {(f, "fred")})
+            watching = origin.hub.join(o_channel.name, ParticipantId(username="olga", session_key=2))
+            # The last caller's leave comes after the unsubscribe, too late
+            # to count: the unsubscribe itself takes the node's callers out.
+            await first_session.send(build_unsubscribe_frame(f_channel.channel_id))
+            left = await asyncio.wait_for(watching.get(), timeout=2.0)
+            assert (left.kind, left.author_fingerprint) == ("leave", f)
+            assert await _wait_until(lambda: _names(second, s_channel) == set())
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_presence_stays_one_way_with_a_node_that_does_not_advertise_it(tmp_path):
+    # An older first subscriber: it reports nothing up (it has no idea it
+    # could) and is never sent relayed callers, which it would misread.
+    older: list = []
+
+    def capable(node, fingerprint):
+        return node is not older[0] and fingerprint != older[0].identity.fingerprint
+
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(
+            tmp_path, "mixed", capable=lambda node, fingerprint: capable(node, fingerprint),
+        )
+        older.append(first)
+        o, s = origin.identity.fingerprint, second.identity.fingerprint
+        try:
+            origin.hub.join(o_channel.name, ParticipantId(username="olga", session_key=1))
+            first.hub.join(f_channel.name, ParticipantId(username="fred", session_key=2))
+            second.hub.join(s_channel.name, ParticipantId(username="sara", session_key=3))
+            await _subscribe(first, f_channel, server)
+            await _subscribe(second, s_channel, server)
+            assert await _wait_until(lambda: _names(origin, o_channel) == {(s, "sara")})
+            assert await _wait_until(lambda: _names(first, f_channel) == {(o, "olga")})
+            assert await _wait_until(lambda: _names(second, s_channel) == {(o, "olga")})
+            await asyncio.sleep(0.3)
+            assert _names(first, f_channel) == {(o, "olga")}, "an older subscriber is never sent relayed callers"
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_only_the_origin_may_report_another_nodes_caller(tmp_path):
+    from netbbs.link.protocol import build_presence_delta_frame
+
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(tmp_path, "speak")
+        f, s = first.identity.fingerprint, second.identity.fingerprint
+        try:
+            await _subscribe(first, f_channel, server)
+            assert await _wait_until(lambda: f in origin.bridge._subscribers.get(o_channel.channel_id, {}))
+            # A subscriber naming a third node's caller to the origin.
+            claim = build_presence_delta_frame(o_channel.channel_id, "join", "mallory", "mallory", node_fingerprint=s)
+            with pytest.raises(LinkProtocolError, match="another node's caller"):
+                await origin.bridge.on_frame(_FakeSession(f), claim)
+            # A node that is not the origin telling a subscriber about anyone.
+            plain = build_presence_delta_frame(s_channel.channel_id, "join", "mallory", "mallory")
+            with pytest.raises(LinkProtocolError, match="does not originate"):
+                await second.bridge.on_frame(_FakeSession(f), plain)
+            assert _names(origin, o_channel) == set() and _names(second, s_channel) == set()
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_a_presence_frame_names_a_node_only_as_an_optional_field():
+    from netbbs.link.protocol import build_presence_delta_frame, build_presence_snapshot_frame
+
+    plain = build_presence_delta_frame("c1", "join", "fred", "fred")
+    assert "node_fingerprint" not in plain.payload
+    named = build_presence_delta_frame("c1", "join", "fred", "fred", node_fingerprint="ab12")
+    assert named.payload["node_fingerprint"] == "ab12"
+    build_presence_snapshot_frame("c1", [{"user_id": "fred", "display_label": "fred", "node_fingerprint": "ab12"}])
+    with pytest.raises(LinkProtocolError):
+        build_presence_snapshot_frame("c1", [{"user_id": "fred", "display_label": "fred", "home": "ab12"}])
+
+
+def test_a_relayed_caller_of_a_node_not_trusted_here_is_not_listed(tmp_path):
+    # The same rule as for that caller's relayed line (issue #860): a node
+    # this one has not established, or has quarantined, has no callers here.
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(tmp_path, "untrusted")
+        o, f = origin.identity.fingerprint, first.identity.fingerprint
+        for dimension in (TrustDimension.IDENTITY_INTEGRITY, TrustDimension.RESOURCE_BEHAVIOR):
+            set_trust_override(
+                second.db, TrustSubject.node(f), dimension, TrustState.QUARANTINED,
+                reason="test", now_iso="2026-08-14T12:00:00+00:00",
+            )
+        try:
+            origin.hub.join(o_channel.name, ParticipantId(username="olga", session_key=1))
+            first.hub.join(f_channel.name, ParticipantId(username="fred", session_key=2))
+            await _subscribe(first, f_channel, server)
+            assert await _wait_until(lambda: _names(origin, o_channel) == {(f, "fred")})
+            await _subscribe(second, s_channel, server)
+            assert await _wait_until(lambda: _names(second, s_channel) == {(o, "olga")})
+            first.hub.join(f_channel.name, ParticipantId(username="finn", session_key=3))
+            await first.bridge.broadcast_local_presence_live(f_channel, change="join", username="finn")
+            assert await _wait_until(lambda: (f, "finn") in _names(origin, o_channel))
+            await asyncio.sleep(0.3)
+            assert _names(second, s_channel) == {(o, "olga")}
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
+
+    asyncio.run(scenario())
+
+
+class _SendingSession(_FakeSession):
+    async def send(self, frame) -> None:
+        pass
+
+
+def test_a_third_node_unsubscribing_at_a_subscriber_leaves_the_origins_roster_alone(tmp_path):
+    # Review of #1284: a subscriber also accepts subscribe/unsubscribe for a
+    # channel it carries; that must not drop callers the origin relayed.
+    from netbbs.link.protocol import build_unsubscribe_frame
+
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(tmp_path, "third")
+        f = first.identity.fingerprint
+        try:
+            first.hub.join(f_channel.name, ParticipantId(username="fred", session_key=1))
+            await _subscribe(first, f_channel, server)
+            await _subscribe(second, s_channel, server)
+            assert await _wait_until(lambda: _names(second, s_channel) == {(f, "fred")})
+            second.bridge._subscribers.setdefault(s_channel.channel_id, {})[f] = _SendingSession(f)
+            await second.bridge.on_frame(_SendingSession(f), build_unsubscribe_frame(s_channel.channel_id))
+            assert _names(second, s_channel) == {(f, "fred")}
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_presence_in_flight_after_the_last_local_caller_left_is_ignored(tmp_path):
+    # Review of #1284: the origin may send a delta before it reads the
+    # unsubscribe; it must not bring the subscriber's roster back.
+    from netbbs.link.protocol import build_presence_delta_frame
+
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(tmp_path, "late")
+        o = origin.identity.fingerprint
+        try:
+            origin.hub.join(o_channel.name, ParticipantId(username="olga", session_key=1))
+            await _subscribe(first, f_channel, server)
+            first.bridge.register_local_interest(f_channel.channel_id, 1)
+            assert await _wait_until(lambda: _names(first, f_channel) == {(o, "olga")})
+            assert first.bridge.release_local_interest(f_channel.channel_id, 1)
+            assert _names(first, f_channel) == set()
+            late = build_presence_delta_frame(f_channel.channel_id, "join", "otto", "otto")
+            await first.bridge.on_frame(_SendingSession(o), late)
+            assert _names(first, f_channel) == set()
+            # The next subscribe (or caller) is welcome to the origin's word again.
+            first.bridge.register_local_interest(f_channel.channel_id, 2)
+            await first.bridge.on_frame(_SendingSession(o), late)
+            assert _names(first, f_channel) == {(o, "otto")}
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_a_local_holder_leaving_on_the_origin_keeps_its_subscribers_callers(tmp_path):
+    # Review of #1284: a bot registers local interest in a channel its own
+    # node originates; releasing it must not wipe the subscribers' roster.
+    async def scenario():
+        origin, first, second, o_channel, f_channel, s_channel, server = await _three_nodes(tmp_path, "bot")
+        f = first.identity.fingerprint
+        try:
+            first.hub.join(f_channel.name, ParticipantId(username="fred", session_key=1))
+            await _subscribe(first, f_channel, server)
+            assert await _wait_until(lambda: _names(origin, o_channel) == {(f, "fred")})
+            origin.bridge.register_local_interest(o_channel.channel_id, 7)
+            assert origin.bridge.release_local_interest(o_channel.channel_id, 7)
+            assert _names(origin, o_channel) == {(f, "fred")}
+            # And it still hears that subscriber's callers afterwards.
+            first.hub.join(f_channel.name, ParticipantId(username="finn", session_key=2))
+            await first.bridge.broadcast_local_presence_live(f_channel, change="join", username="finn")
+            assert await _wait_until(lambda: _names(origin, o_channel) == {(f, "fred"), (f, "finn")})
+        finally:
+            await server.stop()
+            for node in (origin, first, second):
+                await node.teardown()
 
     asyncio.run(scenario())

@@ -3505,12 +3505,13 @@ def _roster_usernames(hub: ChatHub, channel: Channel) -> list[str]:
 
 
 async def _remote_roster_entries(ctx: ChatCommandContext) -> list[tuple[str, str]]:
-    """Issue #195: `ctx.channel`'s merged live roster from a linked
-    origin, if this node currently holds a live subscription to it --
-    `(sanitized display_label, origin fingerprint)` pairs, sorted
+    """Issue #195: `ctx.channel`'s merged live roster on other nodes --
+    on a subscriber, the origin's callers and (issue #1281) the other
+    subscribers' it relays; on the origin, every subscriber's own.
+    `(sanitized display_label, node label)` pairs, sorted
     case-insensitively the same way `_roster_usernames` sorts local
-    participants. Empty when not Linked, not currently subscribed, or
-    Link is disabled on this node (`ctx.realtime_bridge is None`).
+    participants. Empty when not Linked, not currently live, or Link is
+    disabled on this node (`ctx.realtime_bridge is None`).
 
     These entries have no local `User` row -- a remote peer's own
     self-reported label, same trust level as any other Link-sourced
@@ -3520,26 +3521,26 @@ async def _remote_roster_entries(ctx: ChatCommandContext) -> list[tuple[str, str
     accounts."""
     if ctx.realtime_bridge is None:
         return []
-    entries = ctx.realtime_bridge.remote_channel_presence(ctx.channel.channel_id)
-    fingerprint = ctx.realtime_bridge.remote_channel_origin_fingerprint(ctx.channel.channel_id) or ""
-    snapshot = tuple(entries.items())
+    snapshot = tuple(ctx.realtime_bridge.remote_channel_roster(ctx.channel.channel_id))
 
     def _visible(db: Database) -> list[tuple[str, str]]:
+        from netbbs.link.node_profiles import identity_for_fingerprint, link_address_label
         result = []
-        for username, label in snapshot:
+        for fingerprint, username, label in snapshot:
             origin = bot_label_origin(db, username, remote=True)
             if not bot_origin_allowed(db, ctx.channel, origin):
                 continue
             if origin and not remote_bot_visible(db, ctx.channel, username, fingerprint):
                 continue
             shown = f"[BOT] {sanitize_text(username)}" if origin else sanitize_text(label)
-            result.append((shown, fingerprint))
+            # A relayed node this one never met still has a technical
+            # identity to show (its fingerprint), so two stay distinguishable.
+            result.append((shown, identity_for_fingerprint(db, fingerprint).label))
         bot_link = getattr(ctx.realtime_bridge, "bot_link", None)
         if bot_link is not None:
             for label, home in bot_link.visible_roster(db, ctx.channel):
-                from netbbs.link.node_profiles import identity_for_fingerprint, link_address_label
-                address = link_address_label(label, identity_for_fingerprint(db, home).label)
-                entry = (f"[BOT] {sanitize_text(address)}", home)
+                node = identity_for_fingerprint(db, home).label
+                entry = (f"[BOT] {sanitize_text(link_address_label(label, node))}", node)
                 if entry not in result:
                     result.append(entry)
         return sorted(result, key=lambda pair: pair[0].lower())
@@ -4162,8 +4163,7 @@ async def _handle_who(ctx: ChatCommandContext, args: str) -> None:
             # Say what this bot actually receives here, not what it might.
             sees = "addressed messages; joins and leaves" if label in presence else "addressed messages only"
             rows.append(((f"[BOT] {label}", None), (sees, MUTED_COLOR)))
-    for label, fingerprint in remote_entries:
-        node_name = _linked_node_label(ctx, fingerprint) if ctx.link_context is not None else fingerprint
+    for label, node_name in remote_entries:
         where = f"on linked node {sanitize_text(node_name)}" if node_name else "on a linked node"
         rows.append(((label, None), (where, MUTED_COLOR)))
     for name in mrc_entries:
@@ -4174,8 +4174,9 @@ async def _handle_who(ctx: ChatCommandContext, args: str) -> None:
 def _list_presence(ctx: ChatCommandContext, channel: Channel, dot: str) -> str:
     """`/list`'s count for one channel: callers here, then everyone else
     this node can see in it -- the MRC room's users when it is bridged,
-    and a linked origin's callers while a local caller holds a live
-    subscription to it (only then is that roster kept current)."""
+    and the callers on other nodes of a linked channel: on a subscriber
+    while a local caller holds a live subscription (the roster is cleared
+    with the last one), on the origin from every subscriber (issue #1281)."""
     bits = [f"{ctx.hub.participant_count(channel.name)} here"]
     bridge = ctx.mrc_bridge
     if bridge is not None and bridge.is_bridged(channel):
@@ -4191,11 +4192,14 @@ def _list_presence(ctx: ChatCommandContext, channel: Channel, dot: str) -> str:
             note = "" if fresh else " " + _reading_age(age)
         bits.append(f"{there} on MRC{note}" if there is not None else "? on MRC")
     live = ctx.realtime_bridge
-    if live is not None and live.has_local_interest(channel.channel_id):
-        remote = len(live.remote_channel_presence(channel.channel_id))
-        if remote:
-            node = _linked_node_label(ctx, live.remote_channel_origin_fingerprint(channel.channel_id) or "")
-            bits.append(f"{remote} on {sanitize_text(node)}" if node else f"{remote} on a linked node")
+    roster = live.remote_channel_roster(channel.channel_id) if live is not None else []
+    if roster:
+        nodes = {node for node, _user, _label in roster}
+        if len(nodes) == 1:
+            node = _linked_node_label(ctx, next(iter(nodes)))
+            bits.append(f"{len(roster)} on {sanitize_text(node)}" if node else f"{len(roster)} on a linked node")
+        else:
+            bits.append(f"{len(roster)} on {len(nodes)} linked BBSes")
     return dot.join(bits)
 
 

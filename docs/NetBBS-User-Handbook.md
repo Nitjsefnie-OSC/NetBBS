@@ -404,6 +404,11 @@ color of its own. If two BBSes you are linked with share a name, the name
 gets its address added, like `alice@Twin BBS · twin.example.org`, so you can
 tell them apart.
 
+In a channel shared with linked BBSes, `/who` lists everyone in it on every
+one of them, each with the BBS they are on, whichever BBS the channel started
+on. A BBS running an older NetBBS version only shows up from the BBS the
+channel started on.
+
 #### Direct chats and live messages
 
 A direct-chat invitation opens on your main menu. If you are somewhere else

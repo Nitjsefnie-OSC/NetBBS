@@ -285,6 +285,7 @@ class LiveChannelBridge:
     def __init__(
         self, *, hub: ChatHub, lane: DatabaseLane, presence: PresenceRegistry, registry: LinkRealtimeSessionRegistry,
         peer_capable: Callable[[str], bool] | None = None,
+        presence_capable: Callable[[str], bool] | None = None,
     ) -> None:
         self._hub = hub
         self._lane = lane
@@ -294,6 +295,10 @@ class LiveChannelBridge:
         # Issue #860: whether a peer advertises `CHANNEL_RELAY_CAPABILITY`,
         # the only peers sent a frame's optional fields. None: no peer is.
         self._peer_capable = peer_capable or (lambda fingerprint: False)
+        # Issue #1281: whether a peer advertises `PRESENCE_RELAY_CAPABILITY`,
+        # the only peers that report their callers up or are sent a presence
+        # frame's optional `node_fingerprint`. None: no peer is.
+        self._presence_capable = presence_capable or (lambda fingerprint: False)
         # Content IDs of channel lines already shown live here, oldest first,
         # so the signed event that follows is not shown again.
         self._shown_live: OrderedDict[ShownKey, None] = OrderedDict()
@@ -306,17 +311,23 @@ class LiveChannelBridge:
         # (_untrack_on_close) -- stale presence from a now-disconnected
         # peer must not linger.
         self._remote_node_presence: dict[str, dict[str, str]] = {}
-        # channel_id -> {user_id: display_label} -- issue #195's merged
-        # live roster: the last-known remote roster for a linked channel
-        # this node subscribes to (received via presence_snapshot/delta
-        # from that channel's origin). `_remote_channel_presence_source`
-        # tracks which peer fingerprint populated each entry, so a
-        # disconnect can clear only the channels that peer actually owns
-        # -- one subscriber session is shared across every channel from
-        # the same origin (`ensure_live_subscription`'s own registry
-        # reuse), so this can't simply key on session identity alone.
-        self._remote_channel_presence: dict[str, dict[str, str]] = {}
-        self._remote_channel_presence_source: dict[str, str] = {}
+        # channel_id -> {node_fingerprint: {user_id: display_label}} -- who
+        # is in a linked channel on other nodes (issue #195's merged live
+        # roster, per node since issue #1281). On a subscriber all of it
+        # arrives over the session to the channel's origin, which
+        # `_channel_roster_via` records so that session's close clears it --
+        # one session is shared across every channel from the same origin,
+        # so this can't key on session identity alone. On the origin each
+        # subscriber reports its own callers, and its bucket goes when it
+        # unsubscribes or its session closes. Bounded per channel by
+        # `_MAX_PRESENCE_SNAPSHOT_ENTRIES` across all nodes.
+        self._channel_rosters: dict[str, dict[str, dict[str, str]]] = {}
+        self._channel_roster_via: dict[str, str] = {}
+        # Channels whose last local holder has left: an origin's presence
+        # still on the wire, sent before it read the unsubscribe, must not
+        # bring the roster back (review of #1284). Reopened by the next
+        # subscribe (`reopen_presence`) or local interest.
+        self._presence_closed: set[str] = set()
         # channel_id -> pending scrollback_snapshot entries (issue #194),
         # a one-time pickup for whichever local caller's subscribe flow is
         # currently waiting on it (netbbs.net.chat_flow._subscribe_live).
@@ -386,7 +397,14 @@ class LiveChannelBridge:
         holders = self._local_interest.setdefault(channel_id, set())
         first = not holders
         holders.add(holder)
+        self._presence_closed.discard(channel_id)
         return first
+
+    def reopen_presence(self, channel_id: str) -> None:
+        """A `subscribe` for `channel_id` is about to go out: the origin's
+        answer, which can arrive before the caller registers its interest,
+        is welcome again."""
+        self._presence_closed.discard(channel_id)
 
     def has_local_interest(self, channel_id: str) -> bool:
         """Whether some local caller holds a live subscription to
@@ -412,6 +430,16 @@ class LiveChannelBridge:
         last = not holders
         if last:
             del self._local_interest[channel_id]
+            # On a subscriber nothing keeps the roster current any more
+            # (issue #1281): the origin stops sending once told this node
+            # unsubscribed. On the origin the roster is its subscribers'
+            # own reports, which a local holder leaving (a bot, say) does
+            # not touch (review of #1284).
+            if self._channel_roster_via.pop(channel_id, None) is not None:
+                self._channel_rosters.pop(channel_id, None)
+            # Only presence *from* an origin is checked against this, so on
+            # the origin itself it changes nothing.
+            self._presence_closed.add(channel_id)
         return last
 
     async def track_session(self, session: LinkRealtimeSession) -> None:
@@ -456,10 +484,17 @@ class LiveChannelBridge:
                 del self._subscribers[channel_id]
         self._remote_node_presence.pop(session.remote_fingerprint, None)
         self._node_presence_sent.discard(session.remote_fingerprint)
-        for channel_id, fingerprint in list(self._remote_channel_presence_source.items()):
-            if fingerprint == session.remote_fingerprint:
-                del self._remote_channel_presence_source[channel_id]
-                self._remote_channel_presence.pop(channel_id, None)
+        gone = session.remote_fingerprint
+        for channel_id, fingerprint in list(self._channel_roster_via.items()):
+            if fingerprint == gone:
+                del self._channel_roster_via[channel_id]
+                self._channel_rosters.pop(channel_id, None)
+        # On the origin: that subscriber's callers leave every channel it
+        # reported them in, told to the other subscribers, without a notice
+        # here -- a dropped link is not anyone leaving (design doc §8.10.2).
+        for channel_id in list(self._channel_rosters):
+            if channel_id not in self._channel_roster_via:
+                await self._drop_node_roster(channel_id, gone, announce=False)
         for request_id, (_, fingerprint) in list(self._pending_scrollback_requests.items()):
             if fingerprint == session.remote_fingerprint:
                 self.finish_scrollback_request(request_id)
@@ -474,7 +509,7 @@ class LiveChannelBridge:
         if frame.type == "subscribe":
             await self._handle_subscribe(session, frame)
         elif frame.type == "unsubscribe":
-            self._handle_unsubscribe(session, frame)
+            await self._handle_unsubscribe(session, frame)
         elif frame.type == "channel_message":
             await self._handle_channel_message(session, frame)
         elif frame.type == "scrollback_snapshot":
@@ -516,6 +551,16 @@ class LiveChannelBridge:
                 continue
             seen_usernames.add(participant.username)
             entries.append({"user_id": participant.username, "display_label": participant.username})
+        if self._presence_capable(session.remote_fingerprint):
+            # Issue #1281: every other node's callers the origin knows of,
+            # named by their node; not the subscriber's own.
+            for node, users in self._channel_rosters.get(channel_id, {}).items():
+                if node == session.remote_fingerprint:
+                    continue
+                entries.extend(
+                    {"user_id": user_id, "display_label": label, "node_fingerprint": node}
+                    for user_id, label in users.items()
+                )
         await session.send(
             build_presence_snapshot_frame(channel_id, entries[:_MAX_PRESENCE_SNAPSHOT_ENTRIES])
         )
@@ -595,12 +640,17 @@ class LiveChannelBridge:
             return []
         return self._remote_channel_scrollback.pop(request_id, [])
 
-    def _handle_unsubscribe(self, session: LinkRealtimeSession, frame: RealtimeFrame) -> None:
+    async def _handle_unsubscribe(self, session: LinkRealtimeSession, frame: RealtimeFrame) -> None:
         channel_id = frame.payload["channel_id"]
         subscribers = self._subscribers.get(channel_id)
         if subscribers is None:
             return
-        subscribers.pop(session.remote_fingerprint, None)
+        if subscribers.pop(session.remote_fingerprint, None) is not None and channel_id not in self._channel_roster_via:
+            # On the origin (issue #1281): its last caller here left; the
+            # leave it sends after unsubscribing would come too late to
+            # count. On a subscriber the roster is the origin's word, which
+            # a third node unsubscribing here cannot change (review of #1284).
+            await self._drop_node_roster(channel_id, session.remote_fingerprint, announce=True)
         if not subscribers:
             del self._subscribers[channel_id]
 
@@ -704,58 +754,175 @@ class LiveChannelBridge:
             return
         await self._hub.broadcast(channel.name, message)
 
-    async def _handle_presence_delta(self, session: LinkRealtimeSession, frame: RealtimeFrame) -> None:
-        channel = await self._lane.run(
-            _decide_channel_subscribe_authorization, channel_id=frame.payload["channel_id"],
-            peer_fingerprint=session.remote_fingerprint,
+    async def _presence_sender_role(
+        self, session: LinkRealtimeSession, channel: Channel, nodes: set[str],
+    ) -> str | None:
+        """Who may say what about a linked channel's presence (issue
+        #1281), for a report naming callers of `nodes`. `"origin"`: the
+        channel's origin, about its own callers or, naming the node, a
+        subscriber's. `"subscriber"`: this node is the origin and a current
+        subscriber reports its own callers. `None`: a report to drop quietly
+        -- a subscriber's leave that crossed its own unsubscribe. Anything
+        else is a strike: only the origin speaks for another node."""
+        sender = session.remote_fingerprint
+        origin = await self._lane.run(channel_origin_fingerprint, channel)
+        if origin == self._registry.own_fingerprint:
+            if nodes - {sender}:
+                raise LinkProtocolError(
+                    f"node {sender!r} reported another node's caller in channel {channel.channel_id!r}"
+                )
+            return "subscriber" if sender in self._subscribers.get(channel.channel_id, {}) else None
+        if sender != origin:
+            raise LinkProtocolError(
+                f"node {sender!r} sent presence for channel {channel.channel_id!r}, which it does not originate"
+            )
+        return "origin"
+
+    async def _presence_allowed(self, sender: str, node: str, user_id: str) -> bool:
+        """This node's own policy for a remote caller in its roster, the
+        same as for their live line (`_live_author_allowed`, issue #860):
+        a blocked or quarantined caller, or one of a node not allowed to
+        publish here, is not listed."""
+        return await self._lane.run(_live_author_allowed, node, user_id, relayed=node != sender)
+
+    def _roster_room(self, channel_id: str) -> int:
+        return _MAX_PRESENCE_SNAPSHOT_ENTRIES - sum(
+            len(users) for users in self._channel_rosters.get(channel_id, {}).values()
         )
-        kind = "join" if frame.payload["change"] == "join" else "leave"
-        node_label = (await self._lane.run(identity_for_fingerprint, session.remote_fingerprint)).label
+
+    async def _announce_presence(
+        self, channel: Channel, node: str, user_id: str, kind: str, *, relay_from: str | None,
+    ) -> None:
+        """A remote caller joined or left: the notice to this node's callers,
+        the bots that watch, and -- on the origin, `relay_from` being the
+        subscriber that reported it -- every other subscriber that takes it."""
+        node_label = (await self._lane.run(identity_for_fingerprint, node)).label
         message = LocalChannelMessage(
             id=-1, channel_id=channel.id, kind=kind,
-            author_label=link_address_label(frame.payload["user_id"], node_label),
-            author_fingerprint=session.remote_fingerprint, body=None, created_at=utc_now_iso(),
+            author_label=link_address_label(user_id, node_label),
+            author_fingerprint=node, body=None, created_at=utc_now_iso(),
         )
         await self._hub.broadcast(channel.name, message)
-
-        if self.bot_link is not None and await self._lane.run(
-            _live_author_allowed, session.remote_fingerprint, frame.payload["user_id"], relayed=False,
-        ):
+        if self.bot_link is not None:
             await self.bot_link.runtime.observe(channel, message, caller={
-                "id": f"link:{session.remote_fingerprint}:{frame.payload['user_id']}", "name": message.author_label,
+                "id": f"link:{node}:{user_id}", "name": message.author_label,
             })
+        if relay_from is not None:
+            await self._relay_presence(channel, node, user_id, kind)
 
-        # Issue #195: keep the merged live roster (populated by the
-        # initial presence_snapshot below) in sync with subsequent
-        # deltas too -- otherwise it would go stale the instant anyone
-        # joined or left after the snapshot was taken. Bounded the same
-        # way the snapshot itself already is; mirrors
-        # `_handle_node_presence_delta`'s identical shape.
-        online = self._remote_channel_presence.setdefault(channel.channel_id, {})
-        self._remote_channel_presence_source[channel.channel_id] = session.remote_fingerprint
-        user_id = frame.payload["user_id"]
-        if kind == "join":
-            if user_id not in online and len(online) >= _MAX_PRESENCE_SNAPSHOT_ENTRIES:
-                pass  # bounded -- silently dropped, not a protocol violation to strike over
+    async def _relay_presence(self, channel: Channel, node: str, user_id: str, kind: str) -> None:
+        """The origin passes a subscriber's caller joining or leaving on to
+        its other live subscribers advertising `PRESENCE_RELAY_CAPABILITY`
+        (issue #1281), naming the node; an older subscriber would read the
+        caller as the origin's own, so it is not told."""
+        frame = build_presence_delta_frame(channel.channel_id, kind, user_id, user_id, node_fingerprint=node)
+        for session in await self._live_subscribers(channel):
+            if session.remote_fingerprint == node or not self._presence_capable(session.remote_fingerprint):
+                continue
+            try:
+                await session.send(frame)
+            except LinkTransportError:
+                pass
+
+    async def _drop_node_roster(self, channel_id: str, node: str, *, announce: bool) -> None:
+        """On the origin: `node` stopped reporting `channel_id` (it
+        unsubscribed, or its session closed). Its callers leave the roster
+        and every other subscriber is told; with `announce`, this node's
+        callers see them leave too."""
+        users = self._channel_rosters.get(channel_id, {}).pop(node, None)
+        if not self._channel_rosters.get(channel_id, True):
+            del self._channel_rosters[channel_id]
+        if not users:
+            return
+        channel = await self._lane.run(get_channel_by_channel_id, channel_id)
+        if channel is None:
+            return
+        for user_id in users:
+            if announce:
+                await self._announce_presence(channel, node, user_id, "leave", relay_from=node)
             else:
-                online[user_id] = frame.payload["display_label"]
+                await self._relay_presence(channel, node, user_id, "leave")
+
+    async def _handle_presence_delta(self, session: LinkRealtimeSession, frame: RealtimeFrame) -> None:
+        payload = frame.payload
+        channel = await self._lane.run(
+            _decide_channel_subscribe_authorization, channel_id=payload["channel_id"],
+            peer_fingerprint=session.remote_fingerprint,
+        )
+        sender = session.remote_fingerprint
+        node = payload.get("node_fingerprint", sender)
+        role = await self._presence_sender_role(session, channel, {node})
+        if role is None or node == self._registry.own_fingerprint:
+            return  # A crossed leave, or this node's own caller echoed back.
+        if role == "origin" and channel.channel_id in self._presence_closed:
+            return  # Sent before the origin read this node's unsubscribe.
+        user_id = payload["user_id"]
+        kind = "join" if payload["change"] == "join" else "leave"
+        if role == "origin":
+            self._channel_roster_via[channel.channel_id] = sender
+        rosters = self._channel_rosters.get(channel.channel_id, {})
+        if kind == "join":
+            if user_id in rosters.get(node, {}) or not await self._presence_allowed(sender, node, user_id):
+                return
+            if self._roster_room(channel.channel_id) <= 0:
+                return  # bounded -- silently dropped, not a protocol violation to strike over
+            self._channel_rosters.setdefault(channel.channel_id, {}).setdefault(node, {})[user_id] = (
+                payload["display_label"]
+            )
         else:
-            online.pop(user_id, None)
+            users = rosters.get(node)
+            if users is None or users.pop(user_id, None) is None:
+                return
+            if not users:
+                del rosters[node]
+            if not rosters:
+                self._channel_rosters.pop(channel.channel_id, None)
+        await self._announce_presence(
+            channel, node, user_id, kind, relay_from=sender if role == "subscriber" else None,
+        )
 
     async def _handle_presence_snapshot(self, session: LinkRealtimeSession, frame: RealtimeFrame) -> None:
         channel = await self._lane.run(
             _decide_channel_subscribe_authorization, channel_id=frame.payload["channel_id"],
             peer_fingerprint=session.remote_fingerprint,
         )
-        # Issue #195: merged live roster -- annotates a channel's own
-        # /who list with connected peers, not just live join/leave
-        # notices. Replaces any prior snapshot for this channel outright
-        # (a fresh subscribe supersedes whatever was tracked before).
+        sender = session.remote_fingerprint
+        own = self._registry.own_fingerprint
         entries = frame.payload["entries"][:_MAX_PRESENCE_SNAPSHOT_ENTRIES]
-        self._remote_channel_presence[channel.channel_id] = {
-            entry["user_id"]: entry["display_label"] for entry in entries
-        }
-        self._remote_channel_presence_source[channel.channel_id] = session.remote_fingerprint
+        nodes = {entry.get("node_fingerprint", sender) for entry in entries} or {sender}
+        role = await self._presence_sender_role(session, channel, nodes)
+        if role is None or (role == "origin" and channel.channel_id in self._presence_closed):
+            return
+        fresh: dict[str, dict[str, str]] = {}
+        for entry in entries:
+            node = entry.get("node_fingerprint", sender)
+            if node == own or not await self._presence_allowed(sender, node, entry["user_id"]):
+                continue
+            fresh.setdefault(node, {})[entry["user_id"]] = entry["display_label"]
+        if role == "origin":
+            # Issue #195: the merged live roster, replaced outright -- a
+            # fresh subscribe supersedes whatever was tracked before. No
+            # notices: these callers were already there.
+            self._channel_rosters[channel.channel_id] = fresh
+            self._channel_roster_via[channel.channel_id] = sender
+            return
+        # Issue #1281: a subscriber's own callers, sent as it subscribes.
+        # What changed since its last word is announced and relayed.
+        mine = fresh.get(sender, {})
+        rosters = self._channel_rosters.setdefault(channel.channel_id, {})
+        before = rosters.get(sender, {})
+        others = _MAX_PRESENCE_SNAPSHOT_ENTRIES - sum(
+            len(users) for node, users in rosters.items() if node != sender
+        )
+        kept = dict(list(mine.items())[:max(0, others)])
+        if kept:
+            rosters[sender] = kept
+        else:
+            rosters.pop(sender, None)
+        for user_id in before.keys() - kept.keys():
+            await self._announce_presence(channel, sender, user_id, "leave", relay_from=sender)
+        for user_id in kept.keys() - before.keys():
+            await self._announce_presence(channel, sender, user_id, "join", relay_from=sender)
 
     async def _node_realtime_allowed(self, fingerprint: str) -> bool:
         """Design doc §8.10.2's "checked again at message delivery"
@@ -804,23 +971,30 @@ class LiveChannelBridge:
         #164) reads this directly; nothing here renders it."""
         return {fingerprint: dict(entries) for fingerprint, entries in self._remote_node_presence.items()}
 
+    def remote_channel_roster(self, channel_id: str) -> list[tuple[str, str, str]]:
+        """`(node_fingerprint, user_id, display_label)` for everyone this
+        node knows to be in `channel_id` on another node (issues #195,
+        #1281): on a subscriber, the origin's callers and the other
+        subscribers' it relays; on the origin, each subscriber's own. A UI
+        caller (`/who`, `/names`, `/list`) reads this directly; nothing here
+        renders it."""
+        return sorted(
+            (node, user_id, label)
+            for node, users in self._channel_rosters.get(channel_id, {}).items()
+            for user_id, label in users.items()
+        )
+
     def remote_channel_presence(self, channel_id: str) -> dict[str, str]:
-        """`{user_id: display_label}` -- the last-known remote roster for
-        `channel_id`, if this node currently subscribes to it live and
-        has received at least one snapshot or delta. Empty if not
-        subscribed, or if the channel isn't linked at all. A UI caller
-        (`/who`, issue #195) reads this directly to annotate the local
-        roster; nothing here renders it."""
-        return dict(self._remote_channel_presence.get(channel_id, {}))
+        """`{user_id: display_label}` of `remote_channel_roster`, every
+        node's callers merged -- for a caller that does not need to know
+        which node each is on."""
+        return {user_id: label for _node, user_id, label in self.remote_channel_roster(channel_id)}
 
     def remote_channel_origin_fingerprint(self, channel_id: str) -> str | None:
-        """Which peer fingerprint populated `remote_channel_presence`'s
-        current entries for `channel_id`, if any -- lets a caller
-        annotate a remote roster entry with which node it came from
-        (issue #195), the same way Who's Online already annotates
-        node-wide remote entries (`netbbs.net.login_flow.
-        _who_entry_description`). `None` if not currently subscribed."""
-        return self._remote_channel_presence_source.get(channel_id)
+        """On a subscriber, the origin whose session the roster for
+        `channel_id` arrives over; `None` when there is none (not
+        subscribed live, or this node is the origin)."""
+        return self._channel_roster_via.get(channel_id)
 
     async def _live_subscribers(self, channel: Channel) -> list[LinkRealtimeSession]:
         """Currently-registered subscriber sessions for `channel`,
@@ -881,7 +1055,17 @@ class LiveChannelBridge:
                 pass
 
     async def broadcast_local_presence_live(self, channel: Channel, *, change: str, username: str) -> None:
+        """A local caller joined or left `channel` (called after `hub.leave`
+        for a leave): to its live subscribers on the origin, and -- issue
+        #1281 -- up to the channel's origin from a subscriber, if the origin
+        takes it. A leave while another session of the same account is
+        still in the channel is no leave."""
+        if change == "leave" and self._hub.participants_for_username(channel.name, username):
+            return
         sessions = await self._live_subscribers(channel)
+        upstream = await self._upstream_presence_session(channel)
+        if upstream is not None:
+            sessions.append(upstream)
         if not sessions:
             return
         frame = build_presence_delta_frame(channel.channel_id, change, username, username)
@@ -890,6 +1074,37 @@ class LiveChannelBridge:
                 await session.send(frame)
             except LinkTransportError:
                 pass
+
+    async def _upstream_presence_session(self, channel: Channel) -> LinkRealtimeSession | None:
+        """The live session to `channel`'s origin when this node is a
+        subscriber and the origin takes its callers' presence (issue #1281)."""
+        origin = await self._lane.run(channel_origin_fingerprint, channel)
+        if origin is None or origin == self._registry.own_fingerprint or not self._presence_capable(origin):
+            return None
+        session = self._registry.get(origin)
+        if session is None or not await self._lane.run(
+            lambda db: decide_node_action(db, origin, LinkPolicyAction.REALTIME).allowed
+        ):
+            return None
+        return session
+
+    async def send_local_roster_upstream(self, channel: Channel) -> None:
+        """Right after subscribing, tell the origin who is in `channel` here
+        (issue #1281): a caller who joined before the live session existed
+        sent a join that went nowhere."""
+        session = await self._upstream_presence_session(channel)
+        if session is None:
+            return
+        seen: set[str] = set()
+        entries = []
+        for participant in self._hub.participant_ids(channel.name):
+            if participant.username not in seen:
+                seen.add(participant.username)
+                entries.append({"user_id": participant.username, "display_label": participant.username})
+        try:
+            await session.send(build_presence_snapshot_frame(channel.channel_id, entries[:_MAX_PRESENCE_SNAPSHOT_ENTRIES]))
+        except LinkTransportError:
+            pass
 
     async def _live_node_wide_sessions(self) -> list[LinkRealtimeSession]:
         """Every currently-connected session whose peer still passes a
@@ -1016,9 +1231,13 @@ async def ensure_live_subscription(
         else:
             return None
     request_id = bridge.begin_scrollback_request(channel.channel_id, origin_fingerprint)
+    bridge.reopen_presence(channel.channel_id)
     try:
         await session.send(build_subscribe_frame(channel.channel_id, message_id=request_id))
     except LinkTransportError:
         bridge.finish_scrollback_request(request_id)
         return None
+    # Issue #1281: frames on one session arrive in order, so the origin has
+    # registered this subscription by the time it reads who is here.
+    await bridge.send_local_roster_upstream(channel)
     return session, request_id

@@ -3140,10 +3140,11 @@ muted line.
 `/list` counts everyone this node can see in a channel, not only its own
 callers: `2 here · 3 on MRC` for a bridged room, from the room's roster while a
 caller here is in it and from the hub's room listing otherwise (marked with its
-age when it is not current), and `4 on Vertigo` for a linked channel while a
-caller here holds a live subscription to it, the only time that roster is kept
-current. Link presence travels from the origin to its subscribers only, so an
-origin's `/list` and `/who` do not count callers on subscribing nodes.
+age when it is not current), and `4 on Vertigo` for a linked channel's callers
+on other nodes (`5 on 2 linked BBSes` when they are on several). A subscriber
+knows them while a caller here holds a live subscription -- the roster goes with
+the last one -- and the origin knows every subscriber's (§8.10.2, issue #1281).
+`/who` names each one's node.
 
 The hub's answer to an `/mrc` question carries no request id and no end
 marker, so the reply lines that follow the question (its first within ten
@@ -5611,7 +5612,8 @@ Every application object contains `version`, `type`, and a session-local
 per-session replay window. The first implementation supports:
 
 - `subscribe` and `unsubscribe`;
-- `presence_snapshot` and `presence_delta` (channel-scoped);
+- `presence_snapshot` and `presence_delta` (channel-scoped; both ways and
+  naming the caller's node since issue #1281 -- see §8.10.2);
 - `node_presence_snapshot` and `node_presence_delta` (issue #164, node-wide
   -- see §8.10.2);
 - `channel_message`;
@@ -5689,6 +5691,31 @@ Presence is leased, scoped to subscribed linked channels, and advisory. A
 snapshot establishes current state after subscription; deltas update it.
 Disconnect or lease expiry removes that node's remote presence without
 persisting synthetic leave events.
+
+Presence travels both ways over the same session, as lines do (issue #1281).
+A subscriber reports its own callers to the origin: a `presence_snapshot` of
+who is in the channel right after each `subscribe` -- a caller who joined
+before the live session existed sent a join that went nowhere -- then a
+`presence_delta` per join and leave. A leave while another session of the same
+account is still in the channel is no leave. The origin keeps one roster per
+node, announces a subscriber's callers joining and leaving to its own callers,
+and relays them to its other subscribers in a `presence_delta` or snapshot entry
+naming the caller's node in an optional `node_fingerprint`; a subscriber's own
+callers are never echoed back to it. As with `author_node_fingerprint`, only the
+origin may name another node: a subscriber reporting someone else's caller, or
+any other node reporting presence for a channel it does not originate, is a
+protocol strike. A subscriber's report arriving after its `unsubscribe` is
+dropped quietly; the unsubscribe itself takes that node's callers out, with a
+leave notice, since the last caller's own leave follows it. A subscriber's
+session closing takes them out without one. Every node applies its own policy
+to every remote caller it lists, the same as to their relayed line: a caller
+who is quarantined or blocked, or whose node may not publish here, is not
+listed. Each channel's roster stays bounded across all nodes. Older nodes refuse
+unknown frame keys, so a subscriber reports up only to an origin advertising
+the `presence_relay` capability, and the origin relays other nodes' callers only
+to subscribers advertising it. With an older node the old one-way behaviour
+remains: an older origin knows only its own callers, and an older subscriber
+sees only the origin's.
 
 **Node-wide presence (issue #164)** is a second, independent presence
 concept, not a generalization of the channel-scoped one above: it answers
