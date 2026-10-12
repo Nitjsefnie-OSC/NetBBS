@@ -390,6 +390,7 @@ expiry. The node's upload limit and any lower proxy limit both apply.
 | **Open it** | Log in as a level-255 account and press <kbd>S</kbd> **SysOp** |
 | **From the shell** | `python -m netbbs.admin --db /var/lib/netbbs/netbbs.db` |
 | **Helpers** | Staff get a smaller <kbd>S</kbd> **Staff** console instead ([Sharing the work](#sharing-the-work-staff-permissions)) |
+| **Decide first** | Who may sign up: step 1 of [A first day, in order](#a-first-day-in-order) |
 
 The dashboard shows node mode, active sessions, pending approvals,
 backup/update status, and NetBBS Link health when enabled. Refresh it after
@@ -434,7 +435,7 @@ old menu letters from release notes.
 | --- | --- |
 | <kbd>B</kbd> **Back** or <kbd>Esc</kbd> | Leaves the screen. <kbd>Esc</kbd> first clears a highlighted row or field. |
 | <kbd>&lt;</kbd> <kbd>&gt;</kbd> or <kbd>PgUp</kbd>/<kbd>PgDn</kbd> | Turn a page or a form's section |
-| <kbd>←</kbd>/<kbd>→</kbd> | On a list, turn the page too; on a form, step the highlighted field's value |
+| <kbd>Left</kbd>/<kbd>Right</kbd> | On a list, turn the page too; on a form, step the highlighted field's value |
 | <kbd>/</kbd> | Finds |
 | <kbd>?</kbd>, <kbd>F1</kbd> or <kbd>Ctrl</kbd>+<kbd>H</kbd> | Show help |
 
@@ -444,7 +445,7 @@ old menu letters from release notes.
   discards the draft after asking.
 - Fields are numbered **01**, **02** and on through every section of the
   screen. Type a field's number (two digits, or one and <kbd>Enter</kbd>) to
-  open it from any page, or move with <kbd>↑</kbd>/<kbd>↓</kbd> and press
+  open it from any page, or move with <kbd>Up</kbd>/<kbd>Down</kbd> and press
   <kbd>Enter</kbd> or <kbd>Space</kbd>.
 - Letters on these screens are only their actions.
 
@@ -454,7 +455,7 @@ In current field prompts, the existing value is already in the input line:
 - <kbd>Esc</kbd> cancels the field edit.
 - Deleting all text clears it where the field permits an empty value.
 
-> [!WARNING]
+> [!IMPORTANT]
 > Do not assume an empty line means "keep the old value."
 
 ### The console from the shell
