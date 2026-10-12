@@ -27,57 +27,83 @@ basic familiarity with your server's command line, but no Python programming.
 
 ## Installing NetBBS
 
-**NetBSD is the primary platform; mainstream Linux is supported.** Other
-POSIX systems are best effort. Windows is for development and testing.
-NetBBS needs Python 3.11 or newer and SQLite with FTS5 support for search.
-SQLite is the database engine included with Python; you do not install or
-administer a separate database server.
+| At a glance | |
+| --- | --- |
+| **Platforms** | NetBSD (primary), mainstream Linux (supported); other POSIX systems best effort; Windows for development and testing |
+| **Needs** | Python 3.11 or newer, SQLite with FTS5 support for search |
+| **Get it from** | The official [GitHub releases](https://github.com/Thiesi/NetBBS/releases) or a tagged source archive |
+| **Decide first** | Which extras you need: `ssh`, `web`, or neither |
 
-Obtain NetBBS from the official [GitHub releases](https://github.com/Thiesi/NetBBS/releases)
-or a tagged source archive. NetBBS itself is not distributed through PyPI,
-pkgsrc, or apt. Your operating system's package manager supplies prerequisites.
-The commands below use `/var/lib/netbbs` for state, a service account named
-`netbbs`, and `/etc/netbbs/netbbs.toml` for configuration. Substitute your paths
-consistently if you choose a different layout.
+In this chapter: [Prepare the host](#prepare-the-host) ·
+[Install a release](#install-a-release)
+
+SQLite is the database engine included with Python; you do not install or
+administer a separate database server. NetBBS itself is not distributed
+through PyPI, pkgsrc, or apt. Your operating system's package manager
+supplies prerequisites.
+
+The commands below use this layout. Substitute your paths consistently if you
+choose a different one.
+
+| What | Path or name |
+| --- | --- |
+| State | `/var/lib/netbbs` |
+| Service account | `netbbs` |
+| Configuration | `/etc/netbbs/netbbs.toml` |
 
 ### Prepare the host
 
-**MANUAL — on the host:** install Python and its virtual-environment support.
+> [!IMPORTANT]
+> **Manual, on the host.** These steps run on your server's command line.
+
+#### 1. Install Python and virtual-environment support
+
 A virtual environment is a private installation directory for NetBBS and its
 libraries; it keeps them separate from other programs on your server.
 
-Check the version with `python3 --version`: it must say 3.11 or newer. On
-Debian/Ubuntu, `python3 -m venv` fails until the matching `venv` package is
-installed:
+Check the version with `python3 --version`: it must say 3.11 or newer.
 
-```sh
-sudo apt install python3 python3-venv
-```
+- **Debian/Ubuntu:** `python3 -m venv` fails until the matching `venv`
+  package is installed:
 
-On NetBSD, use pkgsrc packages such as `python312` and `py312-pip`. The SSH extra
-uses AsyncSSH and `cryptography`; a source build on NetBSD also needs Rust,
-a C compiler, Python headers, OpenSSL, libffi, and pkgconf. A typical pkgin
-package set is:
+  ```sh
+  sudo apt install python3 python3-venv
+  ```
 
-```sh
-pkgin install python312 py312-pip rust openssl libffi pkgconf
-```
+- **NetBSD:** use pkgsrc packages such as `python312` and `py312-pip`. A
+  typical pkgin package set is:
 
-Install NetBSD's `comp` set if the C compiler is missing. Build requirements
-can change with dependency releases; use the
+  ```sh
+  pkgin install python312 py312-pip rust openssl libffi pkgconf
+  ```
+
+<details>
+<summary>Why NetBSD needs Rust and a C compiler</summary>
+
+The SSH extra uses AsyncSSH and `cryptography`; a source build on NetBSD also
+needs Rust, a C compiler, Python headers, OpenSSL, libffi, and pkgconf.
+Install NetBSD's `comp` set if the C compiler is missing.
+
+Build requirements can change with dependency releases; use the
 [cryptography installation requirements](https://cryptography.io/en/latest/installation/)
 for the version pip selects. Rust is a build requirement, not a service you
 need to run. On Linux, prebuilt dependency wheels often avoid this toolchain.
 
-Create the unprivileged account and directories **before** installing into them:
+</details>
+
+#### 2. Create the service account and directories
+
+Create the unprivileged account and directories **before** installing into
+them. Skip account/group creation if they already exist.
+
+**Linux:**
 
 ```sh
-# Linux
 sudo useradd --system --user-group --home /var/lib/netbbs --create-home netbbs
 sudo install -d -m 750 -o netbbs -g netbbs /var/lib/netbbs /etc/netbbs
 ```
 
-On NetBSD, the equivalent is:
+**NetBSD:**
 
 ```sh
 sudo groupadd netbbs
@@ -85,20 +111,48 @@ sudo useradd -g netbbs -d /var/lib/netbbs -m -s /bin/sh netbbs
 sudo install -d -m 750 -o netbbs -g netbbs /var/lib/netbbs /etc/netbbs
 ```
 
-Skip account/group creation if they already exist. The supplied NetBSD service
-script needs a Bourne-compatible account shell such as `/bin/sh` because it
-starts the process through `su`; `/sbin/nologin` and csh are unsuitable for it.
-Run the application and games as this account, never root.
+> [!WARNING]
+> Run the application and games as this account, never root.
+
+> [!NOTE]
+> The supplied NetBSD service script needs a Bourne-compatible account shell
+> such as `/bin/sh` because it starts the process through `su`;
+> `/sbin/nologin` and csh are unsuitable for it.
 
 ### Install a release
 
-**MANUAL — on the host:** download the wheel (the `.whl` file) from GitHub
-Releases. The service account usually cannot read files in your home directory, so
-copy the wheel somewhere it can, such as `/tmp`, first; pip reports a wheel
-it cannot read as "does not exist". In the commands below, replace `VERSION`
-with the version number only, for example `7.13.0`, and `~/Downloads` with
-the directory you downloaded to. On NetBSD, use `python3.12` in place of
-`python3` if that is your installed interpreter's name.
+> [!IMPORTANT]
+> **Manual, on the host.** These steps run on your server's command line.
+
+> [!TIP]
+> Tried NetBBS with the website's local trial first? That trial database is
+> unrelated to this installation and can simply be deleted with its
+> directory. This installation starts with a fresh database, and you create
+> your SysOp account again below.
+
+#### Choose the extras
+
+Choose extras according to what you enable:
+
+| Extra | Needed for |
+| --- | --- |
+| `ssh` | SSH caller connections, enabled by default |
+| `web` | Browser terminal, HTTP file-transfer links, **and NetBBS Link** |
+| Neither | A Telnet-only node with SSH, web, and NetBBS Link disabled |
+
+The commands below install both (`[ssh,web]`). Production installs do not
+need the `dev` extra or an editable source checkout.
+
+#### Install the wheel
+
+1. Download the wheel (the `.whl` file) from GitHub Releases.
+2. Copy it somewhere the service account can read it, such as `/tmp`. The
+   service account usually cannot read files in your home directory, and pip
+   reports a wheel it cannot read as "does not exist".
+3. Run the commands below. Replace `VERSION` with the version number only, for
+   example `7.13.0`, and `~/Downloads` with the directory you downloaded to.
+   On NetBSD, use `python3.12` in place of `python3` if that is your installed
+   interpreter's name.
 
 ```sh
 sudo install -m 644 ~/Downloads/netbbs-VERSION-py3-none-any.whl /tmp/
@@ -108,35 +162,33 @@ sudo -u netbbs /var/lib/netbbs/.venv/bin/python -m pip install "/tmp/netbbs-VERS
 sudo -u netbbs /var/lib/netbbs/.venv/bin/python -m netbbs --version
 ```
 
-Tried NetBBS with the website's local trial first? That trial database is
-unrelated to this installation and can simply be deleted with its directory.
-This installation starts with a fresh database, and you create your SysOp
-account again below.
-
 `--version` prints the package and database-schema versions without starting
-listeners. Choose extras according to what you enable:
+listeners.
 
-| Extra | Needed for |
-| --- | --- |
-| `ssh` | SSH caller connections, enabled by default |
-| `web` | Browser terminal, HTTP file-transfer links, **and NetBBS Link** |
-| Neither | A Telnet-only node with SSH, web, and NetBBS Link disabled |
+<details>
+<summary>The release has only a tagged source archive</summary>
 
-If the release has only a tagged source archive, unpack it, create a temporary
-build environment, run `python -m pip install build` and `python -m build`
-there, then install its `dist/` wheel as above. Production installs do not
-need the `dev` extra or an editable source checkout.
+Unpack it, create a temporary build environment, run
+`python -m pip install build` and `python -m build` there, then install its
+`dist/` wheel as above.
 
-**NetBSD import problem:** if SSH fails with `libssl.so.3 not found` after a
-successful install, pkgsrc's `/usr/pkg/lib` may be missing from the runtime
-library search path. The supplied rc.d script sets `LD_LIBRARY_PATH` for the
-service. For an attended check, use:
+</details>
+
+<details>
+<summary>NetBSD: SSH fails with <code>libssl.so.3 not found</code></summary>
+
+If SSH fails with `libssl.so.3 not found` after a successful install,
+pkgsrc's `/usr/pkg/lib` may be missing from the runtime library search path.
+The supplied rc.d script sets `LD_LIBRARY_PATH` for the service. For an
+attended check, use:
 
 ```sh
 sudo -u netbbs env LD_LIBRARY_PATH=/usr/pkg/lib /var/lib/netbbs/.venv/bin/python -c "import asyncssh"
 ```
 
 Do not substitute the base system's differently versioned OpenSSL library.
+
+</details>
 
 ## First account and configuration
 
