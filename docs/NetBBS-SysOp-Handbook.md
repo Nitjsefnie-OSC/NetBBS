@@ -340,12 +340,21 @@ managed-DNS admin token.
 
 ## Running a service
 
-**MANUAL — on the host:** download the service example from the same release's
-source tree. Examples are not installed by the wheel. Adjust paths and account
-names before installing it; [examples/README.md](../examples/README.md) describes
-both files.
+| At a glance | |
+| --- | --- |
+| **Linux** | systemd unit [netbbs.service](../examples/netbbs.service) |
+| **NetBSD** | rc.d script [netbbs.rc](../examples/netbbs.rc) |
+| **Shutdown delay** | 60 seconds by default: **Settings ▸ Operating limits**, or `[shutdown] graceful_delay_seconds` |
 
-For Linux, install [netbbs.service](../examples/netbbs.service) as
+> [!IMPORTANT]
+> **Manual, on the host.** Download the service example from the same
+> release's source tree. Examples are not installed by the wheel. Adjust paths
+> and account names before installing it;
+> [examples/README.md](../examples/README.md) describes both files.
+
+### Install the service
+
+**Linux:** install [netbbs.service](../examples/netbbs.service) as
 `/etc/systemd/system/netbbs.service`, then:
 
 ```sh
@@ -354,7 +363,7 @@ sudo systemctl enable --now netbbs
 sudo systemctl status netbbs
 ```
 
-For NetBSD, install [netbbs.rc](../examples/netbbs.rc) as executable
+**NetBSD:** install [netbbs.rc](../examples/netbbs.rc) as executable
 `/etc/rc.d/netbbs`, add `netbbs=YES` to `/etc/rc.conf`, then:
 
 ```sh
@@ -362,23 +371,38 @@ sudo service netbbs start
 sudo service netbbs status
 ```
 
-Check a real login as well as service status. The systemd example restarts on
-failure; NetBSD rc.d does not automatically restart a crashed node. If you
-need that behavior, arrange an external health check or supervisor yourself.
+> [!TIP]
+> Check a real login as well as service status.
+
+> [!WARNING]
+> The systemd example restarts on failure; NetBSD rc.d does not automatically
+> restart a crashed node. If you need that behavior, arrange an external
+> health check or supervisor yourself.
+
+### Stopping and the shutdown delay
 
 NetBBS runs in the foreground. The service manager handles backgrounding.
-`systemctl stop netbbs` or `service netbbs stop` requests a graceful shutdown:
-callers are warned, then disconnected after the configured delay (60 seconds
-by default). With nobody connected, or once the last caller leaves, it stops
-without waiting out the delay. A shutdown you schedule from the console keeps
-the delay you chose. Change the delay under **Settings → Network &
-login limits**, or as `[shutdown] graceful_delay_seconds`. Cleanup takes
-additional time. Increase the service stop timeout
-if you raise that delay or configure slow-stopping door services.
 
-The Linux unit restricts writable paths to `/var/lib/netbbs`. **MANUAL:** extend
-its `ReadWritePaths` if you put games or state elsewhere. NetBSD's example sets
-`HOME` to `netbbs_statedir`; remember this when locating Voidrunner saves.
+`systemctl stop netbbs` or `service netbbs stop` requests a graceful shutdown:
+
+- Callers are warned, then disconnected after the configured delay (60
+  seconds by default).
+- With nobody connected, or once the last caller leaves, it stops without
+  waiting out the delay.
+- A shutdown you schedule from the console keeps the delay you chose.
+
+Change the delay under **Settings ▸ Operating limits**, or as
+`[shutdown] graceful_delay_seconds`. Cleanup takes additional time. Increase
+the service stop timeout if you raise that delay or configure slow-stopping
+door services.
+
+### Paths the service can write
+
+- The Linux unit restricts writable paths to `/var/lib/netbbs`.
+  **Manual:** extend its `ReadWritePaths` if you put games or state
+  elsewhere.
+- NetBSD's example sets `HOME` to `netbbs_statedir`; remember this when
+  locating Voidrunner saves.
 
 ## Caller connections and file transfers
 
