@@ -63,6 +63,10 @@ WALKS: dict[str, tuple[list[str], str]] = {
     "content > a door": (["c", "d", "l", "0", "1"], "Trivia"),
     "content > a channel": (["c", "l", "l", "0", "1"], "lobby"),
     "content > a community": (["c", "t", "l", "0", "1"], "Makers"),
+    "content > chat bots": (["c", "o"], "Chat bots"),
+    "content > a chat bot": (["c", "o", "0", "1"], "Edit chat bot"),
+    "content > chat bots > model settings": (["c", "o", "m"], "Model conversation"),
+    "content > chat bots > usage": (["c", "o", "u"], "Model usage"),
     "operations": (["o"], "Operations"),
     "operations > prune drafts": (["o", "p"], "Prune drafts"),
     "operations > repair": (["o", "r"], "Repair carried posts"),
@@ -103,6 +107,7 @@ def seed(db):
     """A node with one of everything a console screen reports on. Returns its SysOp."""
     from netbbs.auth.users import SYSOP_LEVEL, create_user
     from netbbs.boards.boards import create_board
+    from netbbs.bots.registry import save_bot
     from netbbs.chat.channels import create_channel
     from netbbs.communities import create_community
     from netbbs.doors.registry import create_door
@@ -131,6 +136,7 @@ def seed(db):
     create_channel(db, "lobby", description="The front room", creator=sysop)
     create_community(db, "Makers", description="People who build things", creator=sysop)
     create_door(db, "Trivia", sys.executable, description="Quiz", creator=sysop)
+    save_bot(db, actor=sysop, name="Baud", channels=["lobby"], defaults=["lobby"])
     return sysop
 
 

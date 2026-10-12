@@ -1440,10 +1440,14 @@ statistics and last-seen queries, board and file-area announcements, Linked
 participation and model conversation. The [bot API guide](NetBBS-bot-api.md)
 describes each.
 
-The catalogue shows each bot's last runtime status and error. **Kill selected**
-stops one bot; **Stop all** stops every bot; **Delete selected** removes a
-stopped bot and its state directory, while channel history and existing
-backups remain. Both persist across node restarts;
+The catalogue lists each bot's state (running in green, restarting in red,
+off once its process is gone), how many channels it may use and its last
+error. The editor groups its fields under
+Bot, Channels, Greetings and announcements, Queries and conversation, and
+Behaviour and program. **Kill selected** stops one bot; **Stop all** stops
+every bot; **Delete selected** removes a bot whose state reads off, with its
+state directory, while channel history and existing backups remain. Each
+action reports its outcome above the prompt. Both persist across node restarts;
 enable an instance again in its editor to resume. Changes are applied within
 about a second. Moderators can `/mute Baud.bot [duration] [reason]` and
 `/unmute Baud.bot`. Output limits apply per bot and channel and survive a
@@ -1457,7 +1461,8 @@ programs run as the NetBBS OS user; the API is not an operating-system sandbox.
 Reminders survive process and node restarts in `<db>.bots/<original-name>/`.
 Renaming an instance keeps its original state directory. Node backups include
 these directories and restore them with the database. Reminders can be delayed by mutes,
-disabled channels or output limits. A crash just after delivery may repeat
+disabled channels or output limits; a reminder refused eight times is
+dropped so it cannot hold up the others. A crash just after delivery may repeat
 a reminder; delivery is not an exactly-once guarantee.
 
 Model conversation is optional and stays off until you set up a provider
@@ -1466,7 +1471,8 @@ a local Ollama server) and grant it to an instance. Install `netbbs[bots]` or
 `netbbs[web]` for its HTTP client. A caller's first request only shows a
 notice naming the provider; replies are public. Token and optional money
 budgets, per-caller quotas and channel rates bound it, and **Usage** shows
-what was spent. Prompt logging is off by default.
+today's and this month's requests, tokens and cost, the busiest callers and
+which limits callers reached. Prompt logging is off by default.
 
 ## MRC chat bridge
 

@@ -26,6 +26,24 @@ class BotPolicyError(Exception):
     """Invalid or unauthorized channel policy change."""
 
 
+class BotNotice(str):
+    """A system line about bots, queued on a chat hub as plain, sanitized text.
+
+    The chat screen styles it as a notice, not as speech: a bare
+    "Baud.bot: ..." string read as the bot talking publicly even when only
+    the sender could see it (issue #1241). `private` marks a line sent to
+    one caller. Being a `str`, it stays readable by everything that already
+    treats hub strings as text.
+    """
+
+    private: bool
+
+    def __new__(cls, text: str, *, private: bool = False) -> "BotNotice":
+        notice = super().__new__(cls, text)
+        notice.private = private
+        return notice
+
+
 def bot_label_origin(db: Database, label: str, *, remote: bool = False) -> BotOrigin | None:
     """Classify a canonical author, retaining pre-reservation local accounts.
 

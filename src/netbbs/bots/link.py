@@ -12,7 +12,7 @@ from collections import OrderedDict
 import logging
 
 from netbbs.bots.registry import BotError, active_labels, allowed_channel, bot_for_label, list_bots, channel_readers
-from netbbs.chat.bots import remote_bot_visible
+from netbbs.chat.bots import BotNotice, remote_bot_visible
 from netbbs.link.channels import channel_origin_fingerprint, is_channel_linked
 from netbbs.link.events import CHAT_BOTS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY, descriptor_has_capability
 from netbbs.link.enforcement import LinkPolicyAction, decide_node_action
@@ -142,7 +142,8 @@ class BotLink:
         finally:
             self.pending.pop(frame.message_id, None)
             if reason:
-                await self.hub.send_to(channel.name, participant_id, sanitize_text(f"{label}: {reason}"))
+                await self.hub.send_to(channel.name, participant_id,
+                                       BotNotice(sanitize_text(f"{label}: {reason}"), private=True))
 
     async def handle_frame(self, session, frame):
         if frame.type == "bot_readers" and not self.capable(session.remote_fingerprint, CHAT_BOT_READERS_CAPABILITY):
@@ -348,7 +349,7 @@ class BotLink:
         if readers and labels != previous:
             node = (await self.lane.run(identity_for_fingerprint, author)).label
             names = ", ".join(link_address_label(label, node) for label in labels)
-            await self.hub.broadcast(channel.name, "[BOT] " + (
+            await self.hub.broadcast(channel.name, BotNotice(
                 names + " reads this channel." if labels else
                 f"Whole-channel bot reading at {sanitize_text(node)} was withdrawn."
             ))

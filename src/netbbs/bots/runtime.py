@@ -19,6 +19,7 @@ from netbbs.bots.registry import (
     reset_runtime_status,
 )
 from netbbs.bots.state import read_state, write_state, state_path
+from netbbs.chat.bots import BotNotice
 from netbbs.rendering import sanitize_text
 
 MAX_LINE_BYTES = 32768
@@ -69,7 +70,7 @@ class BotRuntime:
                         labels = disclosures.get(name, [])
                         if labels != self.disclosures.get(name, []):
                             notice = ", ".join(labels) + " reads this channel." if labels else "No local bot now has whole-channel reading access."
-                            await self.hub.broadcast(name, "[BOT] " + notice)
+                            await self.hub.broadcast(name, BotNotice(notice))
                     self.disclosures = disclosures
                     for bot_id, worker in list(self.workers.items()):
                         if (desired.get(bot_id) != worker.bot or worker.task.done() or
@@ -184,7 +185,7 @@ class _Worker:
                 await target[3](text, message)
             elif text:
                 await self.owner.hub.send_to(target[0], target[1],
-                                             f"{self.bot.label}: {sanitize_text(text)}")
+                                             BotNotice(f"{self.bot.label}: {sanitize_text(text)}", private=True))
 
     async def run(self) -> None:
         delay = self.owner.restart_seconds
