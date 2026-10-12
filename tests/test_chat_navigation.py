@@ -6,6 +6,7 @@ like the MRC hub's answers."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import aiohttp
 
@@ -234,3 +235,91 @@ def test_a_short_command_reply_is_not_paged(lane, hub, presence, channel, alice)
             await _leave(session, task)
 
     asyncio.run(scenario())
+
+
+# -- review of #1288 ------------------------------------------------------------
+
+
+def test_the_frames_draw_nothing_where_there_are_no_pinned_rows():
+    session = _NavSession(height=3)
+    session.line_transcript = chat_flow._new_transcript()
+    session.line_transcript.extend(f"line {n}" for n in range(20))
+    view = chat_flow._ScrollView(offset=5, height=3, width=80)
+    assert chat_flow._live_frame(session, 3) == ""
+    assert chat_flow._scrolled_frame(session, view, 3, unicode_style=True) == ""
+
+
+def test_a_height_only_resize_while_scrolled_back_is_noticed_by_the_next_key(lane, hub, presence, channel, alice):
+    async def scenario():
+        session = _NavSession(height=12)
+        task, participant = await _in_chat(lane, hub, presence, channel, alice, session)
+        try:
+            for n in range(40):
+                await hub.send_to(channel.name, participant, MrcNotice(f"line {n:02}", utc_now_iso()))
+            assert await eventually(lambda: "line 39" in session.text())
+            await session.navigate("PAGE_UP")
+            session.terminal_height = 16  # taller, nothing drawn since
+            mark = len(session.written)
+            await session.navigate("PAGE_UP")
+            drawn = "".join(session.written[mark:])
+            # The scrolled frame is drawn for 16 rows: its scroll region ends
+            # at row 13 (16 less the three pinned rows), not at row 9.
+            assert "\x1b[1;13r" in drawn and "lines back" in strip_ansi(drawn)
+        finally:
+            await _leave(session, task)
+
+    asyncio.run(scenario())
+
+
+def test_one_escape_after_a_resize_leaves_the_view_and_keeps_the_pages(db, lane, hub, presence, channel, alice, sysop):
+    for n in range(20):
+        create_channel(db, f"room-{n:02}", creator=sysop)
+
+    async def scenario():
+        session = _NavSession(height=12)
+        task, _participant = await _in_chat(lane, hub, presence, channel, alice, session)
+        try:
+            session.inputs.put_nowait("/list")
+            assert await eventually(lambda: "PgDn more" in session.text())
+            await session.navigate("PAGE_UP")
+            session.terminal_width = 100  # a resize while scrolled back
+            mark = len(session.written)
+            await session.navigate("ESCAPE")
+            assert "the rest of that answer is skipped" not in session.since(mark)
+            # The pages are still there for PgDn.
+            mark = len(session.written)
+            await session.navigate("PAGE_DOWN")
+            assert "page 2 of" in session.since(mark)
+        finally:
+            await _leave(session, task)
+
+    asyncio.run(scenario())
+
+
+def test_a_command_reply_leaves_the_pager_to_a_hub_answer_that_landed_meanwhile(monkeypatch):
+    class Holder:
+        held = None
+        waiting: list = []
+
+    class Lane:
+        async def run(self, fn, *args, **kwargs):
+            return "footer"
+
+    holder = Holder()
+    hub_pages = object()
+    session = _NavSession(height=12)
+    real_next = chat_flow._next_held_page
+
+    async def hub_answer_lands(session_, held, *, waiting):
+        lines = await real_next(session_, held, waiting=waiting)
+        holder.held = hub_pages  # the receive loop drew a hub answer meanwhile
+        return lines
+
+    monkeypatch.setattr(chat_flow, "_next_held_page", hub_answer_lands)
+    ctx = SimpleNamespace(session=session, hub_reply=holder, lane=Lane(), user=None)
+    theme = chat_flow._ReplyTheme(unicode_style=True, header=51, accent=220)
+    rows = [((f"#room-{n:02}", None), ("0 here", None), ("", None)) for n in range(30)]
+    asyncio.run(chat_flow._write_block(ctx, theme, "Channels", rows=rows, count=30))
+    text = session.text()
+    assert holder.held is hub_pages, "the hub answer keeps its pages"
+    assert "#room-29" in text and "page 1 of" not in text, "the reply is shown whole instead"

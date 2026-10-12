@@ -4123,9 +4123,17 @@ async def _write_block(
         return await ctx.lane.run(_render_hub_reply_footer, ctx.user, page, pages, width, next_label=waiting)
 
     held = _HeldPages(lines[1:], page_title, page_footer)
-    for line in await _next_held_page(ctx.session, held, waiting=None):
-        await ctx.session.write_line(line)
+    page = await _next_held_page(ctx.session, held, waiting=None)
+    if holder.held is not None or holder.waiting:
+        # A hub answer took the pager while this was being drawn (review of
+        # #1288): it keeps its pages, and this reply is shown whole.
+        for line in lines:
+            await ctx.session.write_line(line)
+        return
+    # Claimed before the first write, which can yield to the receive loop.
     holder.held = held if held.rows else None
+    for line in page:
+        await ctx.session.write_line(line)
 
 
 def _linked_node_label(ctx: ChatCommandContext, fingerprint: str) -> str:
@@ -5397,6 +5405,8 @@ class _ScrollView:
 def _scrolled_frame(session: Session, view: _ScrollView, height: int, *, unicode_style: bool) -> str:
     """The chat area drawn scrolled back: the kept rows `view.offset` above
     the newest, and on its last row where the view is and how to leave."""
+    if height < _PINNED_UI_MIN_HEIGHT:
+        return ""
     rows = _transcript_rows(session)
     area = view.area(height)
     end = max(0, len(rows) - view.offset)
@@ -5418,6 +5428,8 @@ def _scrolled_frame(session: Session, view: _ScrollView, height: int, *, unicode
 
 def _live_frame(session: Session, height: int) -> str:
     """The chat area redrawn at its newest lines, the way a resize does."""
+    if height < _PINNED_UI_MIN_HEIGHT:
+        return ""
     scroll_bottom = height - _PINNED_ROWS
     out = set_scroll_region(1, scroll_bottom)
     for row in range(1, scroll_bottom + 1):
@@ -5991,12 +6003,22 @@ async def _chat_loop(
             critical section: PgUp and PgDn scroll through the chat's kept
             lines, and at the newest PgDn shows the next page of a held
             answer; Esc leaves the scrolled view, or drops the pages held."""
-            height = pinned_ui.last_height if pinned_ui.active else None
-            if height is not None and (height, session.terminal_width) != (view.height, view.width) and view.offset:
-                await view_live(height)
-            if key == "ESCAPE":
-                if view.offset and height is not None:
+            scrolled = bool(view.offset)  # what the key was pressed on
+            # The pinned rows' height as of now (review of #1288): a resize
+            # since the last line drawn is only noticed by a sync. A height
+            # change redraws the chat live; a width change alone does not.
+            height = await pinned_ui.sync(session, lane, hub, presence, channel, user, live_buffer)
+            if view.offset and (height is None or (height, session.terminal_width) != (view.height, view.width)):
+                if height is not None and height == view.height:
                     await view_live(height)
+                view.offset = view.unseen = 0
+            if key == "ESCAPE":
+                # One Escape does one thing: leave the scrolled view if it
+                # was pressed there, else drop the pages held.
+                if scrolled:
+                    if view.offset and height is not None:
+                        await view_live(height)
+                    view.offset = view.unseen = 0
                 elif hub_reply.held is not None:
                     hub_reply.held = None
                     await print_lines([colored("(the rest of that answer is skipped)", fg_color=MUTED_COLOR)])
@@ -6201,7 +6223,9 @@ async def _chat_loop(
 
             async def list_candidates(candidates: Sequence[str], line_text: str, cursor: int) -> None:
                 if view.offset:
-                    await view_live(session.terminal_height)
+                    if pinned_ui.active and pinned_ui.last_height is not None:
+                        await view_live(pinned_ui.last_height)
+                    view.offset = view.unseen = 0
                 await _print_candidates_and_redraw_input(
                     session, live_buffer, session.terminal_height, candidates, line_text, cursor,
                     accent_color=pinned_ui.accent_color, unicode_style=pinned_ui.unicode_style,
