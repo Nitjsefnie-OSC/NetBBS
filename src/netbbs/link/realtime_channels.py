@@ -323,6 +323,11 @@ class LiveChannelBridge:
         # `_MAX_PRESENCE_SNAPSHOT_ENTRIES` across all nodes.
         self._channel_rosters: dict[str, dict[str, dict[str, str]]] = {}
         self._channel_roster_via: dict[str, str] = {}
+        # Channels whose last local holder has left: an origin's presence
+        # still on the wire, sent before it read the unsubscribe, must not
+        # bring the roster back (review of #1284). Reopened by the next
+        # subscribe (`reopen_presence`) or local interest.
+        self._presence_closed: set[str] = set()
         # channel_id -> pending scrollback_snapshot entries (issue #194),
         # a one-time pickup for whichever local caller's subscribe flow is
         # currently waiting on it (netbbs.net.chat_flow._subscribe_live).
@@ -392,7 +397,14 @@ class LiveChannelBridge:
         holders = self._local_interest.setdefault(channel_id, set())
         first = not holders
         holders.add(holder)
+        self._presence_closed.discard(channel_id)
         return first
+
+    def reopen_presence(self, channel_id: str) -> None:
+        """A `subscribe` for `channel_id` is about to go out: the origin's
+        answer, which can arrive before the caller registers its interest,
+        is welcome again."""
+        self._presence_closed.discard(channel_id)
 
     def has_local_interest(self, channel_id: str) -> bool:
         """Whether some local caller holds a live subscription to
@@ -418,10 +430,16 @@ class LiveChannelBridge:
         last = not holders
         if last:
             del self._local_interest[channel_id]
-            # Nothing keeps it current any more (issue #1281): the origin
-            # stops sending once it is told this node unsubscribed.
-            self._channel_rosters.pop(channel_id, None)
-            self._channel_roster_via.pop(channel_id, None)
+            # On a subscriber nothing keeps the roster current any more
+            # (issue #1281): the origin stops sending once told this node
+            # unsubscribed. On the origin the roster is its subscribers'
+            # own reports, which a local holder leaving (a bot, say) does
+            # not touch (review of #1284).
+            if self._channel_roster_via.pop(channel_id, None) is not None:
+                self._channel_rosters.pop(channel_id, None)
+            # Only presence *from* an origin is checked against this, so on
+            # the origin itself it changes nothing.
+            self._presence_closed.add(channel_id)
         return last
 
     async def track_session(self, session: LinkRealtimeSession) -> None:
@@ -627,9 +645,11 @@ class LiveChannelBridge:
         subscribers = self._subscribers.get(channel_id)
         if subscribers is None:
             return
-        if subscribers.pop(session.remote_fingerprint, None) is not None:
-            # Its last caller here left (issue #1281); the leave it sends
-            # after unsubscribing would come too late to count.
+        if subscribers.pop(session.remote_fingerprint, None) is not None and channel_id not in self._channel_roster_via:
+            # On the origin (issue #1281): its last caller here left; the
+            # leave it sends after unsubscribing would come too late to
+            # count. On a subscriber the roster is the origin's word, which
+            # a third node unsubscribing here cannot change (review of #1284).
             await self._drop_node_roster(channel_id, session.remote_fingerprint, announce=True)
         if not subscribers:
             del self._subscribers[channel_id]
@@ -834,6 +854,8 @@ class LiveChannelBridge:
         role = await self._presence_sender_role(session, channel, {node})
         if role is None or node == self._registry.own_fingerprint:
             return  # A crossed leave, or this node's own caller echoed back.
+        if role == "origin" and channel.channel_id in self._presence_closed:
+            return  # Sent before the origin read this node's unsubscribe.
         user_id = payload["user_id"]
         kind = "join" if payload["change"] == "join" else "leave"
         if role == "origin":
@@ -869,7 +891,7 @@ class LiveChannelBridge:
         entries = frame.payload["entries"][:_MAX_PRESENCE_SNAPSHOT_ENTRIES]
         nodes = {entry.get("node_fingerprint", sender) for entry in entries} or {sender}
         role = await self._presence_sender_role(session, channel, nodes)
-        if role is None:
+        if role is None or (role == "origin" and channel.channel_id in self._presence_closed):
             return
         fresh: dict[str, dict[str, str]] = {}
         for entry in entries:
@@ -1209,6 +1231,7 @@ async def ensure_live_subscription(
         else:
             return None
     request_id = bridge.begin_scrollback_request(channel.channel_id, origin_fingerprint)
+    bridge.reopen_presence(channel.channel_id)
     try:
         await session.send(build_subscribe_frame(channel.channel_id, message_id=request_id))
     except LinkTransportError:
