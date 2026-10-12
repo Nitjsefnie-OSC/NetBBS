@@ -1677,66 +1677,130 @@ restores the old key.
 
 ## Chat bot policy
 
-In a channel, `/bots` shows which bot messages this node displays. A SysOp
-or a moderator with that channel's moderation permission can set:
+| At a glance | |
+| --- | --- |
+| **Where** | **Content ▸ Open chat bots** in the SysOp console; `/bots` inside a channel |
+| **Reference** | The [bot API guide](NetBBS-bot-api.md) describes each grant and how to install an external bot |
+| **Decide first** | Which bot messages each channel shows, and which grants a bot gets beyond answering what is addressed to it |
 
-- `/bots all`: show all bots (the initial receiving policy);
-- `/bots local`: show only this node's own bots;
-- `/bots none`: hide bot messages.
+In this chapter: [Which bots a channel shows](#which-bots-a-channel-shows) ·
+[Run a bot](#run-a-bot) · [Manage running bots](#manage-running-bots) ·
+[Linked channels and external bots](#linked-channels-and-external-bots) ·
+[Reminders](#reminders) · [Model conversation](#model-conversation)
 
-Changes are audited and apply to new live output, history replay, search
-results and remote rosters. They do not erase retained messages or change
-another node's policy. Already displayed terminal text is not recalled.
-MRC-bridged channels refuse bots even when the mapping is paused.
+### Which bots a channel shows
+
+In a channel, `/bots` shows which bot messages this node displays. A SysOp or
+a moderator with that channel's moderation permission can set:
+
+| Command | Effect |
+| --- | --- |
+| `/bots all` | Show all bots (the initial receiving policy) |
+| `/bots local` | Show only this node's own bots |
+| `/bots none` | Hide bot messages |
+
+- Changes are audited and apply to new live output, history replay, search
+  results and remote rosters.
+- They do not erase retained messages or change another node's policy.
+  Already displayed terminal text is not recalled.
+- MRC-bridged channels refuse bots even when the mapping is paused.
 
 Bot authors use a reserved `.bot` label and a `[BOT]` marker. Existing local
 accounts with that suffix remain people; an older peer's account with the
-suffix is classified as a bot on this node. Receiving policy alone does not
-enable or authorize a bot.
+suffix is classified as a bot on this node.
 
-**Content > Open chat bots** installs and edits bot instances. Create Baud,
-choose its local channels, optionally select it as their default, enable it
-and Save. It reads only messages addressed to it. Its replies and reminders
-are public in the channel. Friendly, terse and retro temperaments change its
-fixed phrases. Everything else is a separate grant in the editor, off until
-you set it: reading whole channels, joins and leaves (for greetings),
-statistics and last-seen queries, board and file-area announcements, Linked
-participation and model conversation. The [bot API guide](NetBBS-bot-api.md)
-describes each.
+> [!NOTE]
+> Receiving policy alone does not enable or authorize a bot.
+
+### Run a bot
+
+**Content ▸ Open chat bots** installs and edits bot instances.
+
+1. Create Baud.
+2. Choose its local channels, and optionally select it as their default.
+3. Enable it and <kbd>S</kbd> **Save**.
+
+Baud reads only messages addressed to it. Its replies and reminders are
+public in the channel. Friendly, terse and retro temperaments change its
+fixed phrases.
+
+Everything else is a separate grant in the editor, off until you set it:
+
+- reading whole channels;
+- joins and leaves (for greetings);
+- statistics and last-seen queries;
+- board and file-area announcements;
+- Linked participation;
+- model conversation.
+
+The [bot API guide](NetBBS-bot-api.md) describes each. The editor groups its
+fields under Bot, Channels, Greetings and announcements, Queries and
+conversation, and Behaviour and program.
+
+### Manage running bots
 
 The catalogue lists each bot's state (running in green, restarting in red,
 off once its process is gone), how many channels it may use and its last
-error. The editor groups its fields under
-Bot, Channels, Greetings and announcements, Queries and conversation, and
-Behaviour and program. **Kill selected** stops one bot; **Stop all** stops
-every bot; **Delete selected** removes a bot whose state reads off, with its
-state directory, while channel history and existing backups remain. Each
-action reports its outcome above the prompt. Both persist across node restarts;
-enable an instance again in its editor to resume. Changes are applied within
-about a second. Moderators can `/mute Baud.bot [duration] [reason]` and
-`/unmute Baud.bot`. Output limits apply per bot and channel and survive a
-restart. `/who`, `/names` and the status line distinguish bots from people.
+error.
+
+| Action | Effect |
+| --- | --- |
+| <kbd>K</kbd> **Kill selected** | Stops one bot |
+| <kbd>S</kbd> **Stop all** | Stops every bot |
+| <kbd>D</kbd> **Delete selected** | Removes a bot whose state reads off, with its state directory; channel history and existing backups remain |
+
+- Each action reports its outcome above the prompt.
+- Both stops persist across node restarts; enable an instance again in its
+  editor to resume.
+- Changes are applied within about a second.
+
+In channels:
+
+- Moderators can `/mute Baud.bot [duration] [reason]` and `/unmute Baud.bot`.
+- Output limits apply per bot and channel and survive a restart.
+- `/who`, `/names` and the status line distinguish bots from people.
+
+### Linked channels and external bots
 
 A Linked channel also needs its own **Linked approvals** entry, confirmed on
 Save; callers on other nodes then address it as `Baud.bot@Node`. MRC channels
-are refused, even while the bridge is paused. See the [bot API guide](NetBBS-bot-api.md) to install an external bot. External
-programs run as the NetBBS OS user; the API is not an operating-system sandbox.
+are refused, even while the bridge is paused.
+
+See the [bot API guide](NetBBS-bot-api.md) to install an external bot.
+
+> [!CAUTION]
+> External programs run as the NetBBS OS user; the API is not an
+> operating-system sandbox.
+
+### Reminders
 
 Reminders survive process and node restarts in `<db>.bots/<original-name>/`.
-Renaming an instance keeps its original state directory. Node backups include
-these directories and restore them with the database. Reminders can be delayed by mutes,
-disabled channels or output limits; a reminder refused eight times is
-dropped so it cannot hold up the others. A crash just after delivery may repeat
-a reminder; delivery is not an exactly-once guarantee.
 
-Model conversation is optional and stays off until you set up a provider
-under **Chat bots > Model settings** (any OpenAI-compatible endpoint, such as
-a local Ollama server) and grant it to an instance. Install `netbbs[bots]` or
-`netbbs[web]` for its HTTP client. A caller's first request only shows a
-notice naming the provider; replies are public. Token and optional money
-budgets, per-caller quotas and channel rates bound it, and **Usage** shows
-today's and this month's requests, tokens and cost, the busiest callers and
-which limits callers reached. Prompt logging is off by default.
+- Renaming an instance keeps its original state directory.
+- Node backups include these directories and restore them with the database.
+- Reminders can be delayed by mutes, disabled channels or output limits; a
+  reminder refused eight times is dropped so it cannot hold up the others.
+- A crash just after delivery may repeat a reminder; delivery is not an
+  exactly-once guarantee.
+
+### Model conversation
+
+Model conversation is optional and stays off until you set it up:
+
+1. Set up a provider under **Content ▸ Open chat bots ▸ Model settings** (any
+   OpenAI-compatible endpoint, such as a local Ollama server).
+2. Install `netbbs[bots]` or `netbbs[web]` for its HTTP client.
+3. Grant it to an instance.
+
+What callers and you see:
+
+- A caller's first request only shows a notice naming the provider; replies
+  are public.
+- Token and optional money budgets, per-caller quotas and channel rates bound
+  it.
+- <kbd>U</kbd> **Usage** shows today's and this month's requests, tokens and
+  cost, the busiest callers and which limits callers reached.
+- Prompt logging is off by default.
 
 ## MRC chat bridge
 
