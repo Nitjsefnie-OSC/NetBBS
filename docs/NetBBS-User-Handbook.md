@@ -217,6 +217,7 @@ to speak. `/help` lists the commands available there.
 | Command | Use |
 | --- | --- |
 | `/who` | See who's online |
+| `/list` | List the channels, with how many are in each, here and on MRC or a linked BBS |
 | `/join channel` | Switch to another channel |
 | `/leave` | Return to the channel picker |
 | `/quit` | Leave chat |
@@ -541,6 +542,11 @@ you choose another room or go back.
 
 A line from MRC starts with **[MRC]**, and its sender reads `nick@theirBBS`,
 with their BBS in a color of its own.
+
+The network's answer to an `/mrc` question, such as `/rooms` or `/mrc bbses`,
+appears a moment after it finishes arriving, as one block headed
+`MRC hub · /mrc bbses`. A long answer comes a page at a time: press Enter on an
+empty line for the next page. Typing anything else skips the rest of it.
 
 Some MRC users' software puts a styled name in front of their lines, such as
 `+Nick+[CASTLE BBS]`. Profile's **Stylized MRC names** chooses how you see it:
