@@ -44,7 +44,7 @@ from netbbs.storage.database import Database                           # noqa: E
 from netbbs.storage.execution import DatabaseLane                      # noqa: E402
 from tests.mrc_fake_hub import FakeMrcHub                              # noqa: E402
 from website_capture_chat_mrc import (                                 # noqa: E402
-    NODE_NAME, CaptureSession, loopback_only, mrc, on_screen, pin_clock_to_the_evening, until,
+    NODE_NAME, CaptureSession, at, loopback_only, mrc, on_screen, pin_clock_to_the_evening, until,
 )
 
 CLEAR = "\x1b[2J"
@@ -232,9 +232,15 @@ WHO_TRAFFIC = [
     mrc("kite", "Blackwater", "trivia in #trivia at 20:00 UTC tomorrow, bring snacks"),
 ]
 
+#: Minutes past the chat capture's evening each line is said at: alice's
+#: first night on MRC, forty minutes before that capture's conversation.
+WHO_AT = [-40, -39, -38, -37, -36, -35, -34, -32]
+assert len(WHO_AT) == len(WHO_TRAFFIC)
+
 
 async def shot_who(node: Node) -> str:
     """Joining the bridged lobby, a little traffic, then `/who`."""
+    at(WHO_AT[0] - 1)
     await node.seat_local("bob", 900)
     session = CaptureSession()
     session.location = ("Chat",)  # where the walk came from
@@ -244,7 +250,8 @@ async def shot_who(node: Node) -> str:
     try:
         await until(lambda: "is visible to everyone" in on_screen(session), 10, "the join notice")
         await asyncio.sleep(1.0)
-        for line in WHO_TRAFFIC:
+        for line, minutes in zip(WHO_TRAFFIC, WHO_AT):
+            at(minutes)
             if line.startswith("> "):
                 session.inputs.put_nowait(line[2:])
                 await asyncio.sleep(1.5)
