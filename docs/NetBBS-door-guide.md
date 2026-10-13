@@ -59,6 +59,24 @@ poll the terminal without reading from it, so not on Windows. **MANUAL — insid
 NetBBS:** to open a game straight on its first screen for every caller, add
 `{"DOOR_SPLASH":"0"}` to that door's profile environment JSON.
 
+The games also play short full-screen scenes during play. Voidrunner has them for
+jumps, docking, fights, encounters and career milestones, and War Dialer for
+raids, jobs, busts, rank tiers and messages waiting at login. Retro Trivia plays
+a finale after each round, picked by the score. A scene plays only after the
+result it shows has been saved, never waits for a key, and is ended by any key,
+which it uses up. Scenes follow the splash's rules: a live terminal, no
+typed-ahead keys, and motion on in the caller's display settings. Retro Trivia's
+finale is part of the splash, so `DOOR_SPLASH=0` turns it off too. **MANUAL —
+inside NetBBS:** to turn Voidrunner's and War Dialer's scenes off for every
+caller, add `"DOOR_SCENES":"0"` to that door's profile environment JSON. It is
+separate from `DOOR_SPLASH`, so either can stay on.
+
+Voidrunner keeps 66 achievements per caller account, across retirements and
+every career, under **Pilot Record ▸ Achievements**. They live in the career
+saves and the `scores/` records already under the save root, so backups and
+restores need nothing new. An existing career unlocks what it has already done
+the first time it is opened with this version.
+
 ## War Dialer shared-world sessions
 
 The bundled War Dialer uses a world beside the node database: for `/srv/bbs/netbbs.db`,

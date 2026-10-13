@@ -52,6 +52,9 @@ _OUTPUT_ENCODING = "utf-8"
 _SOCKET_TRANSPORT: _SocketTransport | None = None
 _CONSOLE_INPUT = None
 _TERMINAL_FD = None
+#: A caller whose drop file asks for no graphics gets plain ASCII: no escape
+#: sequences at all, and the artwork drawn in ASCII characters.
+_PLAIN = False
 # Screen artwork uses printable CP437 bytes, never its low control-byte glyphs.
 _CP437_TRANSLATION = str.maketrans({
     "╭": "┌", "╮": "┐", "╯": "┘", "╰": "└",
@@ -195,7 +198,10 @@ def _classic_door_info(path: Path) -> dict:
             "emulation": emulation, "minutes_left": number(19),
             "comm_port": lines[0],
         }
-    info.update(terminal_width=80, color_depth="16")
+    # DOOR32's emulation 0 is plain ASCII; DOOR.SYS's NG is no graphics and
+    # 7E seven-bit text. None of them can take ANSI sequences or CP437 art.
+    plain = emulation in (0, "NG", "7E")
+    info.update(terminal_width=80, color_depth="none" if plain else "16")
     return info
 
 
@@ -316,8 +322,37 @@ def _cp437_text(text: str) -> str:
         return "".join(result)
 
 
+#: Every CP437 glyph the screens draw with, as the ASCII character in its place.
+_ASCII_TRANSLATION = str.maketrans({
+    **{ch: "+" for ch in "┌┐└┘╔╗╚╝╠╣╞╡╟╢╤╧╪╫╬├┤┬┴┼"},
+    "─": "-", "│": "|", "═": "=", "║": "|",
+    "█": "#", "▓": "#", "▒": ":", "░": ".", "▀": "\"", "▄": "_", "■": "#", "·": ".",
+})
+#: Any escape sequence, so plain output can drop it.
+_ANY_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]*[@-~]")
+
+
+def _plain_text(text: str) -> str:
+    """`text` for a no-graphics caller: escapes removed, artwork in ASCII, and
+    anything else folded to its ASCII letters with its columns kept."""
+    text = _ANY_ESCAPE_RE.sub("", text).translate(_CP437_TRANSLATION).translate(_ASCII_TRANSLATION)
+    if text.isascii():
+        return text
+    result = []
+    for char in text:
+        if char.isascii():
+            result.append(char)
+            continue
+        width = _char_width(char)
+        folded = unicodedata.normalize("NFKD", char).encode("ascii", "ignore").decode("ascii")
+        result.append(folded[:width].ljust(width, "_") if width else "")
+    return "".join(result)
+
+
 def out(text: str = "") -> None:
-    if _OUTPUT_ENCODING == "cp437":
+    if _PLAIN:
+        text = _plain_text(text)
+    elif _OUTPUT_ENCODING == "cp437":
         text = _cp437_text(text)
     if _SOCKET_TRANSPORT is not None:
         _SOCKET_TRANSPORT.write(text.encode(_OUTPUT_ENCODING, "strict"))
@@ -1227,10 +1262,11 @@ class _Canvas:
         self.row, self.col = row, col + span
 
 
-class _Splash:
-    """The splash for one terminal: its first frame and every frame after."""
+class _Stage:
+    """What the splash and the finale share: one terminal's canvas, the ring
+    of marquee bulbs round its edge, and the colors drawn with."""
 
-    def __init__(self, p: Palette, info: dict, width: int, height: int, rng: random.Random):
+    def __init__(self, p: Palette, width: int, height: int, rng: random.Random):
         self.p = p
         self.rng = rng
         # One column is left free on the right: a write to a terminal's last
@@ -1241,19 +1277,7 @@ class _Splash:
         self.right = usable if usable % 2 else usable - 1
         self.bottom = height
         self.canvas = _Canvas(usable, height)
-        self.node = _splash_plain(info.get("node_name", "Local")) or "Local"
-        self.handle = _splash_plain(info.get("handle", "Guest")) or "Guest"
-        self.cells: dict[tuple[int, int], tuple[str, str]] = {}
-        self.letters: list[list[tuple[int, int, str, str]]] = []
-        self.glows: list[str] = []
-        self.sparkles: list[tuple[int, int]] = []
-        self.question: list[list[tuple[int, int, str, str]]] = []
-        self.cone: list[tuple[int, int]] = []
-        self.floor: list[tuple[int, int, str, str]] = []
-        self.lower_third: list[tuple[int, int, str, str]] = []
-        self.hint: tuple[int, int, str] | None = None
         self.bulbs = self._bulb_ring()
-        self._compose()
 
     # -- palette -------------------------------------------------------------
 
@@ -1288,6 +1312,62 @@ class _Splash:
         bottom = [(self.bottom, col) for col in range(self.right, 0, -2)]
         left = [(row, 1) for row in range(self.bottom - 1, 1, -1)]
         return top + right + bottom + left
+
+    @staticmethod
+    def _stack(items: list[tuple[str, int, int]], top_row: int, rows: int) -> list[tuple[str, int]]:
+        """Where each of `items` -- (name, height, priority), in display order
+        -- starts, centred in `rows` rows from `top_row` with a blank row
+        between neighbours when there is room. When the terminal is too short
+        for them all, the highest priority number goes first; 0 and 1 stay."""
+        items = list(items)
+        while (sum(height for _, height, _ in items) + len(items) - 1 > rows
+               and any(item[2] > 1 for item in items)):
+            items.remove(max(items, key=lambda item: item[2]))
+        total = sum(height for _, height, _ in items)
+        gap = 1 if total + len(items) - 1 <= rows else 0
+        used = total + gap * (len(items) - 1)
+        row = top_row + (rows - used) // 2
+        placed = []
+        for name, height, _ in items:
+            placed.append((name, row))
+            row += height + gap
+        return placed
+
+    # -- frames --------------------------------------------------------------
+
+    def _bulb_style(self, index: int, phase: int) -> str:
+        return self.style(_BULB_LIT, bold=True) if (index + phase) % 3 == 0 else self.style(_BULB_DIM)
+
+    def _draw_bulbs(self, phase: int, previous: int | None) -> None:
+        """Every bulb on the first frame; afterwards only the ones that change,
+        the ones going dark first and then the ones lighting, so each group
+        needs its style set once."""
+        changes = [(i, spot) for i, spot in enumerate(self.bulbs)
+                   if previous is None or ((i + phase) % 3 == 0) != ((i + previous) % 3 == 0)]
+        changes.sort(key=lambda item: (item[0] + phase) % 3 == 0)
+        for i, (r, c) in changes:
+            self.canvas.put(r, c, "●", self._bulb_style(i, phase))
+
+
+class _Splash(_Stage):
+    """The splash for one terminal: its first frame and every frame after."""
+
+    def __init__(self, p: Palette, info: dict, width: int, height: int, rng: random.Random):
+        super().__init__(p, width, height, rng)
+        self.node = _splash_plain(info.get("node_name", "Local")) or "Local"
+        self.handle = _splash_plain(info.get("handle", "Guest")) or "Guest"
+        self.cells: dict[tuple[int, int], tuple[str, str]] = {}
+        self.letters: list[list[tuple[int, int, str, str]]] = []
+        self.glows: list[str] = []
+        self.sparkles: list[tuple[int, int]] = []
+        self.question: list[list[tuple[int, int, str, str]]] = []
+        self.cone: list[tuple[int, int]] = []
+        self.floor: list[tuple[int, int, str, str]] = []
+        self.lower_third: list[tuple[int, int, str, str]] = []
+        self.hint: tuple[int, int, str] | None = None
+        self._compose()
+
+    # -- composition ---------------------------------------------------------
 
     def _logo_glyphs(self, word: str, big: bool) -> list[list[tuple[int, int, str]]]:
         """Each letter of `word` as (row, col, glyph) cells, relative to the word."""
@@ -1349,15 +1429,7 @@ class _Splash:
             items = [item for item in items if item[0] != "stage"]
         if len(tagline) > inner_width:
             items = [item for item in items if item[0] != "tagline"]
-        while (sum(height for _, height, _ in items) + len(items) - 1 > rows
-               and any(item[2] > 1 for item in items)):
-            items.remove(max(items, key=lambda item: item[2]))
-        total = sum(height for _, height, _ in items)
-        gap = 1 if total + len(items) - 1 <= rows else 0
-        used = total + gap * (len(items) - 1)
-        row = top_row + (rows - used) // 2
-
-        for name, height, _ in items:
+        for name, row in self._stack(items, top_row, rows):
             if name == "header":
                 self._compose_header(row, inner_left, inner_width, centre)
             elif name == "logo":
@@ -1368,7 +1440,6 @@ class _Splash:
                 self._compose_stage(row, inner_left, inner_right, centre)
             elif name == "contestant":
                 self._compose_contestant(row, inner_left, inner_right)
-            row += height + gap
 
         # Sparkles: blank cells inside the frame, away from everything drawn,
         # in the stage when there is one and around the sign when not.
@@ -1514,19 +1585,6 @@ class _Splash:
 
     # -- frames --------------------------------------------------------------
 
-    def _bulb_style(self, index: int, phase: int) -> str:
-        return self.style(_BULB_LIT, bold=True) if (index + phase) % 3 == 0 else self.style(_BULB_DIM)
-
-    def _draw_bulbs(self, phase: int, previous: int | None) -> None:
-        """Every bulb on the first frame; afterwards only the ones that change,
-        the ones going dark first and then the ones lighting, so each group
-        needs its style set once."""
-        changes = [(i, spot) for i, spot in enumerate(self.bulbs)
-                   if previous is None or ((i + phase) % 3 == 0) != ((i + previous) % 3 == 0)]
-        changes.sort(key=lambda item: (item[0] + phase) % 3 == 0)
-        for i, (r, c) in changes:
-            self.canvas.put(r, c, "●", self._bulb_style(i, phase))
-
     def _draw_letter(self, index: int, lit: bool) -> None:
         off = self.style(_TUBE_OFF)
         for r, c, glyph, style in self.letters[index]:
@@ -1645,7 +1703,7 @@ def play_splash(p: Palette, info: dict, width: int, height: int,
     """Show the splash. Returns True if it ran (to the end or until a key),
     False if it was not shown: no live input to skip it with, typing-ahead
     already waiting, or a terminal too small for it."""
-    if splash_switched_off():
+    if splash_switched_off() or _PLAIN:
         return False
     if poll is None:
         poll = _open_key_poll()
@@ -1666,6 +1724,577 @@ def play_splash(p: Palette, info: dict, width: int, height: int,
             out(show.hold())
             while not poll.take(SPLASH_HOLD_POLL_SECONDS):
                 pass
+    finally:
+        out(f"{RESET}{ESC}[2J{ESC}[H{ESC}[?25h")
+    return True
+
+
+# -- the finale --------------------------------------------------------------
+#
+# The splash's stage, lit once more when a round is over, and the score
+# decides how. A perfect round hits the jackpot: the bulbs flash in unison,
+# the sign lights letter by letter and confetti comes down. Half right or
+# better gets the studio's applause: the scoreboard tallies up and the
+# APPLAUSE light blinks. Anything less and the power fails: the bulbs die
+# around the frame, the sign sputters out, and an iris closes on the score,
+# leaving a cursor blinking for the next call.
+#
+# It keeps the splash's rules -- any key ends it and is spent on it,
+# typing-ahead skips it, a frame goes out every tenth of a second, and
+# DOOR_SPLASH=0 turns it off with the splash -- with one difference: it does
+# not wait for a key when it is done, because the results screen behind it
+# does that.
+
+FINALE_FRAMES = 34
+#: How long the last answer's verdict stays readable before the finale clears
+#: it, and so how long the door listens for typing-ahead first.
+FINALE_GRACE_SECONDS = 1.5
+
+#: The sign's pixel face: the splash's letters and the rest the finale spells.
+_SIGN_FONT = {
+    **_PIXEL_FONT,
+    "J": ("..#", "..#", "..#", "#.#", "###"),
+    "C": ("###", "#..", "#..", "#..", "###"),
+    "K": ("#.#", "#.#", "##.", "#.#", "#.#"),
+    "P": ("###", "#.#", "###", "#..", "#.."),
+    "G": ("###", "#..", "#.#", "#.#", "###"),
+    "M": ("#...#", "##.##", "#.#.#", "#...#", "#...#"),
+    "!": ("#", "#", "#", ".", "#"),
+    "/": ("..#", "..#", ".#.", "#..", "#.."),
+    " ": ("...", "...", "...", "...", "..."),
+    "0": ("###", "#.#", "#.#", "#.#", "###"),
+    "1": (".#.", "##.", ".#.", ".#.", "###"),
+    "2": ("###", "..#", "###", "#..", "###"),
+    "3": ("###", "..#", ".##", "..#", "###"),
+    "4": ("#.#", "#.#", "###", "..#", "..#"),
+    "5": ("###", "#..", "###", "..#", "###"),
+    "6": ("###", "#..", "###", "#.#", "###"),
+    "7": ("###", "..#", "..#", ".#.", ".#."),
+    "8": ("###", "#.#", "###", "#.#", "###"),
+    "9": ("###", "#.#", "###", "..#", "###"),
+}
+#: GAME OVER's tubes, alternating down the sign.
+_GAME_OVER_NEON = (((255, 60, 90), 203), ((255, 120, 160), 211))
+_APPLAUSE_RED = ((210, 30, 50), 160)
+_APPLAUSE_TEXT = ((255, 255, 255), 231)
+_APPLAUSE_OFF = ((70, 14, 24), 52)
+_APPLAUSE_OFF_TEXT = ((140, 70, 84), 95)
+_BOARD_REST = ((150, 130, 200), 140)
+_STAR_DIM = ((90, 80, 110), 60)
+_CONFETTI = (_NEON[0], _NEON[4], _NEON[6], _NEON[9])
+_CONFETTI_GLYPHS = ("■", "▀", "▄", "·")
+
+
+def finale_kind(score: int, total: int) -> str:
+    """Which show a round earns: "jackpot", "applause" or "lights_out"."""
+    if total and score == total:
+        return "jackpot"
+    if total and score / total >= 0.5:
+        return "applause"
+    return "lights_out"
+
+
+class _Finale(_Stage):
+    """The finale for one finished round on one terminal: the show the score
+    earned, laid out, and every frame of it."""
+
+    def __init__(self, p: Palette, info: dict, score: int, total: int, width: int, height: int,
+                 rng: random.Random):
+        super().__init__(p, width, height, rng)
+        self.kind = finale_kind(score, total)
+        self.score, self.total = score, total
+        self.handle = _splash_plain(info.get("handle", "Guest")) or "Guest"
+        #: What the first frame draws and nothing later has to.
+        self.backdrop: dict[tuple[int, int], tuple[str, str]] = {}
+        #: Lines that land whole, each on its own cue.
+        self.lines: dict[str, tuple[int, int, str, str]] = {}
+        self.sign: list[list[tuple[int, int, str, str]]] = []
+        self.stars: list[tuple[int, int, str, str]] = []
+        self.lower_third: list[tuple[int, int, str, str]] = []
+        self.board: tuple[int, int, bool] | None = None
+        self.box: list[tuple[int, int, str, str, str]] = []
+        self.cursor: tuple[int, int] | None = None
+        self.sky: list[tuple[int, int]] = []
+        self._compose()
+
+    # -- composition ---------------------------------------------------------
+
+    @staticmethod
+    def _glyph_rows(ch: str, big: bool) -> list[str]:
+        """One character of the sign, a full-width string per text row: each
+        pixel two full blocks when big, two pixel rows to a text row when not."""
+        pixels = _SIGN_FONT[ch]
+        if big:
+            return ["".join("██" if px == "#" else "  " for px in line) for line in pixels]
+        rows = []
+        for r in range(3):
+            upper = pixels[2 * r]
+            lower = pixels[2 * r + 1] if 2 * r + 1 < len(pixels) else "." * len(upper)
+            rows.append("".join({"##": "█", "#.": "▀", ".#": "▄"}.get(top + bottom, " ")
+                                for top, bottom in zip(upper, lower)))
+        return rows
+
+    @staticmethod
+    def _text_width(text: str, big: bool) -> int:
+        width = sum(len(_SIGN_FONT[ch][0]) * (2 if big else 1) for ch in text)
+        return width + (2 if big else 1) * (len(text) - 1)
+
+    @classmethod
+    def _sign_width(cls, words: tuple[str, ...], big: bool) -> int:
+        return sum(cls._text_width(word, big) for word in words) + (4 if big else 2) * (len(words) - 1)
+
+    def _compose(self) -> None:
+        top_row, bottom_row = 2, self.bottom - 1
+        field_left, field_right = 3, self.right - 2
+        rows = bottom_row - top_row + 1
+        centre = (field_left + field_right) // 2
+        half = min((field_right - field_left) // 2, 37)
+        left, right = centre - half, centre + half
+        width = right - left + 1
+
+        if self.kind == "applause":
+            board = f"{self.score:>{len(str(self.total))}}/{self.total}"
+            big = width >= self._text_width(board, True) + 2
+            items = [("header", 1, 4), ("box", 3, 2), ("board", 5 if big else 3, 0),
+                     ("stars", 1, 3), ("contestant", 1, 1)]
+            if not big or sum(h for _, h, _ in items) + len(items) - 1 > rows:
+                big = False
+                items[2] = ("board", 3, 0)
+            sign = None
+        else:
+            words = ("JACKPOT!",) if self.kind == "jackpot" else ("GAME", "OVER")
+            rest = ([("score", 1, 1), ("stars", 1, 3), ("contestant", 1, 1)] if self.kind == "jackpot" else
+                    [("stars", 1, 4), ("score", 1, 1), ("tagline", 1, 3), ("contestant", 1, 1)])
+            needed = sum(h for _, h, _ in rest) + len(rest)
+            if width >= self._sign_width(words, True) + 2 and rows >= 5 + needed + 1:
+                sign = ("line", True, 5)
+            elif width >= self._sign_width(words, False) + 2:
+                sign = ("line", False, 3)
+            else:
+                sign = ("stacked", False, 6)
+            items = [("sign", sign[2], 0)] + rest
+
+        for name, row in self._stack(items, top_row, rows):
+            if name == "sign":
+                self._compose_sign(row, words, sign, centre)
+            elif name == "board":
+                self.board = (row, centre - self._text_width(board, big) // 2, big)
+            elif name == "box":
+                self._compose_box(row, centre)
+            elif name == "header":
+                text = next(t for t in ("THE RESULTS ARE IN", "RESULTS") if len(t) + 6 <= width or t == "RESULTS")
+                self.lines["header"] = (row, centre - (len(text) + 6) // 2, f"✦  {text}  ✦",
+                                        self.style(_HEADER, bold=True))
+            elif name == "score":
+                self._compose_score(row, centre, width)
+            elif name == "tagline":
+                text = "KEEP DIALING IN"
+                col = centre - (len(text) + 2) // 2
+                self.lines["tagline"] = (row, col, text, self.style(_TAGLINE, bold=True))
+                self.cursor = (row, col + len(text) + 1)
+            elif name == "stars":
+                stars = " ".join(rank_flavor(self.score, self.total)[0])
+                col = centre - len(stars) // 2
+                lit, dim = self.style(_HEADER_STAR, bold=True), self.style(_STAR_DIM)
+                self.stars = [(row, col + i, ch, lit if ch == "★" else dim)
+                              for i, ch in enumerate(stars) if ch != " "]
+            elif name == "contestant":
+                self._compose_contestant(row, left, right)
+        if self.kind == "lights_out" and self.cursor is None:
+            row, col, text, _ = self.lines["score"]
+            self.cursor = (row, col + len(text) + 1)
+
+        # The sky: every cell inside the frame that nothing else is drawn in,
+        # where confetti may fall and sparkles may twinkle.
+        taken: set[tuple[int, int]] = set()
+        for r, c, text, *_ in ([cell for letter in self.sign for cell in letter] + self.stars
+                               + self.lower_third + list(self.lines.values()) + self.box):
+            taken.update((r, c + offset) for offset in range(_visible_width(text)))
+        if self.board:
+            r, c, big = self.board
+            taken.update((r + dr, c + dc) for dr in range(5 if big else 3)
+                         for dc in range(self._text_width(board, big)))
+        if self.cursor:
+            taken.add(self.cursor)
+        # Confetti falls behind the sign, not into the hollows of its letters.
+        sign_cells = [(r, c) for letter in self.sign for r, c, _, _ in letter]
+        if sign_cells:
+            rows_, cols_ = [r for r, _ in sign_cells], [c for _, c in sign_cells]
+            taken.update((r, c) for r in range(min(rows_), max(rows_) + 1)
+                         for c in range(min(cols_) - 1, max(cols_) + 2))
+        self.sky =[(r, c) for r in range(top_row, bottom_row + 1)
+                    for c in range(field_left, field_right + 1) if (r, c) not in taken]
+
+    def _compose_sign(self, row: int, words: tuple[str, ...], sign: tuple[str, bool, int], centre: int) -> None:
+        kind, big, _ = sign
+        lines = [words] if kind == "line" else [(word,) for word in words]
+        word_height = 5 if big else 3
+        letters = [ch for word in words for ch in word]
+        off = self.style(_TUBE_OFF)
+        index = 0
+        for line, words_on_line in enumerate(lines):
+            col = centre - self._sign_width(words_on_line, big) // 2
+            top = row + line * word_height
+            for word in words_on_line:
+                for ch in word:
+                    if self.kind == "jackpot":
+                        tube = _NEON[index * (len(_NEON) - 1) // max(1, len(letters) - 1)]
+                    else:
+                        tube = _GAME_OVER_NEON[index % len(_GAME_OVER_NEON)]
+                    cells = []
+                    for r, text in enumerate(self._glyph_rows(ch, big)):
+                        # Hot at the top of the tube, deeper towards its foot.
+                        style = self.style(self._shade(tube, 1.18 - 0.42 * r / (word_height - 1)), bold=True)
+                        cells += [(top + r, col + c, glyph, style) for c, glyph in enumerate(text) if glyph != " "]
+                    self.sign.append(cells)
+                    col += len(_SIGN_FONT[ch][0]) * (2 if big else 1) + (2 if big else 1)
+                    index += 1
+                col += 2 if big else 1  # a word gap is two letter gaps
+        if self.kind == "jackpot":
+            for letter in self.sign:
+                for r, c, glyph, _ in letter:
+                    self.backdrop[(r, c)] = (glyph, off)
+
+    def _compose_box(self, row: int, centre: int) -> None:
+        """The studio's APPLAUSE light: a red box, lit or dark."""
+        text = " APPLAUSE "
+        width = len(text) + 2
+        col = centre - width // 2
+        lit_edge, off_edge = self.style(_APPLAUSE_RED), self.style(_APPLAUSE_OFF)
+        self.box = [
+            (row, col, "▄" * width, lit_edge, off_edge),
+            (row + 1, col, f" {text} ", self.style(_APPLAUSE_TEXT, _APPLAUSE_RED, bold=True),
+             self.style(_APPLAUSE_OFF_TEXT, _APPLAUSE_OFF)),
+            (row + 2, col, "▀" * width, lit_edge, off_edge),
+        ]
+        for r, c, glyph, _, off in self.box:
+            self.backdrop[(r, c)] = (glyph, off)
+
+    def _compose_score(self, row: int, centre: int, width: int) -> None:
+        tally = f"{self.score} / {self.total}"
+        if self.kind == "jackpot":
+            choices = (f"{tally}  ·  A PERFECT ROUND", f"{tally} PERFECT", tally)
+            style = self.style(_HEADER_STAR, bold=True)
+        else:
+            choices = (f"{tally} CORRECT", tally)
+            style = self.style(_HANDLE_FG, bold=True)
+        text = next(t for t in choices if len(t) + 4 <= width or t == tally)
+        self.lines["score"] = (row, centre - len(text) // 2, text, style)
+
+    def _compose_contestant(self, row: int, left: int, right: int) -> None:
+        """The splash's lower third, now naming the rank the caller earned."""
+        width = right - left + 1
+        label_style = self.style(_LABEL_FG, _LABEL_BG, bold=True)
+        handle_style = self.style(_HANDLE_FG, _HANDLE_BG, bold=True)
+        for label in (f" {rank_for(self.score, self.total).upper()} ", " "):
+            room = width - len(label) - 2 - len(_TAIL)
+            if room >= 6:
+                break
+        handle = " " + _splash_fit(self.handle, max(1, room - 2)) + " "
+        span = len(label) + _visible_width(handle) + len(_TAIL)
+        col = left + (width - span) // 2
+        cells = [(row, col, label, label_style)]
+        col += len(label)
+        for ch in handle:
+            cells.append((row, col, ch, handle_style))
+            col += _visible_width(ch)
+        for index, color in enumerate(_TAIL):
+            cells.append((row, col + index, "▓▒░"[index], self.style(color)))
+        self.lower_third = cells
+
+    # -- frames --------------------------------------------------------------
+
+    def _draw_cells(self, cells) -> None:
+        for r, c, text, style, *_ in cells:
+            self.canvas.put(r, c, text, style)
+
+    def _draw_line(self, name: str) -> None:
+        if name in self.lines:
+            r, c, text, style = self.lines[name]
+            self.canvas.put(r, c, text, style)
+
+    def _draw_board(self, value: int) -> None:
+        """The scoreboard reading `value`: the tally in gold, the round's
+        length behind it. Every row is written whole, so a new number
+        overwrites the old one."""
+        r, c, big = self.board
+        digits = f"{value:>{len(str(self.total))}}"
+        rest = f"/{self.total}"
+        gap = " " * (2 if big else 1)
+        tally = [gap.join(rows) for rows in zip(*(self._glyph_rows(ch, big) for ch in digits))]
+        behind = [gap.join(rows) for rows in zip(*(self._glyph_rows(ch, big) for ch in rest))]
+        gold, rest_style = self.style(_HEADER_STAR, bold=True), self.style(_BOARD_REST)
+        for dr, (front, back) in enumerate(zip(tally, behind)):
+            self.canvas.put(r + dr, c, front + gap, gold)
+            self.canvas.put(r + dr, c + len(front) + len(gap), back, rest_style)
+
+    def _type_lower_third(self, typed: int) -> int:
+        """The next piece of the lower third: its label whole, then the name
+        three letters at a time. Returns how much is now drawn."""
+        batch = 1 if typed == 0 else 3
+        self._draw_cells(self.lower_third[typed:typed + batch])
+        return typed + batch
+
+    def frames(self) -> list[str]:
+        """The whole show, one string per frame. The first clears the screen
+        and lays out the stage; each later one changes only what moves."""
+        canvas = self.canvas
+        canvas.raw(f"{ESC}[?25l{RESET}{ESC}[2J")
+        canvas.home()
+        canvas.row = canvas.col = 0  # force an absolute move for the first write
+        for (r, c), (glyph, style) in sorted(self.backdrop.items()):
+            canvas.put(r, c, glyph, style)
+        return {"jackpot": self._jackpot, "applause": self._applause,
+                "lights_out": self._lights_out}[self.kind]()
+
+    def _set_all_bulbs(self, lit: bool) -> None:
+        style = self.style(_BULB_LIT, bold=True) if lit else self.style(_BULB_DIM)
+        for r, c in self.bulbs:
+            self.canvas.put(r, c, "●", style)
+
+    def _jackpot(self) -> list[str]:
+        canvas, rng = self.canvas, self.rng
+        self._set_all_bulbs(False)
+        frames = [canvas.take()]
+        sky = set(self.sky)
+        top = min((r for r, _ in self.sky), default=2)
+        columns = sorted({c for _, c in self.sky})
+        pieces: list[list] = []
+        styles = [self.style(color, bold=True) for color in _CONFETTI]
+        letters = len(self.sign)
+        blink = letters + 2
+        score_frame = blink + 3
+        typed = 0
+        for frame in range(1, FINALE_FRAMES):
+            # The confetti: what falls is cleared behind it first, then each
+            # piece is drawn grouped by color, so each color is set once.
+            for piece in pieces:
+                if (piece[0], piece[1]) in sky:
+                    canvas.put(piece[0], piece[1], " ", RESET)
+                piece[0] += 1
+                piece[1] += rng.choice((-1, 0, 0, 1))
+            pieces = [piece for piece in pieces if piece[0] <= self.bottom - 1]
+            if columns and frame < FINALE_FRAMES - 4:
+                for _ in range(2 + (frame < 6)):
+                    pieces.append([top, rng.choice(columns), rng.choice(_CONFETTI_GLYPHS),
+                                   rng.randrange(len(styles))])
+            for r, c, glyph, color in sorted(pieces, key=lambda piece: piece[3]):
+                if (r, c) in sky:
+                    canvas.put(r, c, glyph, styles[color])
+            # The sign lights left to right, then flashes once, all together.
+            if 1 <= frame <= letters:
+                self._draw_cells(self.sign[frame - 1])
+            if frame in (blink, blink + 1):
+                off = self.style(_TUBE_OFF)
+                for letter in self.sign:
+                    self._draw_cells(letter if frame == blink + 1 else
+                                     [(r, c, glyph, off) for r, c, glyph, _ in letter])
+            if frame == score_frame:
+                self._draw_line("score")
+            if 0 <= frame - score_frame - 1 < len(self.stars):
+                self._draw_cells([self.stars[frame - score_frame - 1]])
+            if frame >= score_frame + 3 and typed < len(self.lower_third):
+                typed = self._type_lower_third(typed)
+            # Every bulb on the frame flashes at once: the jackpot alarm.
+            if frame % 3 == 1:
+                self._set_all_bulbs(frame % 6 == 1)
+            frames.append(canvas.take())
+        return frames
+
+    def _applause(self) -> list[str]:
+        canvas, rng = self.canvas, self.rng
+        self._draw_line("header")
+        self._draw_board(0)
+        self._draw_bulbs(0, None)
+        frames = [canvas.take()]
+        sparkles = rng.sample(self.sky, min(len(self.sky), 14))
+        count_from, count_frames = 2, 12
+        shown = 0
+        box_frame = count_from + count_frames + 1
+        typed = 0
+        phase = 0
+        for frame in range(1, FINALE_FRAMES):
+            # The scoreboard tallies up, a step at a time.
+            if frame >= count_from:
+                value = min(self.score, self.score * (frame - count_from + 1) // count_frames)
+                if value != shown:
+                    self._draw_board(value)
+                    shown = value
+            # The APPLAUSE light comes on once the tally is in, and blinks.
+            if frame >= box_frame and (frame - box_frame) % 3 == 0:
+                lit = (frame - box_frame) // 3 % 2 == 0
+                for r, c, text, on, off in self.box:
+                    canvas.put(r, c, text, on if lit else off)
+            if 0 <= frame - box_frame < len(self.stars):
+                self._draw_cells([self.stars[frame - box_frame]])
+            if frame >= box_frame + 2 and typed < len(self.lower_third):
+                typed = self._type_lower_third(typed)
+            if frame % 2 == 0:
+                previous, phase = phase, (phase - 1) % 3
+                self._draw_bulbs(phase, previous)
+            for _ in range(2):
+                if sparkles:
+                    r, c = rng.choice(sparkles)
+                    canvas.put(r, c, rng.choice(_SPARKLE_GLYPHS), self.style(rng.choice(_SPARKLE)))
+            frames.append(canvas.take())
+        return frames
+
+    def _lights_out(self) -> list[str]:
+        canvas, rng = self.canvas, self.rng
+        # The show is already on: every bulb lit, the sign burning, the score up.
+        self._set_all_bulbs(True)
+        for letter in self.sign:
+            self._draw_cells(letter)
+        self._draw_cells(self.stars)
+        self._draw_line("score")
+        self._draw_line("tagline")
+        self._draw_cells(self.lower_third)
+        cursor_style = self.style(_TAGLINE, bold=True)
+        if self.cursor:
+            canvas.put(*self.cursor, "█", cursor_style)
+        frames = [canvas.take()]
+
+        # The power fails round the frame from the top-left corner...
+        bulbs_from, bulbs_frames = 3, 10
+        dying: dict[int, list[int]] = {}
+        for index in range(len(self.bulbs)):
+            dying.setdefault(bulbs_from + index * bulbs_frames // len(self.bulbs), []).append(index)
+        # ...and the sign sputters out, a tube at a time, one stubborn tube last.
+        order = list(range(len(self.sign)))
+        rng.shuffle(order)
+        stubborn = order.pop() if order else None
+        tubes: dict[int, list[tuple[int, bool]]] = {}
+        for rank, letter in enumerate(order):
+            out_at = 6 + rank * 8 // max(1, len(order))
+            tubes.setdefault(out_at, []).append((letter, False))
+            if rng.random() < 0.5:  # it catches once more before it goes
+                tubes.setdefault(out_at + 1, []).append((letter, True))
+                tubes.setdefault(out_at + 2, []).append((letter, False))
+        if stubborn is not None:
+            for frame, lit in ((15, False), (16, True), (17, False), (18, True), (19, False)):
+                tubes.setdefault(frame, []).append((stubborn, lit))
+        iris_from, iris_frames = 20, 10
+        iris = self._iris(iris_frames)
+        off = self.style(_TUBE_OFF)
+        for frame in range(1, FINALE_FRAMES):
+            for index in dying.get(frame, ()):
+                r, c = self.bulbs[index]
+                canvas.put(r, c, "●", self.style(_BULB_DIM) if rng.random() < 0.3 else off)
+            for letter, lit in tubes.get(frame, ()):
+                self._draw_cells(self.sign[letter] if lit else
+                                 [(r, c, glyph, off) for r, c, glyph, _ in self.sign[letter]])
+            if 0 <= frame - iris_from < len(iris):
+                for r, c, blank in iris[frame - iris_from]:
+                    canvas.put(r, c, blank, RESET)
+            # The cursor never stops blinking, iris or not: someone is still
+            # waiting on the line.
+            if self.cursor and frame % 3 == 0:
+                r, c = self.cursor
+                canvas.put(r, c, "█" if frame % 6 == 0 else " ", cursor_style if frame % 6 == 0 else RESET)
+            frames.append(canvas.take())
+        return frames
+
+    def _iris(self, steps: int) -> list[list[tuple[int, int, str]]]:
+        """The iris closing on the score, as the runs of cells each step
+        blacks out: an ellipse that starts beyond every corner of the screen
+        and ends just round the lines worth keeping."""
+        keep = [(r, c + offset) for name in ("score", "tagline") if name in self.lines
+                for r, c, text, _ in [self.lines[name]] for offset in range(_visible_width(text))]
+        keep += [(r, c) for r, c, *_ in self.stars]
+        if self.cursor:
+            keep.append(self.cursor)
+        if not keep:
+            return []
+        centre_row = (min(r for r, _ in keep) + max(r for r, _ in keep)) / 2
+        centre_col = (min(c for _, c in keep) + max(c for _, c in keep)) / 2
+        ry = max(abs(r - centre_row) for r, _ in keep) + 1.5
+        rx = max(abs(c - centre_col) / (1 - ((r - centre_row) / ry) ** 2) ** 0.5 for r, c in keep) + 2
+        corners = [(1, 1), (1, self.right), (self.bottom, 1), (self.bottom, self.right)]
+        start = max((((c - centre_col) / rx) ** 2 + ((r - centre_row) / ry) ** 2) ** 0.5 for r, c in corners)
+        visible = {row: (1, self.right) for row in range(1, self.bottom + 1)}
+        runs = []
+        for step in range(1, steps + 1):
+            scale = start + (1 - start) * step / steps
+            blacked = []
+            for row, (lo, hi) in visible.items():
+                if lo > hi:
+                    continue
+                reach = 1 - ((row - centre_row) / (ry * scale)) ** 2
+                if reach > 0:
+                    half = rx * scale * reach ** 0.5
+                    new_lo = max(lo, -int(-(centre_col - half) // 1))
+                    new_hi = min(hi, int((centre_col + half) // 1))
+                else:
+                    new_lo, new_hi = hi + 1, hi
+                if new_lo > new_hi:
+                    new_lo, new_hi = hi + 1, hi
+                    blacked.append((row, lo, " " * (hi - lo + 1)))
+                else:
+                    if new_lo > lo:
+                        blacked.append((row, lo, " " * (new_lo - lo)))
+                    if new_hi < hi:
+                        blacked.append((row, new_hi + 1, " " * (hi - new_hi)))
+                visible[row] = (new_lo, new_hi)
+            runs.append(blacked)
+        return runs
+
+
+def finale_frames(p: Palette, info: dict, score: int, total: int, width: int, height: int) -> list[str] | None:
+    """Every frame of the finale `score` out of `total` earns on a `width` x
+    `height` terminal, or `None` when the terminal is too small for it."""
+    show = _finale_show(p, info, score, total, width, height)
+    return show.frames() if show else None
+
+
+def _finale_show(p: Palette, info: dict, score: int, total: int, width: int, height: int) -> "_Finale | None":
+    if width < 40 or height < 12 or total < 1:
+        return None
+    width, height = min(width, 240), min(height, 80)
+    seed = zlib.crc32(f"{info.get('node_name', '')}/{info.get('handle', '')}/{score}/{total}"
+                      .encode("utf-8", "replace"))
+    return _Finale(p, info, score, total, width, height, random.Random(seed))
+
+
+def _stdin_holds_typing() -> bool:
+    """Has `read_key` already pulled bytes into Python's stdin buffer that it
+    has not handed out? The splash never meets this -- nothing has been read
+    when it runs -- but by the finale a whole round has, and a poll of the
+    descriptor cannot see what the buffer holds. Looking pulls a byte still
+    waiting in the pipe into the buffer too, where `read_key` finds it."""
+    if _SOCKET_TRANSPORT is not None or _CONSOLE_INPUT is not None or _TERMINAL_FD is not None:
+        return False  # these read unbuffered
+    buffer = getattr(sys.stdin, "buffer", None)
+    try:
+        fd = buffer.fileno()
+        os.set_blocking(fd, False)
+    except (AttributeError, OSError, ValueError):
+        return False
+    try:
+        return bool(buffer.peek(1))
+    except (AttributeError, OSError, ValueError):
+        return False
+    finally:
+        os.set_blocking(fd, True)
+
+
+def play_finale(p: Palette, info: dict, score: int, total: int, width: int, height: int,
+                poll: _KeyPoll | _ConsolePoll | None = None) -> bool:
+    """Show the finale. Returns True if it ran (to the end or until a key),
+    False if it was not shown, for the same reasons the splash would not be."""
+    if splash_switched_off() or _PLAIN:
+        return False
+    if poll is None:
+        poll = _open_key_poll()
+    if poll is None:
+        return False
+    show = _finale_show(p, info, score, total, width, height)
+    if show is None or _stdin_holds_typing() or poll.waiting(FINALE_GRACE_SECONDS):
+        return False
+    try:
+        for frame in show.frames():
+            out(frame)
+            if poll.take(SPLASH_FRAME_SECONDS):
+                break
     finally:
         out(f"{RESET}{ESC}[2J{ESC}[H{ESC}[?25h")
     return True
@@ -1945,7 +2574,9 @@ def main(drop_file: str | None = None, *, encoding: str = "auto") -> int:
 
 
 def _play_round(info: dict) -> int:
-    global _OUTPUT_WIDTH
+    global _OUTPUT_WIDTH, _PLAIN
+    # The splash and finale need ANSI cursor control; a plain caller gets neither.
+    _PLAIN = info.get("color_depth") == "none"
     palette = Palette(truecolor=info.get("color_depth") == "truecolor",
                       basic=info.get("color_depth") == "16")
 
@@ -1994,6 +2625,7 @@ def _play_round(info: dict) -> int:
                 width=w,
             )
 
+        play_finale(palette, info, score, len(round_questions), _OUTPUT_WIDTH, height)
         draw_final_score(palette, score, len(round_questions), info=info, width=w)
         read_key()
     except EOFError:

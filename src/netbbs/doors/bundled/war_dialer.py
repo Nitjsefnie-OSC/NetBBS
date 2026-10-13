@@ -1988,7 +1988,7 @@ def _archive_season(conn: sqlite3.Connection, old: int, current: int, now: datet
         conn.execute("INSERT INTO season_results(season,user_id,handle,rank,placement,medal,insignia) VALUES (?,?,?,?,?,?,?)",
                      (old, player['user_id'], _event_plain(player['handle'])[:80], player['rank'], place, medal, player['insignia']))
         record_event(conn, player['user_id'], None,
-                     f"Crackdown closed season {old}. Final Rank {player['rank']}; place {place}/{len(players)}; {medal or 'no medal'}. "
+                     f"{CRACKDOWN_RECEIPT} {old}. Final Rank {player['rank']}; place {place}/{len(players)}; {medal or 'no medal'}. "
                      f"Fresh season {current}: competitive resources reset. Back on the switchboard, [I] Scene shows retained season results.", cutoff)
     # Bounded by retained history, even after a very long absence.
     for number in range(max(old + 1, current - SEASON_ARCHIVE_LIMIT), current):
@@ -4090,6 +4090,1031 @@ def play_splash(p: Palette, info: dict, season_number: int, width: int, height: 
     return True
 
 
+# ---------------------------------------------------------------------------
+# Scenes: the moments worth watching, played after the commit that made them.
+#
+# The splash's stage, reused mid-game: an exchange rooted or held, a raid on a
+# rival, a contract hacked, a bust, a promotion, the season's crackdown, the
+# receipts waiting at login and a medal's cracktro. Each one obeys the motion
+# rules the splash does -- any key ends it and is consumed, it never plays when
+# input is already waiting, and it is absent from every preset that drops
+# motion -- plus three of its own:
+#
+# - It plays strictly after the commit it shows, so a skip, a disconnect or a
+#   SysOp's `DOOR_SCENES=0` leaves the same world and the same receipt behind.
+# - Nothing is only in a scene: its closing caption repeats what the result
+#   screen after it says.
+# - It never waits for a key. It ends on its caption, held by frames that
+#   still write, so nothing watching the output for silence mistakes the hold
+#   for a screen waiting on a key and spends a keystroke skipping it.
+#
+# A scene is a script that paints a `_Stage` and snaps it; the stage sends only
+# the cells that changed, in the splash's own (row, column, segments) writes.
+# ---------------------------------------------------------------------------
+
+SCENE_FRAME_SECONDS = 0.045
+SCENE_HOLD_FRAMES = 18  # the caption's hold, about 0.8 seconds
+SCENE_ABSENT, SCENE_SHOWN, SCENE_SKIPPED = "absent", "shown", "skipped"
+SCENE_HINT = "any key skips"
+CRACKDOWN_RECEIPT = "Crackdown closed season"
+_SCENE_ROLL = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789#$%&"
+
+# What each contract's target calls itself on its own login banner, and the
+# exchange equipment a root is fought over, by role.
+_HACK_BANNERS = ("BOARD ACCESS LISTS", "MAIL-ORDER WAREHOUSE", "PHONE CO. BILLING",
+                 "REGIONAL BANK WIRE", "PAYROLL SERVICES")
+_EQUIPMENT = {
+    "pbx": ("PUBLIC PBX", ("○ ○ ○ ○ ○ ○ ○", "○ ○ ○ ○ ○ ○ ○", "○ ○ ○ ○ ○ ○ ○", "○ ○ ○ ○ ○ ○ ○")),
+    "carrier": ("CARRIER SWITCH", ("▐█▌ ▐█▌ ▐█▌ ▐█▌", "·  · ·  · ·  · ", "▐█▌ ▐█▌ ▐█▌ ▐█▌", "·  · ·  · ·  · ")),
+    "hub": ("WAREZ HUB", ("[▓▓▓▓▓▓▓▓▓▓] ·", "[▓▓▓▓▓▓▓▓▓▓] ·", "[▓▓▓▓▓▓▓▓▓▓] ·", "[▓▓▓▓▓▓▓▓▓▓] ·")),
+}
+_EQUIPMENT_SMALL = {
+    "pbx": ("PBX", ("○ ○ ○ ○", "○ ○ ○ ○")),
+    "carrier": ("SWITCH", ("▐█▌▐█▌", "· ·· ·")),
+    "hub": ("HUB", ("[▓▓▓▓]·", "[▓▓▓▓]·")),
+}
+# Three rows of half blocks: the letters the six tier names need.
+_TIER_FONT = {
+    "A": ("▄▀▄", "█▀█", "▀ ▀"), "B": ("█▀▄", "█▀▄", "▀▀ "), "C": ("▄▀▀", "█  ", " ▀▀"),
+    "D": ("█▀▄", "█ █", "▀▀ "), "E": ("█▀▀", "█▀ ", "▀▀▀"), "G": ("█▀▀", "█ ▄", "▀▀▀"),
+    "H": ("█ █", "█▀█", "▀ ▀"), "I": ("█", "█", "▀"), "K": ("█ █", "█▀▄", "▀ ▀"),
+    "L": ("█  ", "█  ", "▀▀▀"), "N": ("█▄ █", "█ ▀█", "▀  ▀"), "P": ("█▀▄", "█▀ ", "▀  "),
+    "R": ("█▀▄", "█▀▄", "▀ ▀"), "S": ("█▀▀", "▀▀█", "▀▀▀"), "T": ("▀█▀", " █ ", " ▀ "),
+    "W": ("█   █", "█ █ █", " ▀ ▀ "),
+}
+
+
+def scenes_switched_off() -> bool:
+    """`DOOR_SCENES=0` (or `off`, `no`, `false`) turns the mid-game scenes off,
+    separately from the launch splash's own `DOOR_SPLASH`."""
+    return os.environ.get("DOOR_SCENES", "").strip().lower() in ("0", "off", "no", "false")
+
+
+def _scene_seed(*parts: object) -> int:
+    return zlib.crc32("/".join(str(part) for part in parts).encode("utf-8"))
+
+
+def _scene_tone(p: Palette, rgb: tuple[int, int, int], idx256: int, basic: int) -> str:
+    """A scene-only color with its own 16-color form: the sirens need a red and
+    a blue the role palette deliberately does not offer."""
+    if p.monochrome or p.color_depth == "none":
+        return ""
+    if p.color_depth == "16":
+        return f"{ESC}[{basic}m"
+    return p._sgr(rgb, idx256)
+
+
+def _siren(p: Palette, blue: bool) -> str:
+    return (_scene_tone(p, (70, 120, 255), 69, 94) if blue
+            else _scene_tone(p, (255, 40, 40), 196, 91))
+
+
+def _scene_narrow(text: object) -> str:
+    """Caller-supplied text folded to one column per character."""
+    folded = unicodedata.normalize("NFKC", _event_plain(str(text)))
+    return "".join(ch if _char_width(ch) == 1 else "?" for ch in folded if _char_width(ch))
+
+
+def _scene_text(text: object, width: int) -> str:
+    """Caller-supplied text, plain and fitted, before it is painted."""
+    return _fit(_event_plain(str(text)), max(1, width))
+
+
+class _Stage:
+    """The splash's composition box as a grid of cells, sent as deltas."""
+
+    def __init__(self, p: Palette, width: int, height: int, seed: int):
+        kind, self.top, self.left, self.rows, self.cols = splash_layout(width, height)
+        self.p, self.large = p, kind == "large"
+        self.width, self.height = width, height
+        self.rng = random.Random(seed)
+        blank = (" ", "")
+        self.grid = [[blank] * self.cols for _ in range(self.rows)]
+        self._shown = [[blank] * self.cols for _ in range(self.rows)]
+        self.frames: list[list[SplashOp]] = []
+        self.cursor: tuple[int, int] | None = None
+        self.put(0, self.cols - len(SCENE_HINT) - 1, SCENE_HINT, p.grey)
+
+    # -- painting ----------------------------------------------------------------
+    def put(self, r: int, c: int, text: str, style: str = "") -> None:
+        if not 0 <= r < self.rows:
+            return
+        row = self.grid[r]
+        for ch in text:
+            span = _char_width(ch)
+            if span == 0:
+                continue
+            if 0 <= c and c + span <= self.cols:
+                # Never leave half of a wide character behind: its other half
+                # would be sent alone, or shift the cells after it.
+                if row[c][0] == "" and c > 0:
+                    row[c - 1] = (" ", "")
+                if c + span < self.cols and row[c + span][0] == "":
+                    row[c + span] = (" ", "")
+                row[c] = (ch, style if ch != " " else "")
+                if span == 2:
+                    row[c + 1] = ("", style)
+            c += span
+
+    def center(self, r: int, text: str, style: str = "", *, lo: int = 0, hi: int | None = None) -> int:
+        hi = self.cols if hi is None else hi
+        c = lo + max(0, (hi - lo - _dlen(text)) // 2)
+        self.put(r, c, text, style)
+        return c
+
+    def clear(self, r0: int, r1: int, c0: int = 0, c1: int | None = None) -> None:
+        c1 = self.cols if c1 is None else c1
+        for r in range(max(0, r0), min(self.rows, r1 + 1)):
+            for c in range(max(0, c0), min(self.cols, c1)):
+                self.grid[r][c] = (" ", "")
+
+    def box(self, r0: int, c0: int, r1: int, c1: int, style: str, *, double: bool = False,
+            title: str = "", title_style: str = "") -> None:
+        h, v, tl, tr, bl, br = ("═", "║", "╔", "╗", "╚", "╝") if double else ("─", "│", "┌", "┐", "└", "┘")
+        self.put(r0, c0, tl + h * (c1 - c0 - 1) + tr, style)
+        self.put(r1, c0, bl + h * (c1 - c0 - 1) + br, style)
+        for r in range(r0 + 1, r1):
+            self.put(r, c0, v, style)
+            self.put(r, c1, v, style)
+        if title:
+            text = " " + _fit(title, max(1, c1 - c0 - 5)) + " "
+            self.put(r0, c0 + 2, text, title_style or style)
+
+    def caption(self, head: str, sub: str = "", style: str | None = None) -> None:
+        """The outcome, in words the result screen after it repeats."""
+        r = self.rows - 3 if self.large else self.rows - 2
+        self.clear(r, r + 1)
+        style = style if style is not None else self.p.mint + BOLD
+        lines = textwrap.wrap(_event_plain(head), self.cols - 4) or [""]
+        if len(lines) > 1:
+            # A headline that needs two rows keeps both; the detail under it
+            # is the result screen's to give.
+            first = self.center(r, _fit(lines[0], self.cols - 4), style)
+            head = _fit(" ".join(lines[1:]), self.cols - 4)
+            c = self.center(r + 1, head, style)
+            self.cursor = (r + 1, min(self.cols - 2, c + _dlen(head) + 1))
+            return
+        head = _fit(lines[0], self.cols - 4)
+        c = self.center(r, head, style)
+        if sub:
+            self.center(r + 1, _fit(sub, self.cols - 2), self.p.grey)
+        self.cursor = (r, min(self.cols - 2, c + _dlen(head) + 1))
+
+    # -- sending -------------------------------------------------------------------
+    def snap(self) -> None:
+        """One frame: every run of changed cells, as a cursor move and styled text.
+        A frame with nothing new rewrites one cell, so the stage is never quiet."""
+        ops: list[SplashOp] = []
+        for r in range(self.rows):
+            row, shown = self.grid[r], self._shown[r]
+            c = 0
+            while c < self.cols:
+                if row[c] == shown[c]:
+                    c += 1
+                    continue
+                start, end, gap = c, c + 1, 0
+                c += 1
+                while c < self.cols and gap <= 4:
+                    if row[c] != shown[c]:
+                        end, gap = c + 1, 0
+                    else:
+                        gap += 1
+                    c += 1
+                ops.extend(self._run(r, start, end))
+                c = end
+            self._shown[r] = list(row)
+        if not ops and self.frames:
+            r, c = self.cursor or (0, self.cols - len(SCENE_HINT) - 1)
+            ops.extend(self._run(r, c, c + 1))
+        self.frames.append(ops)
+
+    def _run(self, r: int, start: int, end: int) -> list[SplashOp]:
+        row = self.grid[r]
+        while start > 0 and row[start][0] == "":
+            start -= 1  # never begin inside a wide character
+        while end < self.cols and row[end][0] == "":
+            end += 1
+        if self.top + r + 1 == self.height and self.left + end == self.width:
+            end -= 1  # the bottom-right cell would scroll some terminals
+        segments: list[tuple[str, str]] = []
+        for ch, style in row[start:end]:
+            # A space shows no color, so it rides in whichever segment precedes it.
+            if segments and (segments[-1][0] == style or ch == " "):
+                segments[-1] = (segments[-1][0], segments[-1][1] + ch)
+            else:
+                segments.append((style, ch))
+        segments = [seg for seg in segments if seg[1]]
+        return [(self.top + r + 1, self.left + start + 1, segments)] if segments else []
+
+    def hold(self, frames: int = SCENE_HOLD_FRAMES) -> None:
+        """The caption's hold: a cursor blinking after it, a write every frame."""
+        for tick in range(frames):
+            if self.cursor:
+                self.put(*self.cursor, "█" if tick % 6 < 3 else " ", self.p.phosphor)
+            self.snap()
+
+
+def play_scene(p: Palette, width: int, height: int,
+               compose: Callable[[], list[list[SplashOp]]]) -> str:
+    """Play one scene if it may be played: SCENE_ABSENT, SCENE_SHOWN or SCENE_SKIPPED.
+
+    `compose` is called only when the scene will play, so a motionless caller
+    pays nothing for it."""
+    if (scenes_switched_off() or not _splash_ready(p)
+            or width < MINIMUM_WIDTH or height < MINIMUM_HEIGHT):
+        return SCENE_ABSENT
+    frames = splash_bytes(compose())
+    outcome = SCENE_SHOWN
+    out(f"{ESC}[?25l{ESC}[2J{ESC}[H")
+    try:
+        for text in frames:
+            out(text)
+            if _beat(SCENE_FRAME_SECONDS, hand_back=False):
+                outcome = SCENE_SKIPPED
+                break
+    finally:
+        out(f"{RESET}{ESC}[2J{ESC}[H{ESC}[?25h")
+    return outcome
+
+
+def play_scenes(p: Palette, width: int, height: int,
+                composers: list[Callable[[], list[list[SplashOp]]]]) -> bool:
+    """Play scenes in order until one is skipped. True if any of them played."""
+    played = False
+    for compose in composers:
+        outcome = play_scene(p, width, height, compose)
+        played = played or outcome != SCENE_ABSENT
+        if outcome == SCENE_SKIPPED:
+            break
+    return played
+
+
+# -- shared props -----------------------------------------------------------------
+
+def _holder_mark(p: Palette, kind: str | None) -> tuple[str, str]:
+    """The ring's glyph and color for a holder, the same meanings `owner_node`
+    gives the switchboard."""
+    return {"mine": (gl("mine"), p.phosphor + BOLD), "rival": (gl("rival"), p.magenta + BOLD),
+            "npc": (gl("npc"), p.cyan + BOLD)}.get(kind or "", (gl("free"), p.phosphor_dim))
+
+
+def _exchange_kind(exchange: Exchange, viewer_id: int | None) -> str:
+    if viewer_id is not None and exchange.controller_user_id == viewer_id:
+        return "mine"
+    if exchange.controller_user_id is not None:
+        return "rival"
+    return "npc" if exchange.npc_key else "free"
+
+
+def _chain_nodes(st: _Stage, row: int, count: int = 10) -> list[tuple[int, int]]:
+    left = max(0, (st.cols - (2 * count - 1)) // 2)
+    st.put(row, left, "─".join("·" * count), st.p.phosphor_dim)
+    return [(row, left + 2 * k) for k in range(count)]
+
+
+def _ring_nodes(st: _Stage, cy: int) -> list[tuple[int, int]]:
+    """The splash's loop of ten exchanges, drawn whole, centred on row `cy`."""
+    cx, half_w, half_h = st.cols // 2, min(26, st.cols // 2 - 4), 3
+    x0, x1, y0, y1 = cx - half_w, cx + half_w, cy - half_h, cy + half_h
+    stops = [x0 + round((x1 - x0) * (i + 1) / 5) for i in range(4)]
+    nodes = [(y0, x) for x in stops] + [(cy, x1)] + [(y1, x) for x in reversed(stops)] + [(cy, x0)]
+    dim = st.p.phosphor_dim
+    st.put(y0, x0, "╭" + "─" * (x1 - x0 - 1) + "╮", dim)
+    st.put(y1, x0, "╰" + "─" * (x1 - x0 - 1) + "╯", dim)
+    for y in range(y0 + 1, y1):
+        st.put(y, x0, "│", dim)
+        st.put(y, x1, "│", dim)
+    return nodes
+
+
+def _paint_nodes(st: _Stage, nodes: list[tuple[int, int]], kinds: list[str | None]) -> None:
+    for node, kind in zip(nodes, kinds):
+        st.put(*node, *_holder_mark(st.p, kind))
+
+
+def _sirens(st: _Stage, rows: tuple[int, ...], tick: int) -> None:
+    """Red and blue bars that swap halves every other frame."""
+    half = st.cols // 2
+    swap = (tick // 2) % 2 == 1
+    for r in rows:
+        st.put(r, 1, "▀" * (half - 1), _siren(st.p, swap))
+        st.put(r, half, "▀" * (st.cols - half - 1), _siren(st.p, not swap))
+
+
+def _tick_text(start: int, end: int, step: int, steps: int) -> str:
+    return f"${start + (end - start) * step // max(1, steps):,}"
+
+
+# -- 1. Patch In: Root the Exchange ------------------------------------------------
+
+def root_scene_frames(p: Palette, width: int, height: int, *, seed: int = 0,
+                      handle: str = "", exchange_name: str = "", role: str = "pbx",
+                      defender: str | None = None, kinds: list[str | None] | None = None,
+                      index: int = 0, success: bool = True,
+                      caption: str = "", sub: str = "") -> list[list[SplashOp]]:
+    st = _Stage(p, width, height, seed)
+    rng, large = st.rng, st.large
+    kinds = list(kinds or [None] * 10)[:10] + [None] * max(0, 10 - len(kinds or []))
+    defender_style = _holder_mark(p, defender)[1] if defender else p.grey
+    number = _EXCHANGE_NUMBER.match(exchange_name)
+    dial = ("ATDT", number.group(0).strip() if number else SPLASH_NUMBER)
+    st.put(0, 1, _scene_text(f"ROOT {gl('prompt')} {exchange_name}", st.cols - len(SCENE_HINT) - 4),
+           p.mint + BOLD)
+    label, art = (_EQUIPMENT if large else _EQUIPMENT_SMALL).get(role, _EQUIPMENT["pbx"] if large else _EQUIPMENT_SMALL["pbx"])
+    art_w = max(len(row) for row in art)
+    if large:
+        rig = (6, 3, 12, 22)
+        eq_top, eq_left = 7, st.cols - art_w - 7
+        cord_row, chain_row, stamp_row = 9, 17, 14
+    else:
+        rig = (2, 1, 6, 13)
+        eq_top, eq_left = 2, st.cols - art_w - 5
+        cord_row, chain_row, stamp_row = 4, 8, 7
+    eq_box = (eq_top - 1, eq_left - 3, eq_top + len(art), eq_left + art_w + 2)
+
+    def draw_rig() -> None:
+        st.box(*rig, p.phosphor_dim, title=_scene_text(handle or "you", rig[3] - rig[1] - 5),
+               title_style=p.mint)
+
+    def draw_equipment(style: str, lights: set[tuple[int, int]] = frozenset()) -> None:
+        st.box(*eq_box, p.phosphor_dim, title=label, title_style=p.grey)
+        for r, line in enumerate(art):
+            for c, ch in enumerate(line):
+                lit = (r, c) in lights
+                glyph = ("●" if ch == "○" else "■" if ch in "·" else ch) if lit else ch
+                st.put(eq_top + r, eq_left + c, glyph, (p.ink + BOLD) if lit else style)
+
+    def lights() -> set[tuple[int, int]]:
+        spots = [(r, c) for r, line in enumerate(art) for c, ch in enumerate(line) if ch in "○·"]
+        return set(rng.sample(spots, min(len(spots), 3))) if spots else set()
+
+    draw_rig()
+    st.snap()
+    draw_equipment(defender_style)
+    st.snap()
+    for k, typed in enumerate(dial):
+        st.put(rig[0] + 2 + k, rig[1] + 2, _fit(typed, rig[3] - rig[1] - 3), p.phosphor)
+        st.snap()
+    nodes = _chain_nodes(st, chain_row)
+    _paint_nodes(st, nodes, kinds)
+    if chain_row + 1 < st.rows - 2:
+        st.put(chain_row + 1, nodes[index][1], "▲", p.amber + BOLD)
+    st.snap()
+
+    # The patch cord: out of the rig, sagging, into the equipment.
+    a, b = rig[3] + 1, eq_box[1] - 1
+    m1, m2 = a + (b - a) // 3, a + 2 * (b - a) // 3
+    sag = cord_row + (2 if large else 1)
+    path = ([(cord_row, c, "═") for c in range(a, m1)] + [(cord_row, m1, "╗")]
+            + [(r, m1, "║") for r in range(cord_row + 1, sag)] + [(sag, m1, "╚")]
+            + [(sag, c, "═") for c in range(m1 + 1, m2)] + [(sag, m2, "╝")]
+            + [(r, m2, "║") for r in range(sag - 1, cord_row, -1)] + [(cord_row, m2, "╔")]
+            + [(cord_row, c, "═") for c in range(m2 + 1, b + 1)])
+    step = 4 if large else 3
+    for end in range(step, len(path) + step, step):
+        for r, c, ch in path[:end]:
+            st.put(r, c, ch, p.phosphor)
+        if end < len(path):
+            st.put(path[end][0], path[end][1], "●", p.ink + BOLD)
+        if (end // step) % 2:
+            st.put(*nodes[index], "◉", p.ink + BOLD)
+        else:
+            _paint_nodes(st, [nodes[index]], [kinds[index]])
+        st.snap()
+
+    # The contest: sparks at the jack, relays clacking under the defender.
+    contested = defender is not None
+    for tick in range(8 if contested else 3):
+        draw_equipment(defender_style, lights())
+        if contested:
+            spark = rng.choice("*+°·")
+            st.put(cord_row, b, spark, rng.choice((p.amber + BOLD, p.ink + BOLD, p.alarm)))
+        st.snap()
+
+    if success:
+        for sweep in range(0, art_w + 2, 3 if large else 2):
+            for r, line in enumerate(art):
+                for c, ch in enumerate(line[:sweep]):
+                    st.put(eq_top + r, eq_left + c, ch, p.phosphor + BOLD)
+            st.snap()
+        st.put(cord_row, b, "●", p.phosphor + BOLD)
+        for flash in range(6):
+            mark = ("◉", p.ink + BOLD) if flash % 2 == 0 else _holder_mark(p, "mine")
+            st.put(*nodes[index], *mark)
+            st.snap()
+        st.center(stamp_row, "═══ ROOTED ═══" if large else "ROOTED", p.phosphor + BOLD,
+                  lo=eq_box[1], hi=eq_box[3] + 1)
+    else:
+        middle = len(path) // 2
+        for spread in range(0, len(path) // 2 + 1, 3):
+            for r, c, ch in path[max(0, middle - spread):middle + spread + 1]:
+                st.put(r, c, " ")
+            for r, c, ch in path[:max(0, middle - spread)] + path[middle + spread + 1:]:
+                st.put(r, c, ch, p.alarm)
+            st.put(path[middle][0], path[middle][1], rng.choice("*+x"), p.alarm + BOLD)
+            st.snap()
+        for flash in range(4):
+            draw_equipment(p.ink + BOLD if flash % 2 == 0 else defender_style)
+            st.snap()
+        _paint_nodes(st, [nodes[index]], [kinds[index]])
+        st.center(stamp_row, "DEFENSES HOLD", p.alarm + BOLD, lo=eq_box[1], hi=eq_box[3] + 1)
+    st.snap()
+    st.caption(caption, sub, (p.phosphor if success else p.alarm) + BOLD)
+    st.snap()
+    st.hold()
+    return st.frames
+
+
+# -- 2. Busted ------------------------------------------------------------------------
+
+_BUST_LOG = ("CONNECT 14400", "> LIST /WAREZ", "XFER 0DAY.ZIP", "> WHO", "CARRIER OK",
+             "> DIAL 555-0199", "BUFFER FULL", "> PAGE SYSOP")
+
+
+def bust_scene_frames(p: Palette, width: int, height: int, *, seed: int = 0,
+                      cash_before: int = 0, cash_after: int = 0, crew_before: int = 1,
+                      crew_after: int = 1, caption: str = "", sub: str = "") -> list[list[SplashOp]]:
+    st = _Stage(p, width, height, seed)
+    rng, large = st.rng, st.large
+    if large:
+        mon = (3, 14, 14, st.cols - 15)
+        siren_rows, alarm_row, money_row = (1, 16), 17, 18
+    else:
+        mon = (1, 4, 7, st.cols - 5)
+        siren_rows, alarm_row, money_row = (8,), 8, 9
+    inner = mon[3] - mon[1] - 3
+    st.box(*mon, p.phosphor_dim, title="TERMINAL", title_style=p.grey)
+    st.snap()
+
+    log: list[str] = []
+    for tick in range(8):
+        log = (log + [rng.choice(_BUST_LOG)])[-(mon[2] - mon[0] - 2):]
+        st.clear(mon[0] + 1, mon[2] - 1, mon[1] + 1, mon[3])
+        for r, line in enumerate(log):
+            st.put(mon[0] + 1 + r, mon[1] + 2, _fit(line, inner), p.phosphor)
+        heat = 80 + tick * 20 // 7
+        st.put(mon[0], mon[3] - 12, f" HEAT {heat} ", (p.amber if tick < 5 else p.alarm) + BOLD)
+        st.snap()
+
+    for tick in range(12):
+        _sirens(st, siren_rows, tick)
+        st.clear(mon[0] + 1, mon[2] - 1, mon[1] + 1, mon[3])
+        if tick % 4 < 2:
+            st.center((mon[0] + mon[2]) // 2, "NO CARRIER", p.alarm + BOLD, lo=mon[1], hi=mon[3] + 1)
+        st.snap()
+
+    # The door goes in: the whole terminal jolts.
+    for tick in range(6):
+        shift = (1, -1, 1, 0, -1, 0)[tick]
+        st.clear(mon[0], mon[2], mon[1] - 1, mon[3] + 2)
+        st.box(mon[0], mon[1] + shift, mon[2], mon[3] + shift, p.ink + BOLD if tick % 2 == 0 else p.phosphor_dim)
+        _sirens(st, siren_rows, tick)
+        if large:
+            st.center(alarm_row, "FEDS AT THE DOOR", p.alarm + BOLD)
+        st.snap()
+
+    st.clear(mon[0], mon[2], mon[1] - 1, mon[3] + 2)
+    lines = (("THIS BULLETIN BOARD", "HAS BEEN SEIZED", "federal computer crime task force")
+             if large else ("BOARD SEIZED", "", "federal task force"))
+    cr = (mon[0] + mon[2]) // 2
+    for grow in range(1, 4):
+        r0, r1 = cr - grow, cr + grow
+        st.clear(r0, r1, mon[1], mon[3] + 1)
+        st.box(r0, mon[1], r1, mon[3], p.alarm + BOLD, double=True)
+        _sirens(st, siren_rows, grow)
+        st.snap()
+    for k, line in enumerate(lines):
+        if line:
+            st.center(cr - 1 + k, line, (p.ink if k == 2 else p.alarm) + ("" if k == 2 else BOLD),
+                      lo=mon[1], hi=mon[3] + 1)
+    st.snap()
+
+    steps = 8
+    for tick in range(steps + 1):
+        _sirens(st, siren_rows, tick)
+        crew = crew_before + (crew_after - crew_before) * tick // steps
+        text = f"CASH {_tick_text(cash_before, cash_after, tick, steps)}   CREW {crew}"
+        if tick == steps:
+            text = (f"CASH ${cash_after:,} ({cash_after - cash_before:+,})   "
+                    f"CREW {crew_after} ({crew_after - crew_before:+})")
+        st.clear(money_row, money_row)
+        st.center(money_row, _fit(text, st.cols - 2), p.alarm + BOLD)
+        st.snap()
+    for r in siren_rows:
+        st.clear(r, r)
+    st.caption(caption, sub, p.alarm + BOLD)
+    st.snap()
+    st.hold()
+    return st.frames
+
+
+# -- 3. Raid ---------------------------------------------------------------------------
+
+def raid_scene_frames(p: Palette, width: int, height: int, *, seed: int = 0, handle: str = "",
+                      target: str = "", success: bool = True, amount: int = 0, crew: int = 1,
+                      crew_lost: int = 0, caption: str = "", sub: str = "") -> list[list[SplashOp]]:
+    st = _Stage(p, width, height, seed)
+    large = st.large
+    if large:
+        lb, rb, line_row, stamp_row = (4, 2, 11, 24), (4, st.cols - 26, 11, st.cols - 4), 7, 14
+    else:
+        lb, rb, line_row, stamp_row = (2, 1, 7, 15), (2, st.cols - 17, 7, st.cols - 3), 4, 8
+    inner = lb[3] - lb[1] - 3
+    st.put(0, 1, _scene_text(f"RAID {gl('prompt')} {target}", st.cols - len(SCENE_HINT) - 4),
+           p.magenta + BOLD)
+    st.box(*lb, p.phosphor_dim, title=_scene_text(handle or "you", inner - 2), title_style=p.mint)
+    st.box(*rb, p.phosphor_dim, title=_scene_text(target, inner - 2), title_style=p.magenta)
+    shown_crew = max(1, min(inner // 2, crew + crew_lost))
+    dots_row = lb[2] - 1
+
+    def crew_dots(lost: int = 0) -> None:
+        dots = [("●", p.phosphor)] * (shown_crew - lost) + [("○", p.alarm)] * lost
+        for k, (glyph, style) in enumerate(dots):
+            st.put(dots_row, lb[1] + 2 + 2 * k, glyph, style)
+
+    crew_dots()
+    st.snap()
+    for row, typed in enumerate(("ATDT", "555-0177")):
+        st.put(lb[0] + 1 + row, lb[1] + 2, _fit(typed, inner), p.phosphor)
+        st.snap()
+    a, b = lb[3] + 1, rb[1] - 1
+    st.put(line_row, a, "·" * (b - a + 1), p.phosphor_dim)
+    for tick in range(4):
+        st.put(rb[0] + 1, rb[1] + 2, "RING" if tick % 2 == 0 else "    ", p.amber + BOLD)
+        st.snap()
+    st.put(rb[0] + 1, rb[1] + 2, _fit("CONNECT", inner), p.ink)
+    span = b - a + 1
+    for tick in range(10):
+        st.put(line_row, a, "·" * span, p.phosphor_dim)
+        for k in range(3):
+            c = a + (tick * 3 + k * span // 3) % span
+            st.put(line_row, c, "■", p.phosphor + BOLD)
+        st.snap()
+    st.put(line_row, a, "·" * span, p.phosphor_dim)
+
+    if success:
+        steps = 10
+        for tick in range(steps + 1):
+            st.put(line_row, a, "·" * span, p.phosphor_dim)
+            for k in range(3):
+                c = b - (tick * 3 + k * span // 3) % span
+                st.put(line_row, c, "$", p.amber + BOLD)
+            st.put(lb[0] + 3, lb[1] + 2, _fit("+" + _tick_text(0, amount, tick, steps), inner), p.amber + BOLD)
+            vault = (inner - 2) - (inner - 2) * tick // (steps * 3)
+            st.put(rb[0] + 3, rb[1] + 2, "▓" * vault + "░" * (inner - 2 - vault), p.magenta)
+            st.snap()
+        st.put(line_row, a, "·" * span, p.phosphor_dim)
+        st.center(stamp_row, "SCORE", p.phosphor + BOLD)
+    else:
+        st.put(rb[0] + 1, rb[1] + 2, _fit("NO CARRIER", inner), p.alarm + BOLD)
+        middle = (a + b) // 2
+        for spread in range(0, span // 2 + 2, 2):
+            st.clear(line_row, line_row, max(a, middle - spread), min(b + 1, middle + spread + 1))
+            st.put(line_row, middle, "x", p.alarm + BOLD)
+            st.snap()
+        for tick in range(4):
+            crew_dots(min(crew_lost, shown_crew) if tick % 2 == 0 else 0)
+            st.snap()
+        crew_dots(min(crew_lost, shown_crew))
+        st.center(stamp_row, "BOUNCED", p.alarm + BOLD)
+    st.snap()
+    st.caption(caption, sub, (p.phosphor if success else p.alarm) + BOLD)
+    st.snap()
+    st.hold()
+    return st.frames
+
+
+# -- 4. Fed Crackdown ----------------------------------------------------------------
+
+def crackdown_scene_frames(p: Palette, width: int, height: int, *, seed: int = 0,
+                           season_number: int = 1, caption: str = "", sub: str = "") -> list[list[SplashOp]]:
+    st = _Stage(p, width, height, seed)
+    rng, large = st.rng, st.large
+    kinds = [rng.choice(("mine", "rival", "rival", "npc", None)) for _ in range(10)]
+    if large:
+        cy = 10
+        nodes = _ring_nodes(st, cy)
+        siren_rows, banner = (2, 17), (cy - 2, st.cols // 2 - 20, cy + 2, st.cols // 2 + 20)
+    else:
+        cy = 3
+        nodes = _chain_nodes(st, 6)
+        siren_rows, banner = (8,), (1, 4, 5, st.cols - 5)
+    _paint_nodes(st, nodes, kinds)
+    st.snap()
+    for tick in range(8):
+        _sirens(st, siren_rows, tick)
+        st.snap()
+    for k in range(10):
+        _sirens(st, siren_rows, k)
+        st.put(*nodes[k], "x", p.alarm + BOLD)
+        if k:
+            st.put(*nodes[k - 1], "·", p.grey)
+        st.snap()
+    st.put(*nodes[9], "·", p.grey)
+    for tick in range(3):
+        st.box(*banner, p.alarm + BOLD, double=True)
+        st.clear(banner[0] + 1, banner[2] - 1, banner[1] + 1, banner[3])
+        st.center(banner[0] + 1, "FED CRACKDOWN", p.alarm + BOLD, lo=banner[1], hi=banner[3] + 1)
+        if tick:
+            st.center(banner[0] + 3 if large else banner[0] + 2, "every board seized" if large else "boards seized",
+                      p.ink, lo=banner[1], hi=banner[3] + 1)
+        _sirens(st, siren_rows, tick)
+        st.snap()
+    for _ in range(6):
+        st.snap()
+    for r in siren_rows:
+        st.clear(r, r)
+    st.clear(banner[0], banner[2], banner[1], banner[3] + 1)
+    if large:
+        _ring_nodes(st, cy)
+    else:
+        _chain_nodes(st, 6)
+    for k in range(10):
+        st.put(*nodes[k], gl("free"), p.phosphor_dim)
+        st.snap()
+    chip = f"◆ SEASON {season_number} ◆"
+    chip_row = cy if large else 3
+    for end in range(3, len(chip) + 3, 3):
+        st.center(chip_row, chip[:end].ljust(len(chip)), p.amber + BOLD)
+        st.snap()
+    st.caption(caption, sub, p.amber + BOLD)
+    st.snap()
+    st.hold()
+    return st.frames
+
+
+# -- 5. Tier Up -----------------------------------------------------------------------
+
+def _tier_word(text: str) -> list[str]:
+    rows = ["", "", ""]
+    for index, ch in enumerate(text.upper()):
+        if ch == " ":
+            rows = [row + "  " for row in rows]
+            continue
+        glyph = _TIER_FONT.get(ch, ("▄▄▄", "█ █", "▀▀▀"))
+        follows = index + 1 < len(text) and text[index + 1] != " "
+        rows = [row + glyph[r] + (" " if follows else "") for r, row in enumerate(rows)]
+    return rows
+
+
+def tier_scene_frames(p: Palette, width: int, height: int, *, seed: int = 0, handle: str = "",
+                      old_tier: str = "", new_tier: str = "", rank: int = 0,
+                      caption: str = "", sub: str = "") -> list[list[SplashOp]]:
+    st = _Stage(p, width, height, seed)
+    large = st.large
+    names = [name for _, name in RANK_TIERS]
+    old_i = names.index(old_tier) if old_tier in names else 0
+    new_i = names.index(new_tier) if new_tier in names else len(names) - 1
+    word = _tier_word(new_tier)
+    use_font = large and len(word[0]) <= st.cols - 26
+    if large:
+        ladder_c, ladder_rows = 3, [15 - 2 * k for k in range(len(names))]
+        word_lo, word_row, greet_row, rank_row = 24, 6, 11, 13
+        for k, name in enumerate(names):
+            st.put(ladder_rows[k], ladder_c, "· " + name.upper(), p.phosphor_dim)
+    else:
+        ladder_c, ladder_rows = 0, []
+        word_lo, word_row, greet_row, rank_row = 0, 3, 7, 8
+        nodes = _chain_nodes(st, 5, len(names))
+    st.snap()
+
+    for k in range(old_i, new_i + 1):
+        for j in range(k + 1):
+            if large:
+                st.put(ladder_rows[j], ladder_c, ("◆ " if j == k else "· ") + names[j].upper(),
+                       (p.phosphor + BOLD) if j == k else p.phosphor)
+            else:
+                st.put(*nodes[j], gl("mine") if j == k else gl("crew_on"), p.phosphor + BOLD if j == k else p.phosphor)
+        st.snap()
+        st.snap()
+
+    ramp = [_splash_rgb(p, (150, 255, 160), 120), _splash_rgb(p, (57, 255, 20), 82),
+            _splash_rgb(p, (28, 175, 36), 40)]
+    hot = _splash_rgb(p, (235, 255, 240), 231)
+    if use_font:
+        w = len(word[0])
+        left = word_lo + max(0, (st.cols - word_lo - w) // 2)
+        for end in range(0, w + 6, 6):
+            for r, line in enumerate(word):
+                st.put(word_row + r, left, line[:end], ramp[r])
+                st.put(word_row + r, left + max(0, end - 6), line[max(0, end - 6):end], hot)
+            st.snap()
+        for r, line in enumerate(word):
+            st.put(word_row + r, left, line, ramp[r])
+        for sweep in range(len(word) + 1):
+            for r, line in enumerate(word):
+                st.put(word_row + r, left, line, hot if r == sweep else ramp[r])
+            st.snap()
+    else:
+        spaced = _fit(" ".join(new_tier.upper()), st.cols - word_lo - 2)
+        for end in range(2, len(spaced) + 2, 2):
+            st.center(word_row + 1, spaced[:end].ljust(len(spaced)), p.phosphor + BOLD, lo=word_lo)
+            st.snap()
+    greet = _scene_text(f"{'greetz to the scene: ' if large else ''}{handle} is now {new_tier.upper()}",
+                        st.cols - word_lo - 2)
+    for end in range(8, len(greet) + 8, 8):
+        st.center(greet_row, greet[:end].ljust(len(greet)), p.mint, lo=word_lo)
+        st.snap()
+    st.center(rank_row, f"RANK {rank:,}", p.amber + BOLD, lo=word_lo)
+    st.snap()
+    st.caption(caption, sub, p.phosphor + BOLD)
+    st.snap()
+    st.hold()
+    return st.frames
+
+
+# -- 6 and 7. Contract hacks, and an operation's execution ---------------------------
+
+def hack_scene_frames(p: Palette, width: int, height: int, *, seed: int = 0, handle: str = "",
+                      contract: int = 0, approach: int = 1, success: bool = True, payout: int = 0,
+                      crew_lost: int = 0, operation: bool = False,
+                      caption: str = "", sub: str = "") -> list[list[SplashOp]]:
+    st = _Stage(p, width, height, seed)
+    rng, large = st.rng, st.large
+    win = (2, 4, 17, st.cols - 5) if large else (1, 1, 9, st.cols - 2)
+    inner = win[3] - win[1] - 3
+    x = win[1] + 2
+    banner = _HACK_BANNERS[contract % len(_HACK_BANNERS)]
+    st.box(*win, p.phosphor_dim, title=banner, title_style=p.cyan + BOLD)
+    st.snap()
+
+    if operation:
+        stages = [name.upper() for name in OPERATION_STAGES]
+        chain_row = (win[0] + win[2]) // 2
+        for lit in range(len(stages) + 1):
+            parts = []
+            for k, name in enumerate(stages):
+                parts.append((name, p.phosphor + BOLD if k < lit else p.phosphor_dim))
+            text = f" {gl('stage')} ".join(name for name, _ in parts)
+            c = st.center(chain_row, text, p.grey, lo=win[1], hi=win[3] + 1)
+            for name, style in parts:
+                st.put(chain_row, c, name, style)
+                c += len(name) + 3
+            st.snap()
+            st.snap()
+        st.center(chain_row + 1, "EXECUTE", p.amber + BOLD, lo=win[1], hi=win[3] + 1)
+        st.snap()
+        st.snap()
+        st.clear(win[0] + 1, win[2] - 1, win[1] + 1, win[3])
+
+    login_row, pass_row = win[0] + 2, win[0] + 3
+    status_row = win[0] + 5 if large else win[0] + 4
+    pay_rows = (list(range(win[0] + 7, win[0] + 12)) if large else [win[0] + 5, win[0] + 6])
+    trace_row = win[2] - 1
+    st.put(login_row, x, "LOGIN: ", p.grey)
+    st.put(login_row, x + 7, _scene_text(handle.lower() or "guest", inner - 8), p.phosphor)
+    st.put(pass_row, x, "PASSWORD: ", p.grey)
+    slots = 8
+    trace_w = max(6, min(24, inner - 14))
+    trace_rate = (1, 2, 3)[approach % 3]  # cells per three frames: Cautious, Standard, Bold
+    locked: list[str] = []
+    fill = 0
+    tick = 0
+    lock_limit = slots if success else 5
+    while len(locked) < lock_limit:
+        if tick % 2 == 1:
+            locked.append(rng.choice(_SCENE_ROLL))
+        rolling = "".join(rng.choice(_SCENE_ROLL) for _ in range(slots - len(locked)))
+        st.put(pass_row, x + 10, "".join(locked), p.phosphor + BOLD)
+        st.put(pass_row, x + 10 + len(locked), rolling, p.phosphor_dim)
+        fill = min(trace_w - (0 if not success else 3), fill + (trace_rate if tick % 3 == 0 else 0))
+        st.put(trace_row, x, "TRACE ", p.grey)
+        st.put(trace_row, x + 6, "█" * fill + "░" * (trace_w - fill), p.alarm if fill > trace_w // 2 else p.amber)
+        st.snap()
+        tick += 1
+
+    if success:
+        st.put(status_row, x, "ACCESS GRANTED", p.phosphor + BOLD)
+        st.snap()
+        steps = 10
+        records: list[str] = []
+        for tick in range(steps + 1):
+            if contract == 3 and pay_rows:
+                st.center(pay_rows[len(pay_rows) // 2], "WIRE " + _tick_text(0, payout, tick, steps).rjust(9),
+                          p.amber + BOLD, lo=win[1], hi=win[3] + 1)
+            elif contract == 4 and pay_rows:
+                payee = _scene_text(handle or "you", 16).upper()
+                span = max(len(payee), len("ACME STAFF"))
+                cut = span * tick // steps
+                line = "PAY TO: " + payee.ljust(span)[:cut] + "ACME STAFF".ljust(span)[cut:]
+                st.put(pay_rows[0], x, _fit(line, inner).ljust(inner), p.ink)
+                st.put(pay_rows[-1], x, _fit("AMOUNT: " + _tick_text(0, payout, tick, steps), inner), p.amber + BOLD)
+            else:
+                record = (f"555-{rng.randint(100, 9999):04d}  pw:{'*' * rng.randint(4, 8)}" if contract == 0 else
+                          f"SHIP {rng.randint(2, 60):>2}x DISK BOX  PO BOX {rng.randint(10, 99)}" if contract == 1 else
+                          f"ACCT {rng.randint(1000, 9999)}-{rng.randint(1000, 9999)}  ${rng.randint(5, 400)}.{rng.randint(0, 99):02d}")
+                records = (records + [record])[-len(pay_rows):]
+                for r, line in enumerate(records):
+                    st.put(pay_rows[r], x, _fit(line, inner).ljust(inner),
+                           p.phosphor if r == len(records) - 1 else p.phosphor_dim)
+            st.snap()
+        if operation:
+            st.clear(trace_row, trace_row, win[1] + 1, win[3])
+            st.put(trace_row, x, "DOUBLE PAYOUT", p.amber + BOLD)
+        st.put(status_row, max(x + 15, win[3] - 12), _fit(f"+${payout:,}", 11), p.amber + BOLD)
+    else:
+        for k in range(slots - len(locked)):
+            st.put(pass_row, x + 10 + len(locked) + k, "X", p.alarm + BOLD)
+        st.put(status_row, x, "ACCESS DENIED", p.alarm + BOLD)
+        st.snap()
+        while fill < trace_w:
+            fill = min(trace_w, fill + 2)
+            st.put(trace_row, x + 6, "█" * fill + "░" * (trace_w - fill), p.alarm)
+            st.snap()
+        st.put(trace_row, x + 7 + trace_w, "TRACED", p.alarm + BOLD)
+        if pay_rows:
+            st.put(pay_rows[0], x, "NO CARRIER", p.alarm + BOLD)
+            if crew_lost:
+                st.put(pay_rows[-1], x, f"-{crew_lost} crew", p.alarm)
+        st.snap()
+    st.snap()
+    st.caption(caption, sub, (p.phosphor if success else p.alarm) + BOLD)
+    st.snap()
+    st.hold()
+    return st.frames
+
+
+# -- 8. Messages Waiting -----------------------------------------------------------------
+
+def messages_scene_frames(p: Palette, width: int, height: int, *, seed: int = 0,
+                          actors: list[str] | None = None, count: int = 0,
+                          caption: str = "", sub: str = "") -> list[list[SplashOp]]:
+    st = _Stage(p, width, height, seed)
+    large = st.large
+    actors = actors or []
+    machine = (3, 12, 15, st.cols - 13) if large else (1, 3, 8, st.cols - 4)
+    inner = machine[3] - machine[1] - 3
+    x = machine[1] + 2
+    st.box(*machine, p.phosphor_dim, title="ANSWERING MACHINE", title_style=p.grey)
+    led = f"[{min(count, 99):>2}]"
+    led_c = machine[3] - len(led) - 1
+    header_row = machine[0] + 1
+    tape_row = machine[0] + 3 if large else machine[0] + 2
+    reel_l, reel_r = x + 2, machine[3] - 6
+    status_row = tape_row + (2 if large else 1)
+    msg_rows = list(range(status_row + 2, machine[2])) if large else [status_row + 1, status_row + 2]
+    spokes = "|/-\\"
+
+    def reels(turn: int) -> None:
+        st.put(tape_row, reel_l, f"({spokes[turn % 4]})", p.ink)
+        st.put(tape_row, reel_r, f"({spokes[turn % 4]})", p.ink)
+        st.put(tape_row, reel_l + 3, "═" * (reel_r - reel_l - 3), p.phosphor_dim)
+
+    reels(0)
+    st.put(header_row, x, "MESSAGES", p.grey)
+    for tick in range(8):
+        st.put(header_row, led_c, led if tick % 2 == 0 else " " * len(led), p.alarm + BOLD)
+        st.snap()
+    st.put(header_row, led_c, led, p.alarm + BOLD)
+    counter = 120
+    for tick in range(10):
+        reels(tick * 2)
+        counter = max(0, counter - 12)
+        st.put(status_row, x, f"<< REWIND  {counter:03d}", p.amber)
+        st.snap()
+    st.put(status_row, x, " " * 18)
+    st.put(status_row, x, "PLAY >", p.phosphor + BOLD)
+    for k, row in enumerate(msg_rows[:max(1, min(len(actors), len(msg_rows)))]):
+        actor = actors[k] if k < len(actors) else "unknown caller"
+        line = _scene_text(f"MSG {k + 1}  {actor}", inner)
+        for end in range(4, len(line) + 4, 4):
+            reels(end)
+            st.put(row, x, "MSG", p.grey)
+            st.put(row, x + 3, line[3:end], p.magenta + BOLD)
+            st.snap()
+    for tick in range(4):
+        reels(tick)
+        st.snap()
+    st.caption(caption, sub, p.magenta + BOLD)
+    st.snap()
+    st.hold()
+    return st.frames
+
+
+# -- 9. Cracktro: a medal's season ---------------------------------------------------
+
+def cracktro_scene_frames(p: Palette, width: int, height: int, *, seed: int = 0,
+                          season_number: int = 1, podium: list[tuple[str, str, int]] | None = None,
+                          handle: str = "", placement: int = 1,
+                          caption: str = "", sub: str = "") -> list[list[SplashOp]]:
+    st = _Stage(p, width, height, seed)
+    rng, large = st.rng, st.large
+    podium = podium or []
+    logo = _splash_word(_SPLASH_FONT_SMALL, "WAR DIALER", 1, 2)
+    logo_row = 1
+    logo_c = max(0, (st.cols - len(logo[0])) // 2)
+    pod_rows = [6, 7, 8] if large else [5, 6, 7]
+    band = (12, 15) if large else (8, 9)
+    busy = set(range(logo_row, logo_row + 3)) | set(pod_rows) | set(range(band[0], band[1] + 1))
+    free_rows = [r for r in range(1, st.rows - 3) if r not in busy]
+    stars = [[rng.choice(free_rows), rng.uniform(0, st.cols - 1), rng.choice((0.5, 1.0, 2.0))]
+             for _ in range(14 if large else 6)] if free_rows else []
+    cycle = [p.phosphor, p.mint, p.cyan, p.magenta, p.amber, p.ink]
+    # The scroller moves one cell per character, so it carries narrow text only.
+    names = " ".join(_scene_narrow(h).upper() for _, h, _ in podium) or "THE SCENE"
+    scroll = (f"   *** SEASON {season_number} CHAMPIONS ***   GREETZ TO {names}   ***   "
+              f"{_scene_narrow(handle).upper()} PLACED #{placement}   ***   "
+              "WAR DIALER RULEZ THE EXCHANGES   ***   ")
+    amp = band[1] - band[0]
+    frames = 44 if large else 36
+    for tick in range(frames):
+        for star in stars:
+            st.put(star[0], int(star[1]), " ")
+            star[1] = (star[1] - star[2]) % (st.cols - 1)
+            st.put(star[0], int(star[1]), "·" if star[2] < 1 else "∙" if star[2] < 2 else "*",
+                   p.grey if star[2] < 2 else p.ink)
+        for r, line in enumerate(logo):
+            for c, ch in enumerate(line):
+                if ch != " ":
+                    st.put(logo_row + r, logo_c + c, ch, cycle[(c // 4 + tick // 3) % len(cycle)])
+        for k, (medal, who, score) in enumerate(podium[:3]):
+            if tick >= 4 + 4 * k:
+                who = _fit(_event_plain(who), 17)
+                text = f"{medal.upper():<7}{who}{' ' * (18 - _dlen(who))}{score:>7,}"
+                st.center(pod_rows[k], text, p.role(MEDAL_STYLE.get(medal, "grey")) + BOLD)
+        st.clear(band[0], band[1], 0, st.cols - 1)
+        offset = tick * (2 if large else 1)
+        for c in range(1, st.cols - 2):
+            i = (c + offset) % len(scroll)
+            ch = scroll[i]
+            if ch == " ":
+                continue
+            wave = (1 + math.sin((c + offset) * 0.18)) / 2
+            row = round(wave * amp)
+            st.put(band[0] + row, c, ch, cycle[row % len(cycle)] + BOLD)
+        st.snap()
+    st.clear(band[0], band[1], 0, st.cols - 1)
+    st.caption(caption, sub, p.amber + BOLD)
+    st.snap()
+    st.hold()
+    return st.frames
+
+
+# -- when they play -------------------------------------------------------------------
+
+def outcome_scenes(p: Palette, player: Player | None, delta: ActionDelta, busted: bool,
+                   headlines: list[str], width: int, height: int,
+                   scene: Callable[[], list[list[SplashOp]]] | None) -> list[Callable[[], list[list[SplashOp]]]]:
+    """The scenes an action result opens with: the bust in place of the action's
+    own (one turn, one scene), then a promotion if the turn earned one."""
+    composers: list[Callable[[], list[list[SplashOp]]]] = []
+    if busted and player is not None:
+        seed = _scene_seed(player.handle, player.season_number, player.turns_used, "bust")
+        composers.append(lambda: bust_scene_frames(
+            p, width, height, seed=seed, cash_before=player.cash - delta.cash, cash_after=player.cash,
+            crew_before=max(1, player.crew - delta.crew), crew_after=player.crew,
+            caption="*** BUSTED *** Heat reset to 0", sub=headlines[-1] if headlines else ""))
+    elif scene is not None:
+        composers.append(scene)
+    if player is not None and delta.rank > 0:
+        after = rank_score(player)
+        before = after - delta.rank
+        if tier_index(after) > tier_index(before):
+            seed = _scene_seed(player.handle, player.season_number, after, "tier")
+            composers.append(lambda: tier_scene_frames(
+                p, width, height, seed=seed, handle=player.handle, old_tier=tier_name(before),
+                new_tier=tier_name(after), rank=after,
+                caption=f"Promoted: {tier_name(after)}",
+                sub=f"Rank {after:,}, up from {tier_name(before)}"))
+    return composers
+
+
+def login_scenes(p: Palette, conn: sqlite3.Connection, player: Player, width: int,
+                 height: int) -> list[Callable[[], list[list[SplashOp]]]]:
+    """What a caller missed: the crackdown and a medal's cracktro on the first
+    visit of a season, then hostile receipts. Each is tied to an unseen receipt,
+    so the log marking them read is what stops them playing again."""
+    events = unseen_events(conn, player.user_id)
+    composers: list[Callable[[], list[list[SplashOp]]]] = []
+    if any(event.summary_text.startswith(CRACKDOWN_RECEIPT) for event in events):
+        season = player.season_number
+        composers.append(lambda: crackdown_scene_frames(
+            p, width, height, seed=_scene_seed(player.handle, season, "crackdown"), season_number=season,
+            caption=f"Fed crackdown: season {season} has started.",
+            sub="Crews and exchanges have reset."))
+        result = conn.execute("SELECT season, placement, medal FROM season_results WHERE user_id=? AND season<? "
+                              "ORDER BY season DESC LIMIT 1", (player.user_id, season)).fetchone()
+        if result is not None and result["medal"]:
+            podium = [(row["medal"], row["handle"], row["rank"]) for row in conn.execute(
+                "SELECT medal, handle, rank FROM season_results WHERE season=? AND medal!='' "
+                "ORDER BY placement", (result["season"],)).fetchall()]
+            old, place, medal = result["season"], result["placement"], result["medal"]
+            composers.append(lambda: cracktro_scene_frames(
+                p, width, height, seed=_scene_seed(player.handle, old, "medal"), season_number=old,
+                podium=podium, handle=player.handle, placement=place,
+                caption=f"Season {old}: you placed #{place}, {medal}.",
+                sub="Season results are under [I] Scene."))
+    hostile = [event for event in events if event.actor_handle]
+    if hostile:
+        actors = [_event_plain(event.actor_handle or "") for event in hostile]
+        composers.append(lambda: messages_scene_frames(
+            p, width, height, seed=_scene_seed(player.handle, len(hostile), "messages"),
+            actors=actors, count=len(hostile),
+            caption=f"{counted(len(hostile), 'hostile receipt')} while you were away.",
+            sub="Your log follows."))
+    return composers
+
+
 def draw_title(p: Palette, info: dict, season_number: int, w: int) -> None:
     """The masthead: the door's name, its one-line pitch, a fading scanline rule
     and the season chip."""
@@ -5709,9 +6734,15 @@ def confirm_action(p: Palette, conn: sqlite3.Connection, player: Player, action:
 
 
 def show_action_result(p: Palette, headlines: list[str], delta: ActionDelta, busted: bool,
-                       width: int, height: int) -> None:
+                       width: int, height: int, *, player: Player | None = None,
+                       scene: Callable[[], list[list[SplashOp]]] | None = None) -> None:
+    """The receipt for a committed action. A scene for it -- the action's own,
+    a bust in its place, a promotion after -- opens it when one may play;
+    otherwise the carrier sweep does."""
     inner = _panel_width(p, max(1, width - 1))
-    resolve_sweep(p, inner, amount=max(0, delta.cash))
+    if not play_scenes(p, width, height, outcome_scenes(p, player, delta, busted, headlines,
+                                                        width, height, scene)):
+        resolve_sweep(p, inner, amount=max(0, delta.cash))
     rows = prose_card(p, headlines, inner)
     if not p.fast:
         rows += prose_rows(p, "Sirens cut through the carrier tone." if busted else
@@ -5918,7 +6949,8 @@ def do_trade_warez(p: Palette, conn: sqlite3.Connection, player: Player, now: da
         return False
     delta = ActionDelta()
     gain, busted = resolve_trade_warez(conn, player, now_utc(), rng, require_preview=True, delta=delta)
-    show_action_result(p, [f"You move some warez on the boards. Gross payout ${gain}."], delta, busted, w, height)
+    show_action_result(p, [f"You move some warez on the boards. Gross payout ${gain}."], delta, busted, w, height,
+                       player=player)
     return True
 
 
@@ -5990,7 +7022,12 @@ def do_operation(p: Palette, conn: sqlite3.Connection, player: Player, rng: rand
         name, success, payout, busted = result
         lines = [name, f"Operation succeeded! Gross payout ${payout}; slot clear." if success else
                  f"Execution failed. Recovery payout ${payout}; casing retained. Prepare again before retrying."]
-    show_action_result(p, lines, delta, busted, width, height)
+        scene = lambda: hack_scene_frames(
+            p, width, height, seed=_scene_seed(player.handle, player.season_number, player.turns_used, "operation"),
+            handle=player.handle, contract=choice.contract, approach=choice.approach, success=success,
+            payout=payout, crew_lost=max(0, -delta.crew), operation=True, caption=lines[1], sub=name)
+    show_action_result(p, lines, delta, busted, width, height, player=player,
+                       scene=scene if result is not None else None)
     return True
 
 
@@ -6113,7 +7150,7 @@ def do_recruit(p: Palette, conn: sqlite3.Connection, player: Player, now: dateti
         return False
     delta = ActionDelta()
     resolve_recruit(conn, player, now_utc(), require_preview=True, delta=delta)
-    show_action_result(p, ["A new member joins your crew."], delta, False, w, height)
+    show_action_result(p, ["A new member joins your crew."], delta, False, w, height, player=player)
     return True
 
 
@@ -6160,8 +7197,13 @@ def do_job(p: Palette, conn: sqlite3.Connection, player: Player, now: datetime,
         return False
     delta = ActionDelta()
     name, success, payout, busted = resolve_job(conn, player, now_utc(), rng, choice=choice, require_preview=True, delta=delta)
-    show_action_result(p, [f"Job: {name} ({JOB_APPROACHES[choice.approach][0]})", f"Success! Gross payout ${payout}." if success else f"Job failed. Recovery payout ${payout}."],
-                       delta, busted, w, height)
+    lines = [f"Job: {name} ({JOB_APPROACHES[choice.approach][0]})",
+             f"Success! Gross payout ${payout}." if success else f"Job failed. Recovery payout ${payout}."]
+    scene = lambda: hack_scene_frames(
+        p, w, height, seed=_scene_seed(player.handle, player.season_number, player.turns_used, "job"),
+        handle=player.handle, contract=choice.contract, approach=choice.approach, success=success,
+        payout=payout, crew_lost=max(0, -delta.crew), caption=lines[1], sub=lines[0])
+    show_action_result(p, lines, delta, busted, w, height, player=player, scene=scene)
     return True
 
 
@@ -6176,7 +7218,12 @@ def do_raid(p: Palette, conn: sqlite3.Connection, player: Player, now: datetime,
         conn, player, target.user_id, now_utc(), rng, expected_target=target, require_preview=True, delta=delta,
     )
     headline = f"You hit {target.handle}; gross take ${amount}." if success else f"The raid on {target.handle} failed."
-    show_action_result(p, [headline], delta, busted, w, height)
+    scene = lambda: raid_scene_frames(
+        p, w, height, seed=_scene_seed(player.handle, player.season_number, player.turns_used, "raid"),
+        handle=player.handle, target=target.handle, success=success, amount=amount, crew=player.crew,
+        crew_lost=max(0, -delta.crew), caption=headline,
+        sub=f"+{delta.rank} Rank" if success else f"{delta.crew:+} crew, {delta.cash:+,} cash")
+    show_action_result(p, [headline], delta, busted, w, height, player=player, scene=scene)
     return True
 
 
@@ -6214,7 +7261,19 @@ def do_root_exchange(p: Palette, conn: sqlite3.Connection, player: Player, now: 
         conn, player, exchange.id, now_utc(), rng, expected_exchange=exchange, require_preview=True, delta=delta,
     )
     headline = f"You root {name}. It's yours now." if success else "The exchange's defenses hold."
-    show_action_result(p, [headline], delta, busted, w, height)
+    kinds: list[str | None] = [_exchange_kind(e, player.user_id) for e in exchanges]
+    kinds = [None if kind == "free" else kind for kind in kinds]
+    defender = _exchange_kind(exchange, player.user_id)
+    index = exchanges.index(exchange)
+    if success:
+        kinds[index] = "mine"
+    scene = lambda: root_scene_frames(
+        p, w, height, seed=_scene_seed(player.handle, player.season_number, player.turns_used, "root"),
+        handle=player.handle, exchange_name=exchange.name, role=exchange.role,
+        defender=None if defender == "free" else defender, kinds=kinds, index=index, success=success,
+        caption=headline, sub=(f"+{delta.rank} Rank, ${exchange.income_per_hour}/hour" if success
+                               else f"{delta.crew:+} crew, {delta.cash:+,} cash"))
+    show_action_result(p, [headline], delta, busted, w, height, player=player, scene=scene)
     return True
 
 
@@ -6299,7 +7358,7 @@ def do_garrison(p: Palette, conn: sqlite3.Connection, player: Player, width: int
         delta = ActionDelta()
         outcome, busted = resolve_exchange_service(conn, player, exchange.id, now_utc(), rng or random.Random(),
                                                   expected_exchange=exchange, require_preview=True, delta=delta)
-        show_action_result(p, [outcome], delta, busted, width, height)
+        show_action_result(p, [outcome], delta, busted, width, height, player=player)
         return True
     change = options[PICK_KEYS.index(key)]
     if show_text_pages(p, "GARRISON PREVIEW", [], width, height, accept=True,
@@ -6314,6 +7373,10 @@ def do_garrison(p: Palette, conn: sqlite3.Connection, player: Player, width: int
 
 
 def draw_season_change(p: Palette, season_number: int, width: int = 78, height: int = 24) -> None:
+    play_scene(p, width, height, lambda: crackdown_scene_frames(
+        p, width, height, seed=_scene_seed(season_number, "crackdown"), season_number=season_number,
+        caption=f"Fed crackdown: season {season_number} has started.",
+        sub="Crews and exchanges have reset."))
     inner = _panel_width(p, max(1, width - 1))
     head = compose([badge(p, "FED CRACKDOWN", style=p.alarm),
                     label_value(p, "season", str(season_number), style=p.mint)], inner)
@@ -6699,6 +7762,7 @@ def _main(argv=None) -> int:
 
         apply_display(palette, read_display(conn, user_id))
         play_splash(palette, info, player.season_number, _OUTPUT_WIDTH, height)
+        play_scenes(palette, _OUTPUT_WIDTH, height, login_scenes(palette, conn, player, _OUTPUT_WIDTH, height))
         draw_title(palette, info, player.season_number, w)
         if is_new_player:
             draw_help(palette, w, height, onboarding=True)

@@ -152,6 +152,7 @@ _GLYPHS = {
     "credits": ("◈", "$"), "brand": ("◤", ">"), "cursor": ("▌", ">"),
     "danger": ("▲", "!"), "note": ("◆", "*"), "info": ("●", "o"),
     "crew_on": ("●", "o"), "crew_off": ("○", "."),
+    "earned": ("●", "*"), "unearned": ("○", "."),
     "chip_l": ("⟦", "<"), "chip_r": ("⟧", ">"),
     "dot": ("·", "-"), "arrow": ("→", "->"), "rise": ("▲", "^"),
     "fall": ("▼", "v"), "flat": ("─", "-"),
@@ -196,8 +197,18 @@ def _classic_door_info(path: Path) -> dict:
             raise ValueError(f"invalid number on line {line}")
         return int(value)
 
+    def cleaned(line: int) -> str:
+        # C1 controls (U+0080-U+009F) only arrive through a UTF-8 file: CP437
+        # decodes those bytes as letters. U+009B is a one-character CSI and
+        # U+009D an OSC, so a name carrying them would reach a UTF-8 terminal
+        # as commands, and the save validator refuses them, so the caller
+        # could not keep a career either (issue #15). They are removed rather
+        # than refused, because a refused name throws the whole file away and
+        # the caller would launch as Guest instead of as themselves.
+        return "".join(char for char in lines[line - 1] if not 0x80 <= ord(char) <= 0x9F).strip()
+
     def name(line: int) -> str:
-        value = lines[line - 1]
+        value = cleaned(line)
         if not value or any(ord(char) < 32 or ord(char) == 127 for char in value):
             raise ValueError(f"invalid name on line {line}")
         return value
@@ -222,8 +233,8 @@ def _classic_door_info(path: Path) -> dict:
         number(11, 1)  # node number
         info = {
             "drop_file_type": kind, "user_id": number(5, 1),
-            "handle": name(7) if lines[6] else name(6),
-            "node_name": name(4) if lines[3] else "Local",
+            "handle": name(7) if cleaned(7) else name(6),
+            "node_name": name(4) if cleaned(4) else "Local",
             "terminal_height": 24, "emulation": emulation,
             "minutes_left": number(9), "comm_type": comm_type,
             "comm_handle": number(2),
@@ -239,7 +250,7 @@ def _classic_door_info(path: Path) -> dict:
             raise ValueError("invalid DOOR.SYS graphics mode")
         info = {
             "drop_file_type": kind, "user_id": number(26, 1),
-            "handle": name(36) if len(lines) >= 36 and lines[35] else name(10),
+            "handle": name(36) if len(lines) >= 36 and cleaned(36) else name(10),
             "terminal_height": number(21, 1), "emulation": emulation,
             "minutes_left": number(19), "comm_port": lines[0],
         }
@@ -1911,6 +1922,10 @@ class SaveData:
     market_depth: dict[int, dict[str, dict[str, int]]] = field(default_factory=dict)
     faction_stories: dict[str, dict] = field(default_factory=dict)
     retired_careers: list[dict] = field(default_factory=list)
+    # The account's achievements, kept through retirement; see `ACCOLADES`.
+    # Absent until something is earned or counted, so a save with none of it
+    # is the document it always was.
+    accolades: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -1946,6 +1961,7 @@ class SaveData:
             "market_depth": {str(sid): goods for sid, goods in self.market_depth.items()},
             **({"faction_stories": self.faction_stories} if self.faction_stories else {}),
             **({"retired_careers": self.retired_careers} if self.retired_careers else {}),
+            **({"accolades": self.accolades} if self.accolades else {}),
         }
 
     @classmethod
@@ -1988,6 +2004,7 @@ class SaveData:
                           for sid, goods in d.get("market_depth", {}).items()},
             faction_stories={faction: dict(story) for faction, story in d.get("faction_stories", {}).items()},
             retired_careers=[dict(item, highlights=list(item["highlights"])) for item in d.get("retired_careers", [])],
+            accolades=_copy_accolades(d.get("accolades", {})),
         )
 
 
@@ -2203,6 +2220,8 @@ def _validate_save_document(data: dict) -> None:
                 economies = economies or galaxy_economies(data["seed"])
                 require("Haven" in economies, "faction story Haven")
         else: require("choice" not in story, "premature faction story choice")
+    if "accolades" in data:
+        _validate_accolades(data["accolades"], pilot.get("retirements", 0))
     dossiers = data.get("retired_careers", [])
     require(isinstance(dossiers, list) and len(dossiers) <= MAX_RETIRED_CAREERS, "retired careers")
     previous_number = 0
@@ -2357,6 +2376,7 @@ class World:
         """
         self.sync_discovered()
         promoted = check_rank_up(self)
+        earned = unlock_accolades(self.save)
         remember_local_market(self)  # no-op mid-journey; `remember_local_market` checks
         if tracked_mission(self) is None:
             # A contract that ended mid-journey must not leave a dangling id in
@@ -2372,6 +2392,7 @@ class World:
                 raise SaveError("The completed action could not be saved.") from exc
         if promoted:
             self.pending_promotions.append(promoted)
+        self.pending_accolades.extend(earned)
 
     def checkpoint(self) -> None:
         """A turn boundary: process the turn, then commit it. Retained under its
@@ -2391,6 +2412,8 @@ class World:
         _validate_pending_travel_consistency(save)
         self.save = save
         self.pending_promotions: list[str] = []
+        # Accolades earned by a succeeded commit, for the next deck to announce.
+        self.pending_accolades: list[Accolade] = []
         # Narration of the current hop, retained for the next deck page (issue #410).
         # Transient: rebuilt from what the hop prints; never persisted.
         self.hop_report: list[str] = []
@@ -3487,6 +3510,7 @@ def check_mission_completions(world: World, *, just_discovered: int | None = Non
             if world.save.pilot.missions_completed == 0:
                 world.save.pilot.highlight(f"First mission complete: {m.description}.")
             world.save.pilot.missions_completed += 1
+            bump_accolade(world.save, "deliveries" if m.kind == "delivery" else "surveys")
             msg = (f"Mission complete: {m.description} (+{paid}cr"
                    + (", scanner survey at half pay" if paid != m.reward else "")
                    + f", +{CONCORD_STANDING_PER_CONTRACT} Concord standing)")
@@ -4102,6 +4126,7 @@ def destroy_ship(world: World, *, patrol: bool = False, hull_before: int | None 
     if cleared:
         world.save.pilot.notoriety = 0
     world.ship_destroyed_this_hop = True
+    bump_accolade(world.save, "ships_lost")
     world.save.pilot.note(f"Ship destroyed -- salvage tug towed you back to Freeport ({penalty}cr charged)."
                           + (" Concord closed your file." if cleared
                              else f" Concord logged the unpaid {fine}cr fine." if patrol else ""))
@@ -4186,6 +4211,7 @@ def rescue_stranded_pilot(world: World) -> str:
     cheapest = min(fuel_cost_for_jump(home, world.by_id[nid], world.save.ship) for nid in home.connections)
     world.save.ship.fuel = max(world.save.ship.fuel, cheapest)
     if towed:
+        bump_accolade(world.save, "tows")
         msg = ("Stranded with an empty tank and empty pockets, a passing salvage tug answers "
                "your beacon and tows you back to Freeport Anchorage, no charge.")
     else:
@@ -4407,6 +4433,239 @@ def check_rank_up(world: World) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Accolades: what a player sees as Achievements. "Achievements" was taken first,
+# by the Hall of Fame's per-career score summaries (`score_achievements`), so the
+# code says accolade and the screens say achievement.
+#
+# Accolades belong to the account, not the career: they ride through retirement
+# in `SaveData.accolades` with the lifetime counters that only they need, and
+# whatever the save already records is measured across every career at once --
+# the current one plus each retired dossier. An accolade unlocks in
+# `World.commit`, beside the rank capture and for the same reason: it is written
+# by the save that earned it, and announced only once that save succeeded.
+# A career that already did the thing unlocks it at its first commit on this
+# build; what only a new counter can know counts from then on.
+# ---------------------------------------------------------------------------
+
+ACCOLADE_VERSION = 1
+# What only an accolade needs counted. Each is bumped beside the effect it
+# counts and committed with it, so a resumed hop cannot count it twice.
+ACCOLADE_COUNTERS = ("squadrons", "flawless", "giant_slayer", "close_calls", "escapes", "raider_bribes",
+                     "patrol_kills", "wrong_bounties", "deliveries", "surveys", "bounties", "escorts",
+                     "distress", "derelicts", "ships_lost", "tows", "busts", "customs_bribes")
+ACCOLADE_GROUPS = ("Travel", "Exploration", "Combat", "Contracts", "Encounters", "Trading", "Wealth",
+                   "Ranks", "Factions", "Ship", "Legacy", "Misfortune")
+# The id pattern a newer build's accolade may use; this build keeps those it
+# does not know rather than discarding what it cannot read.
+_ACCOLADE_ID = re.compile(r"[a-z][a-z0-9_]{0,47}")
+
+
+@dataclass(frozen=True)
+class Accolade:
+    id: str
+    group: str
+    name: str
+    description: str
+    metric: str
+    target: int = 1
+    tier: int = 3        # 1 bronze, 2 silver, 3 gold: the medal it is drawn as
+    hidden: bool = False  # named only once earned
+
+
+def _ladder(prefix: str, group: str, metric: str, steps, noun: str) -> list[Accolade]:
+    """A ladder of one metric: bronze, silver, then gold for the rest."""
+    return [Accolade(f"{prefix}_{target}", group, name, description.format(n=f"{target:,}", noun=noun), metric,
+                     target, tier=min(3, index + 1))
+            for index, (target, name, description) in enumerate(steps)]
+
+
+ACCOLADES: tuple[Accolade, ...] = tuple([
+    *_ladder("hops", "Travel", "hops", ((10, "First Light", "Make {n} jumps."),
+                                         (100, "Long Hauler", "Make {n} jumps."),
+                                         (1000, "Void Runner", "Make {n} jumps.")), "jumps"),
+    *_ladder("chart", "Exploration", "charted", ((10, "Cartographer", "Chart {n} systems in one career."),
+                                                  (24, "Pathfinder", "Chart half the galaxy, {n} systems, in one career."),
+                                                  (48, "Atlas Complete", "Chart all {n} systems in one career.")), ""),
+    Accolade("landmark", "Exploration", "Into the Silence", "Investigate a landmark.", "landmark", tier=2),
+    *_ladder("kills", "Combat", "kills", ((1, "First Blood", "Win your first fight."),
+                                          (10, "Raider Bane", "Win {n} fights."),
+                                          (50, "Warden of the Lanes", "Win {n} fights."),
+                                          (100, "Scourge of the Void", "Win {n} fights.")), ""),
+    Accolade("squadron", "Combat", "Two for One", "Destroy both ships of a raider squadron.", "squadrons", tier=2),
+    Accolade("flawless", "Combat", "Untouched", "Win a fight without taking hull damage.", "flawless", tier=2),
+    Accolade("giant_slayer", "Combat", "Giant Slayer", "Destroy a raider that outclassed your ship.", "giant_slayer"),
+    Accolade("close_call", "Combat", "Hanging by a Thread", "Win a fight with under 5% of your hull left.", "close_calls"),
+    Accolade("escapes_10", "Combat", "Slippery", "Break contact 10 times by evading or dumping cargo.",
+             "escapes", 10, tier=2),
+    Accolade("raider_bribe", "Combat", "Cost of Doing Business", "Buy off a raider.", "raider_bribes", tier=1),
+    Accolade("patrol_kill", "Combat", "Outlaw", "Destroy a Concord patrol vessel.", "patrol_kills", hidden=True),
+    *_ladder("missions", "Contracts", "missions", ((1, "Contractor", "Complete your first contract."),
+                                                    (10, "Reliable", "Complete {n} contracts."),
+                                                    (50, "Indispensable", "Complete {n} contracts."),
+                                                    (100, "Legend of the Board", "Complete {n} contracts.")), ""),
+    Accolade("deliveries_10", "Contracts", "Express Freight", "Complete 10 delivery contracts.", "deliveries", 10, tier=2),
+    Accolade("surveys_10", "Contracts", "Surveyor", "Complete 10 survey contracts.", "surveys", 10, tier=2),
+    Accolade("bounties_10", "Contracts", "Bounty Hunter", "Complete 10 bounty contracts.", "bounties", 10, tier=2),
+    Accolade("escorts_10", "Contracts", "Shepherd", "Complete 10 escort contracts.", "escorts", 10, tier=2),
+    Accolade("wrong_bounty", "Contracts", "Wrong Guy", "Destroy the wrong bounty target.", "wrong_bounties",
+             tier=1, hidden=True),
+    Accolade("distress_1", "Encounters", "Good Samaritan", "Answer a distress call.", "distress", tier=1),
+    Accolade("distress_10", "Encounters", "Guardian Angel", "Answer 10 distress calls.", "distress", 10),
+    Accolade("derelicts_1", "Encounters", "Scavenger", "Salvage a derelict hulk.", "derelicts", tier=1),
+    Accolade("derelicts_10", "Encounters", "Boneyard Picker", "Salvage 10 derelict hulks.", "derelicts", 10),
+    *_ladder("margin", "Trading", "margin", ((1000, "Buy Low", "Earn {n}cr of market margin."),
+                                             (10000, "Sell High", "Earn {n}cr of market margin."),
+                                             (50000, "Market Maker", "Earn {n}cr of market margin.")), ""),
+    *_ladder("contraband", "Trading", "contraband", ((1, "Discreet Cargo", "Earn Blackwake standing by trading contraband."),
+                                                      (5, "Smuggler", "Reach {n} contraband trade milestones in one career."),
+                                                      (10, "Cartel Supplier", "Reach {n} contraband trade milestones in one career.")), ""),
+    Accolade("customs_bribe", "Trading", "Move Along", "Bribe your way past a customs inspection.", "customs_bribes",
+             tier=2, hidden=True),
+    *_ladder("credits", "Wealth", "credits", ((10000, "Comfortable", "Hold {n}cr at once."),
+                                              (100000, "Wealthy", "Hold {n}cr at once."),
+                                              (1000000, "Void Tycoon", "Hold {n}cr at once.")), ""),
+    *[Accolade(f"rank_{index}", "Ranks", title, f"Reach the rank of {title}.", "rank", index,
+               tier=1 if index == 1 else 2 if index < len(RANKS) - 1 else 3)
+      for index, (_, title) in enumerate(RANKS) if index],
+    Accolade("concord", "Factions", "Privateer", "Accept the Concord privateer commission.", "concord", tier=2),
+    Accolade("blackwake", "Factions", "Made", "Join the Blackwake Cartel.", "blackwake", tier=2),
+    Accolade("story_concord", "Factions", "For the Concord", "Finish the Concord story.", "story_concord"),
+    Accolade("story_blackwake", "Factions", "Family Business", "Finish the Blackwake story.", "story_blackwake"),
+    Accolade("archive", "Factions", "Archivist", "Complete Mara Venn's archive assignment.", "archive", tier=2),
+    Accolade("module_max", "Ship", "Top of the Line", "Upgrade one ship module to its highest tier.", "modules_maxed", tier=2),
+    Accolade("modules_all", "Ship", "No Expense Spared", "Upgrade every ship module to its highest tier.",
+             "modules_maxed", len(UPGRADES)),
+    Accolade("full_crew", "Ship", "Full Complement", "Have a gunner, an engineer and a navigator aboard.", "full_crew", tier=2),
+    Accolade("carrier", "Ship", "Flagship", "Fly a Carrier.", "carrier"),
+    Accolade("all_hulls", "Ship", "Shipwright's Friend", "Fly every hull class over your careers.", "hulls",
+             len(HULL_CLASSES)),
+    Accolade("retire_1", "Legacy", "Clean Exit", "Retire a career.", "retirements", 1, tier=1),
+    Accolade("retire_3", "Legacy", "Old Hand", "Retire 3 careers.", "retirements", 3, tier=2),
+    Accolade("retire_5", "Legacy", "Legend Reborn", "Retire 5 careers.", "retirements", 5),
+    *[Accolade(f"finale_{key}", "Legacy", info["label"], f"End a career as {info['label']}.", f"finale_{key}")
+      for key, info in CAREER_FINALES.items()],
+    Accolade("lost_1", "Misfortune", "Scrap Metal", "Lose your ship.", "ships_lost", tier=1, hidden=True),
+    Accolade("lost_5", "Misfortune", "Tow Truck Regular", "Lose your ship 5 times.", "ships_lost", 5, tier=2, hidden=True),
+    Accolade("towed", "Misfortune", "Running on Fumes", "Get towed home with an empty tank and empty pockets.",
+             "tows", tier=1, hidden=True),
+    Accolade("busted", "Misfortune", "Busted", "Have your contraband confiscated by customs.", "busts",
+             tier=1, hidden=True),
+])
+ACCOLADES_BY_ID = {accolade.id: accolade for accolade in ACCOLADES}
+
+
+def _accolade_record(save: SaveData) -> dict:
+    """The save's accolade record, made on first use: a career that has earned
+    nothing and counted nothing writes no record at all."""
+    if not save.accolades:
+        save.accolades = {"version": ACCOLADE_VERSION, "unlocked": {}, "counters": {}, "hulls": []}
+    return save.accolades
+
+
+def bump_accolade(save: SaveData, counter: str, amount: int = 1) -> None:
+    """Count one of `ACCOLADE_COUNTERS`. Call it beside the effect it counts,
+    before that effect's commit."""
+    if counter not in ACCOLADE_COUNTERS:
+        raise ValueError(f"unknown accolade counter {counter!r}")
+    counters = _accolade_record(save)["counters"]
+    counters[counter] = counters.get(counter, 0) + amount
+
+
+def accolade_metrics(save: SaveData) -> dict[str, int]:
+    """Every metric an accolade measures, across the whole account.
+
+    Running totals add the retired dossiers to the current career; a best is
+    the best of any; "in one career" metrics take the best single career. A
+    retirement recorded before dossiers existed counts as a retirement and
+    adds nothing to the totals, because nothing else of it was kept."""
+    pilot, dossiers = save.pilot, save.retired_careers
+    record = save.accolades or {}
+    metrics = {counter: record.get("counters", {}).get(counter, 0) for counter in ACCOLADE_COUNTERS}
+    stories = save.faction_stories
+    # Every career starts in a Shuttle, so a Shuttle has always been flown.
+    flown = {"Shuttle", save.ship.hull_class, *record.get("hulls", ()), *(d["ship"] for d in dossiers)}
+    finales = {d["finale"] for d in dossiers}
+    metrics.update(
+        hops=save.turn + sum(d["days"] for d in dossiers),
+        kills=pilot.kills + sum(d["kills"] for d in dossiers),
+        missions=pilot.missions_completed + sum(d["missions"] for d in dossiers),
+        margin=career_accomplishments(save)["trader"] + sum(d["market_margin"] for d in dossiers),
+        charted=max([len(save.discovered)] + [d["charted"] for d in dossiers]),
+        credits=max(save.best_credits, pilot.credits),
+        rank=max([pilot.highest_rank_seen] + [d["rank"] for d in dossiers]),
+        retirements=pilot.retirements,
+        contraband=save.contraband_trade_milestones,
+        landmark=int(bool(save.flags.get("landmark_investigated"))),
+        concord=int(pilot.has_concord_commission),
+        blackwake=int(pilot.has_blackwake_made),
+        story_concord=int(stories.get(FACTION_CONCORD, {}).get("stage") == "complete"),
+        story_blackwake=int(stories.get(FACTION_BLACKWAKE, {}).get("stage") == "complete"),
+        archive=int(bool(save.flags.get("archive_v1_public") or save.flags.get("archive_v1_private"))),
+        modules_maxed=sum(1 for key, upgrade in UPGRADES.items()
+                          if getattr(save.ship, key + "_tier") >= upgrade["max_tier"]),
+        full_crew=int(save.ship.has_gunner and save.ship.has_engineer and save.ship.has_navigator),
+        carrier=int("Carrier" in flown),
+        hulls=len(flown & set(HULL_CLASSES)),
+        **{f"finale_{key}": int(key in finales) for key in CAREER_FINALES},
+    )
+    return metrics
+
+
+def accolade_unlocked(save: SaveData, accolade_id: str) -> bool:
+    return accolade_id in (save.accolades or {}).get("unlocked", {})
+
+
+def unlock_accolades(save: SaveData) -> list[Accolade]:
+    """Record every accolade the account now meets; returns those newly earned.
+
+    Also remembers the hull being flown, which is what `all_hulls` needs and
+    nothing else records. Starting hulls are implied, so a career that never
+    left its Shuttle writes no record for it."""
+    if save.ship.hull_class != "Shuttle" and save.ship.hull_class not in (save.accolades or {}).get("hulls", []):
+        _accolade_record(save)["hulls"].append(save.ship.hull_class)
+    metrics = accolade_metrics(save)
+    earned = [accolade for accolade in ACCOLADES
+              if not accolade_unlocked(save, accolade.id) and metrics[accolade.metric] >= accolade.target]
+    if earned:
+        unlocked = _accolade_record(save)["unlocked"]
+        for accolade in earned:
+            unlocked[accolade.id] = save.pilot.retirements + 1
+    return earned
+
+
+def _copy_accolades(value: dict) -> dict:
+    """An independent copy, so a retiring save and its successor share nothing."""
+    if not value:
+        return {}
+    return {"version": value["version"], "unlocked": dict(value["unlocked"]),
+            "counters": dict(value["counters"]), "hulls": list(value["hulls"])}
+
+
+def _validate_accolades(value, retirements: int) -> None:
+    """A malformed record is a broken save; a newer version is a newer build's.
+    Ids this build does not know are kept, not refused: a pilot who plays on an
+    older node after a newer one keeps what the newer one awarded."""
+    _validate_versioned(value, {"version", "unlocked", "counters", "hulls"}, "accolades",
+                        unsupported="This career's achievements come from a newer version of the game.")
+    unlocked, counters, hulls = value.get("unlocked"), value.get("counters"), value.get("hulls")
+    if not isinstance(unlocked, dict) or not isinstance(counters, dict) or not isinstance(hulls, list):
+        raise ValueError("invalid accolades")
+    if len(unlocked) > 512 or len(counters) > 256:
+        raise ValueError("invalid accolades")
+    for key, career in unlocked.items():
+        if (not isinstance(key, str) or not _ACCOLADE_ID.fullmatch(key) or type(career) is not int
+                or not 1 <= career <= retirements + 1):
+            raise ValueError("invalid accolade")
+    for key, count in counters.items():
+        if (not isinstance(key, str) or not _ACCOLADE_ID.fullmatch(key) or type(count) is not int
+                or not 0 <= count < 2**63):
+            raise ValueError("invalid accolade counter")
+    if len(set(hulls)) != len(hulls) or any(not isinstance(hull, str) or hull not in HULL_CLASSES
+                                            for hull in hulls):
+        raise ValueError("invalid accolade hulls")
+
+
+# ---------------------------------------------------------------------------
 # Storage layer -- the only code in this file that touches a filesystem
 # path for game state (see this module's own docstring).
 # ---------------------------------------------------------------------------
@@ -4484,6 +4743,7 @@ def retire_pilot(old_save: SaveData) -> SaveData:
     new_save.display_style = old_save.display_style
     new_save.display_encoding = old_save.display_encoding
     new_save.retired_careers = [dict(item, highlights=list(item["highlights"])) for item in old_save.retired_careers]
+    new_save.accolades = _copy_accolades(old_save.accolades)  # the account's, not the career's
     new_save.best_credits = max(old_save.best_credits, old_save.pilot.credits)
     new_save.pilot.retirements = retirements
     new_save.pilot.credits += retirements * RETIREMENT_STARTING_CREDITS_BONUS
@@ -4877,7 +5137,38 @@ def _score_entry(data, user_id: int | None = None) -> dict | None:
     achievements = _score_achievements(data.get("achievements"), entry["retirements"])
     if achievements is not None:
         entry["achievements"] = achievements
+    accolades = _score_accolades(data.get("accolades"))
+    if accolades is not None:
+        entry["accolades"] = accolades
     return entry
+
+
+def _score_accolades(data) -> list[str] | None:
+    """The ids a pilot has unlocked, as their score record lists them, or None
+    for a record that lists none -- one written before accolades existed, which
+    rarity leaves out rather than counting as a pilot who earned nothing."""
+    if (not isinstance(data, list) or len(data) > 512
+            or any(not isinstance(item, str) or not _ACCOLADE_ID.fullmatch(item) for item in data)
+            or len(set(data)) != len(data) or data != sorted(data)):
+        return None
+    return list(data)
+
+
+def accolade_rarity(save_dir: Path) -> tuple[dict[str, int], int]:
+    """How many of this board's pilots hold each accolade, and of how many.
+
+    Read from the same score records the Hall of Fame ranks, so it costs one
+    directory read and shares its snapshot rules: a record that will not read
+    is left out, never guessed at."""
+    holders: dict[str, int] = {}
+    pilots = 0
+    for entry in _load_score_records(save_dir):
+        if "accolades" not in entry:
+            continue
+        pilots += 1
+        for accolade_id in entry["accolades"]:
+            holders[accolade_id] = holders.get(accolade_id, 0) + 1
+    return holders, pilots
 
 
 def _read_score_json(path: Path, limit: int = MAX_SAVE_BYTES):
@@ -5015,7 +5306,8 @@ def update_hall_of_fame(save_dir: Path, user_id: int, save: SaveData) -> None:
     entry = {"user_id": user_id, "handle": pilot.handle, "best_credits": best,
              "rank": rank_for(best), "retirements": pilot.retirements,
              "kills": pilot.kills, "missions_completed": pilot.missions_completed,
-             "achievements": score_achievements(save)}
+             "achievements": score_achievements(save),
+             "accolades": sorted((save.accolades or {}).get("unlocked", {}))}
     if raw == entry and _score_entry(raw, user_id) == entry:
         return
     try:
@@ -5647,8 +5939,10 @@ _FOREIGN_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-ln-zA-Z]"
                              r"|\x1b\([AB0-2]|\x1b[78HDM]"
                              r"|\x1b(?!\[[0-9;]*m)"
                              # \x01-\x03 are this file's own row marks,
-                             # stripped by `draw_page` as it prints.
-                             r"|[\x00\x04-\x08\x0b-\x1a\x1c-\x1f\x7f]")
+                             # stripped by `draw_page` as it prints. C1
+                             # controls are escapes in a single character
+                             # (U+009B is CSI) on a UTF-8 terminal (issue #15).
+                             r"|[\x00\x04-\x08\x0b-\x1a\x1c-\x1f\x7f-\x9f]")
 _KEY_RE = re.compile(r"\[[^\[\]]{1,9}\]")
 _GAUGE_RE = re.compile(r"[▀-▐░-▓■]{2,}")
 
@@ -5933,13 +6227,15 @@ _SPLASH_16_ROLES = {(127, 163, 191): 6, (179, 155, 125): 7, (232, 240, 255): 15,
                     (47, 56, 68): 8, (70, 82, 98): 8}
 
 
-def _splash_16(rgb: tuple[int, int, int]) -> int:
+def _splash_16(rgb: tuple[int, int, int], red: bool = False) -> int:
     """A color's sixteen-color reading by hue family, not by nearest distance.
 
     Nearest distance turns every violet of the planet into grey: the sixteen
     colors are saturated corners, and a muted violet is closer to the middle.
     Picking the family by hue and the bright half by value keeps a violet
-    planet magenta and a gold wordmark yellow."""
+    planet magenta and a gold wordmark yellow. The in-flight scenes pass
+    `red`: a raider's hull, an alarm and a fireball are red, and read wrong
+    as anything else."""
     if rgb in _SPLASH_16_ROLES:
         return _SPLASH_16_ROLES[rgb]
     r, g, b = (component / 255 for component in rgb)
@@ -5957,13 +6253,15 @@ def _splash_16(rgb: tuple[int, int, int]) -> int:
         hue = 60 * (r - g) / (high - low) + 240
     # No red: the splash has nothing alarming in it, and a salmon or a peach is
     # read as the warm end of magenta or of gold instead.
+    if red and (hue < 22 or hue >= 340):
+        return 1 + (8 if high > 0.85 else 0)
     family = (5 if hue < 8 or hue >= 300 else 3 if hue < 75 else 2 if hue < 160
               else 6 if hue < 205 else 4 if hue < 255 else 5)
     return family + (8 if high > 0.62 else 0)
 
 
 def _splash_sgr(fg: tuple[int, int, int] | None, bg: tuple[int, int, int] | None,
-                reset: bool = True) -> str:
+                reset: bool = True, red: bool = False) -> str:
     """One cell's colors as a single SGR, at the depth this preset draws.
 
     Without `reset` it only sets: right after a cell whose colors this one
@@ -5974,7 +6272,7 @@ def _splash_sgr(fg: tuple[int, int, int] | None, bg: tuple[int, int, int] | None
         if rgb is None:
             continue
         if _OUTPUT_STYLE == "basic":
-            index = _splash_16(rgb)
+            index = _splash_16(rgb, red)
             offset = 30 if base == 38 else 40
             parts.append(str(offset + index if index < 8 else offset + 60 + index - 8))
         elif truecolor:
@@ -6266,9 +6564,10 @@ def splash_frame(layout: _SplashLayout, frame: int) -> list[list[tuple[str, tupl
     return cells
 
 
-def _splash_delta(previous, current, top: int = 0, left: int = 0) -> str:
+def _splash_delta(previous, current, top: int = 0, left: int = 0, red: bool = False) -> str:
     """The escapes that turn `previous` into `current`: changed cells only,
-    with the composition's top-left corner at screen cell (`top`, `left`)."""
+    with the composition's top-left corner at screen cell (`top`, `left`).
+    `red` lets a sixteen-color reading be red (see `_splash_16`)."""
     out_parts: list[str] = []
     cursor: tuple[int, int] | None = None
     style = None
@@ -6285,7 +6584,7 @@ def _splash_delta(previous, current, top: int = 0, left: int = 0) -> str:
                 else:
                     # A color only needs a reset when it takes one away.
                     takes_away = style is None or (style[0] is not None and wanted[0] is None)                         or (style[1] is not None and wanted[1] is None)
-                    out_parts.append(_splash_sgr(wanted[0], wanted[1], reset=takes_away))
+                    out_parts.append(_splash_sgr(wanted[0], wanted[1], reset=takes_away, red=red))
                 style = wanted
             out_parts.append(new[0])
             cursor = (row, column + max(1, _char_width(new[0])))
@@ -6402,6 +6701,1390 @@ def play_splash(info: dict) -> bool:
         clear_screen()
         out(f"{ESC}[?25h")
     return True
+
+
+# ---------------------------------------------------------------------------
+# In-flight scenes. The splash's machinery -- half-block pixels, its color
+# depth rules, changed cells only -- played at the moments a voyage turns on:
+# the jump out, a contact, a kill, the loss of the ship, a clean escape, a
+# customs sweep and the approach to a station. Each scene is a pure function of
+# its frame number, composed one frame at a time as it plays, at most
+# `SPLASH_MAX_WIDTH` x `SPLASH_MAX_HEIGHT` and centred beyond that.
+#
+# Scenes are motion, under motion's rules (issue #493 §3) and the splash's two
+# stricter ones: absent from `fast`, `mono` and `plain`, absent with nobody
+# watching or with keys already waiting, and over the moment a key arrives --
+# a key they take, with the rest of its input unit, because what follows is a
+# screen the caller has not seen yet. Unlike the splash they do not wait for a
+# key: the last frame holds for `SCENE_HOLD_SECONDS`, long enough to read its
+# caption, and play goes on. A scene plays after the commit it shows, never
+# before it, and nothing a caller needs is only in a scene: every caption
+# repeats what the hop report or the next screen already says.
+#
+# Randomness is a private `random.Random` per scene, seeded from text, so a
+# scene is the same every time it is composed and the galaxy's and the event
+# generators never see a call from here.
+# ---------------------------------------------------------------------------
+
+SCENE_FRAME_SECONDS = 0.07
+SCENE_HOLD_SECONDS = 0.8
+SCENE_COLOR_STEP = 24
+
+
+def scenes_switched_off() -> bool:
+    """`DOOR_SCENES=0` (or `off`, `no`, `false`) turns the in-flight scenes off.
+
+    The SysOp's switch, like `DOOR_SPLASH`; a caller who wants none picks the
+    `fast` preset. The suite and the door gallery set it, so a scripted walk
+    that types one key at a time never has a keystroke taken by a scene.
+    """
+    return os.environ.get("DOOR_SCENES", "").strip().lower() in ("0", "off", "no", "false")
+
+
+def _span(t: float, start: float, end: float) -> float:
+    """How far `t` has come from `start` to `end`, clamped to 0..1."""
+    return max(0.0, min(1.0, (t - start) / (end - start)))
+
+
+def _ease_out(t: float) -> float:
+    return 1 - (1 - max(0.0, min(1.0, t))) ** 3
+
+
+def _ease_in(t: float) -> float:
+    return max(0.0, min(1.0, t)) ** 3
+
+
+# Fire, by heat: smoke at nothing, white at everything.
+_HEAT_STOPS = ((0.0, (34, 14, 44)), (0.22, (122, 26, 46)), (0.42, (226, 76, 36)),
+               (0.62, (255, 166, 56)), (0.82, (255, 234, 168)), (1.0, (255, 255, 255)))
+
+
+def _heat(level: float) -> tuple[int, int, int]:
+    """Fire at `level`, in tenths: a cooling cell changes a few times, not every frame."""
+    level = max(0.0, min(1.0, round(level * 10) / 10))
+    for (low, a), (high, b) in zip(_HEAT_STOPS, _HEAT_STOPS[1:]):
+        if level <= high:
+            return _mix(a, b, (level - low) / (high - low))
+    return _HEAT_STOPS[-1][1]
+
+
+# Sprites, drawn a pixel per character. The pilot's hulls fly nose right, as the
+# splash ship does; raiders and Concord fly nose left, at them.
+_SCENE_HULLS = {
+    "Shuttle": _SPLASH_SHIP,
+    "Freighter": ("...dd.dd.dd.....",
+                  ".hhhhhhhhhhhh...",
+                  "fhllllllllllhhc.",
+                  "fhhhhhhhhhhhhhhn",
+                  "fhdddddddddddd..",
+                  ".hhhhhhhhhhhh...",
+                  "...dd.dd.dd....."),
+    "Cutter": ("ff...........",
+               ".ffhl........",
+               "..hhlllllcc..",
+               "..hhhhhhhhhhn",
+               "..ddddddddd..",
+               ".ffdd........",
+               "ff..........."),
+    "Carrier": (".....dddddd.........",
+                "..hhhhhhhhhhhhhh....",
+                "fhllcllcllcllllhhh..",
+                "fhhhhhhhhhhhhhhhhhhn",
+                "fhddddddddddddddhh..",
+                "..hhhhhhhhhhhhhh....",
+                ".....dddddd........."),
+}
+_SCENE_RAIDER = ("rr...........",
+                 ".rrk....s....",
+                 "..rrrrrrrkk..",
+                 "...yrrrrrrkkg",
+                 "..rrrrrrrkk..",
+                 ".rrk....s....",
+                 "rr...........")
+_SCENE_PATROL = ("......oooo....",
+                 "...wwwwwwoo...",
+                 ".xwbbbbbbbbooo",
+                 "wwwwwwwwwwwwog",
+                 ".zwbbbbbbbbooo",
+                 "...wwwwwwoo...",
+                 "......oooo....")
+_SCENE_COLORS = dict(_SPLASH_SHIP_COLORS,
+                     r=(178, 58, 52), k=(92, 34, 44), y=(255, 206, 72), g=(255, 130, 70),
+                     s=(150, 150, 164), w=(232, 238, 248), b=(64, 112, 222), o=(118, 128, 150),
+                     x=(255, 64, 64), z=(80, 150, 255))
+# The planet of the system a pilot docks at, banded by what the system does.
+_SCENE_WORLD_BANDS = {
+    "Agricultural": ((36, 92, 168), (58, 140, 96), (92, 172, 112), (44, 112, 176), (70, 150, 100)),
+    "Industrial": ((150, 92, 60), (196, 128, 74), (120, 72, 52), (176, 112, 82), (210, 150, 96)),
+    "Mining": ((120, 110, 102), (156, 132, 110), (92, 86, 82), (176, 124, 92), (136, 120, 108)),
+    "Tech": ((58, 118, 200), (96, 184, 232), (52, 92, 172), (124, 204, 240), (70, 140, 210)),
+    "Haven": _SPLASH_BANDS,
+}
+# A station's running lights, by economy: the color a pilot learns to read.
+_SCENE_LIGHTS = {"Agricultural": (120, 230, 130), "Industrial": (255, 160, 70), "Mining": (255, 206, 90),
+                 "Tech": (110, 220, 255), "Haven": (255, 90, 200)}
+_SCENE_ALARM, _SCENE_MINT, _SCENE_SLATE = (255, 84, 84), (120, 230, 170), (127, 163, 191)
+_SCENE_INK, _SCENE_CONCORD = (232, 240, 255), (110, 170, 255)
+
+
+class _Stage:
+    """One frame being composed: half-block pixels under a layer of characters.
+
+    `width` x `height` cells, two pixels to a cell, so pixels come out roughly
+    square. The last row is never drawn, as the splash leaves it, so nothing is
+    ever written to the bottom-right cell where a terminal may scroll. Text is
+    drawn over everything; marks (stars, mostly) only where the sky is empty.
+    """
+
+    def __init__(self, width: int, height: int):
+        self.width, self.height = width, height
+        self.rows = height - 1
+        self.px_h = self.rows * 2
+        self.pixels: list[list[tuple | None]] = [[None] * width for _ in range(self.px_h)]
+        self.marks: dict[tuple[int, int], tuple] = {}
+        self.text_cells: dict[tuple[int, int], tuple] = {}
+
+    def get(self, x: float, y: float) -> tuple | None:
+        x, y = math.floor(x), math.floor(y)
+        return self.pixels[y][x] if 0 <= x < self.width and 0 <= y < self.px_h else None
+
+    def plot(self, x: float, y: float, color: tuple | None) -> None:
+        x, y = math.floor(x), math.floor(y)
+        if 0 <= x < self.width and 0 <= y < self.px_h:
+            self.pixels[y][x] = color
+
+    def blend(self, x: float, y: float, color: tuple, amount: float) -> None:
+        """Mix toward `color` over what is there, empty sky counting as black."""
+        x, y = math.floor(x), math.floor(y)
+        if amount > 0 and 0 <= x < self.width and 0 <= y < self.px_h:
+            self.pixels[y][x] = _mix(self.pixels[y][x] or (0, 0, 0), color, amount)
+
+    def mark(self, row: int, column: int, ch: str, color: tuple) -> None:
+        if 0 <= row < self.rows and 0 <= column < self.width:
+            self.marks[(row, column)] = (ch, color, None)
+
+    def text(self, row: int, pieces: list[tuple[str, tuple]], *, shown: int | None = None) -> None:
+        """(text, color) pieces centred on one row, the first `shown` characters only."""
+        if not 0 <= row < self.rows:
+            return
+        x = max(0, (self.width - sum(_visible_width(piece) for piece, _ in pieces)) // 2)
+        typed = 0
+        for piece, color in pieces:
+            for ch in piece:
+                width = _char_width(ch)
+                if (shown is not None and typed >= shown) or x + width > self.width:
+                    return
+                self.text_cells[(row, x)] = (ch, color, None)
+                for extra in range(1, width):
+                    self.text_cells[(row, x + extra)] = ("", color, None)
+                x += width
+                typed += 1
+
+    def cells(self) -> list[list[tuple[str, tuple | None, tuple | None]]]:
+        """The frame as cells. Pixel colors are snapped to `SCENE_COLOR_STEP`:
+        a shade that drifts by a few units between frames is not a change worth
+        sending, and neighbours that snap together share one SGR."""
+        step = SCENE_COLOR_STEP
+
+        def snap(color: tuple | None) -> tuple | None:
+            return None if color is None else tuple(min(255, (c + step // 2) // step * step) for c in color)
+
+        rows = []
+        for row in range(self.height):
+            line = []
+            for x in range(self.width):
+                cell = self.text_cells.get((row, x))
+                if cell is None and row < self.rows:
+                    a, b = snap(self.pixels[row * 2][x]), snap(self.pixels[row * 2 + 1][x])
+                    if a is None and b is None:
+                        cell = self.marks.get((row, x))
+                    elif a is not None and b is not None:
+                        cell = (" ", None, a) if a == b else ("▀", a, b)
+                    else:
+                        cell = ("▀", a, None) if a is not None else ("▄", b, None)
+                line.append(cell or (" ", None, None))
+            rows.append(line)
+        return rows
+
+
+def _scene_sprite(stage: _Stage, art: tuple[str, ...], x: float, y: float, *, zoom: int = 1,
+                  flip: bool = False, colors: dict | None = None, tint: tuple | None = None,
+                  amount: float = 0.0) -> None:
+    """Draw `art` with its top-left pixel at (`x`, `y`), `zoom` pixels a cell."""
+    palette = colors or _SCENE_COLORS
+    x0, y0 = math.floor(x), math.floor(y)
+    for row_index, row in enumerate(art):
+        for column, key in enumerate(reversed(row) if flip else row):
+            if key == ".":
+                continue
+            color = palette[key]
+            if tint is not None:
+                color = _mix(color, tint, amount)
+            for dy in range(zoom):
+                for dx in range(zoom):
+                    stage.plot(x0 + column * zoom + dx, y0 + row_index * zoom + dy, color)
+
+
+def _scene_bolt(stage: _Stage, x0: float, x1: float, y: float, color: tuple, zoom: int = 1) -> None:
+    """A weapon bolt: a bright core with a cooler edge, from `x0` to `x1`."""
+    low, high = sorted((math.floor(x0), math.floor(x1)))
+    for x in range(low, high + 1):
+        stage.plot(x, y, _mix(color, (255, 255, 255), 0.55))
+        if zoom > 1:
+            stage.plot(x, y + 1, color)
+
+
+def _scene_ring(stage: _Stage, cx: float, cy: float, radius: float, color: tuple, amount: float,
+                squash: float = 1.0) -> None:
+    """A thin ring, blended in: a shockwave or a hyperspace hoop."""
+    if radius <= 0 or amount <= 0:
+        return
+    steps = max(12, int(radius * 7))
+    for step in range(steps):
+        angle = 2 * math.pi * step / steps
+        stage.blend(cx + math.cos(angle) * radius, cy + math.sin(angle) * radius * squash, color, amount)
+
+
+class _Blast:
+    """A fireball, its shockwave and its debris, at `age` 0..1 of its life.
+
+    `size` is the fireball's widest radius in pixels; everything else scales
+    from it. The debris is chosen once, from the seed."""
+
+    def __init__(self, cx: float, cy: float, size: float, seed: str, chunks: tuple = ()):
+        rng = random.Random(f"scene-blast:{seed}")
+        self.cx, self.cy, self.size = cx, cy, size
+        self.lobes = [rng.uniform(0, 2 * math.pi) for _ in range(3)]
+        self.debris = [(rng.uniform(0, 2 * math.pi), rng.uniform(0.6, 2.4), rng.random() < 0.3)
+                       for _ in range(18 + int(size * 2))]
+        # Pieces of the wreck itself: a hull color each, thrown wider and slower.
+        self.chunks = [(rng.uniform(0, 2 * math.pi), rng.uniform(0.7, 1.7), color) for color in chunks]
+
+    def draw(self, stage: _Stage, age: float) -> None:
+        """Nothing at all at age 0: a blast that has not started is not drawn."""
+        if not 0.0 < age <= 1.0:
+            return
+        size, cx, cy = self.size, self.cx, self.cy
+        # The shockwave runs ahead of everything and is gone by mid-life.
+        wave = _ease_out(age / 0.55)
+        _scene_ring(stage, cx, cy, size * (0.4 + 1.9 * wave), (255, 214, 180), 0.85 * (1 - wave), squash=0.55)
+        swell = _ease_out(age / 0.3)
+        radius = size * (0.25 + 0.75 * swell) * (1.0 - 0.35 * _span(age, 0.55, 1.0))
+        cooling = _span(age, 0.2, 1.0)
+        reach = int(radius * 1.3) + 1
+        for py in range(math.floor(cy) - reach, math.floor(cy) + reach + 1):
+            for px in range(math.floor(cx) - reach, math.floor(cx) + reach + 1):
+                dx, dy = px + 0.5 - cx, py + 0.5 - cy
+                angle = math.atan2(dy, dx)
+                edge = radius * (0.82 + 0.1 * math.sin(3 * angle + self.lobes[0])
+                                 + 0.08 * math.sin(5 * angle + self.lobes[1]))
+                d = math.hypot(dx, dy) / max(0.5, edge)
+                if d > 1.0:
+                    continue
+                level = (1.0 - d) * 1.25 + 0.15 - cooling * 1.05 + 0.08 * math.sin(px * 1.7 + py * 2.3 + self.lobes[2])
+                if level <= 0.02:
+                    continue
+                stage.plot(px, py, _heat(level))
+        # Sparks fly straight out, burning down as they go.
+        for angle, speed, bright in self.debris:
+            travel = size * speed * _ease_out(age * 1.1)
+            x, y = cx + math.cos(angle) * travel, cy + math.sin(angle) * travel * 0.7
+            heat = (0.95 if bright else 0.7) - age * 0.9
+            if heat > 0.05:
+                stage.plot(x, y, _heat(heat))
+        for angle, speed, color in self.chunks:
+            travel = size * speed * _ease_out(age)
+            x, y = cx + math.cos(angle) * travel, cy + math.sin(angle) * travel * 0.7
+            stage.plot(x, y, _scale(color, 1.0 - age * 0.6))
+            stage.plot(x + 1, y, _scale(color, 0.8 - age * 0.5))
+
+
+class _Scene:
+    """What every scene shares: the frame count, the sky and the caption block.
+
+    The caption sits on the bottom two drawn rows under a gradient rule in the
+    splash's gold-to-plasma; the sky is everything above the rule, and
+    `mid` its centre line in pixels. `zoom` grows the sprites on a tall
+    terminal, where a seven-pixel ship would be a speck."""
+
+    frames = 24
+    hold = SCENE_HOLD_SECONDS
+
+    def __init__(self, width: int, height: int, seed: str):
+        self.width, self.height = width, height
+        self.rows = height - 1
+        self.caption_row = self.rows - 2
+        self.sky_rows = self.caption_row - 1
+        self.sky_px = self.sky_rows * 2
+        self.mid = self.sky_px // 2
+        self.zoom = 1 if self.sky_px < 52 else 2 if self.sky_px < 84 else 3
+        rng = random.Random(f"scene-stars:{seed}")
+        count = max(8, width * self.sky_rows // 60)
+        self.stars = [(rng.uniform(0, width), rng.randrange(max(1, self.sky_rows)), rng.random() < 0.2)
+                      for _ in range(count)]
+
+    def frame(self, index: int) -> list[list[tuple[str, tuple | None, tuple | None]]]:
+        stage = _Stage(self.width, self.height)
+        self.draw(stage, index, index / max(1, self.frames - 1))
+        return stage.cells()
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        raise NotImplementedError
+
+    def starfield(self, stage: _Stage, drift: float = 0.0) -> None:
+        """The stars as characters, the near fifth drifting twice as fast."""
+        for x0, row, near in self.stars:
+            x = int(x0 - drift * (2 if near else 1)) % self.width
+            if near:
+                stage.mark(row, x, "+" if (x + row) % 3 else "*", (200, 214, 255))
+            else:
+                stage.mark(row, x, "·" if (x * 7 + row) % 4 else ".", (82, 94, 128) if (x + row) % 2 else (120, 132, 170))
+
+    def sprite_size(self, art: tuple[str, ...]) -> tuple[int, int]:
+        return len(art[0]) * self.zoom, len(art) * self.zoom
+
+    def caption(self, stage: _Stage, t: float, start: float, title: str, color: tuple,
+                detail: list[tuple[str, tuple]]) -> None:
+        """The rule grows from the centre, the title types out, the detail follows."""
+        grow = _span(t, start, start + 0.1)
+        if grow <= 0:
+            return
+        rule_y = self.sky_rows * 2 + 1
+        half = int(self.width * 0.45 * grow)
+        for x in range(self.width // 2 - half, self.width // 2 + half):
+            stage.plot(x, rule_y, _mix(_SPLASH_GOLD, _SPLASH_PLASMA, x / max(1, self.width - 1)))
+        title = _fit_text(title, self.width - 2)
+        stage.text(self.caption_row, [(title, color)], shown=int(_span(t, start + 0.04, start + 0.16) * len(title)))
+        if t >= start + 0.18:
+            # Whole pieces, in order, as many as fit: a phrase cut to its first
+            # word reads as a different phrase. Only the first may be cut.
+            room, fitted = self.width - 2, []
+            for piece, tone in detail:
+                if _visible_width(piece) > room:
+                    if not fitted:
+                        fitted.append((_fit_text(piece, room), tone))
+                    break
+                fitted.append((piece, tone))
+                room -= _visible_width(piece)
+            while fitted and not fitted[-1][0].strip(" ·"):
+                fitted.pop()
+            stage.text(self.caption_row + 1, fitted)
+
+
+def _scene_text(text: str) -> str:
+    """A caller-visible name as plain characters: what a scene may print."""
+    return _splash_plain(text) or "?"
+
+
+class _JumpScene(_Scene):
+    """The jump: the drive spools, the stars stretch into streaks, the ship
+    is gone in a flash, and the tunnel's hoops rush past under the
+    destination's name."""
+
+    frames = 26
+
+    def __init__(self, width: int, height: int, *, hull: str, destination: str | None,
+                 burn: int, fuel: int, day: int, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.destination = destination
+        self.detail = [(f"Day {day}", _SCENE_INK), ("  ·  ", _SCENE_SLATE),
+                       (f"{burn} fuel burned, {fuel} left", _SCENE_SLATE)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid, sky = self.width, self.mid, self.sky_px
+        speed = _ease_in(_span(t, 0.1, 0.55))
+        tunnel = _span(t, 0.56, 1.0)
+        if speed < 0.08:
+            self.starfield(stage, drift=index * 0.4)
+        elif tunnel <= 0:
+            # Streaks: each star's trail lengthens as the drive comes up.
+            for x0, row, near in self.stars:
+                length = int(2 + speed * w * (0.55 if near else 0.3))
+                head = (x0 - index * (3 if near else 2) * (1 + speed * 4)) % (w + length)
+                y = row * 2 + (1 if near else 0)
+                for d in range(length):
+                    fade = math.ceil((1.0 - d / length) * 3) / 3
+                    color = _mix((60, 50, 120), (210, 220, 255) if near else (150, 140, 230), fade)
+                    stage.plot(head + d, y, color)
+        if tunnel > 0:
+            # Inside the jump: light streams out of a violet core, the hoops of
+            # the tunnel rushing past with it.
+            for py in range(sky):
+                for px in range(w):
+                    d = math.hypot((px - w / 2) / (w * 0.5), (py - mid) / (sky * 0.5))
+                    if d < 0.35:
+                        stage.plot(px, py, _mix((120, 60, 200), (20, 10, 50), d / 0.35))
+            for number, (x0, row, near) in enumerate(self.stars[::2]):
+                angle = x0 / w * 2 * math.pi + row
+                phase = (tunnel * (1.4 if near else 0.9) + number * 2 / len(self.stars)) % 1.0
+                inner = 0.12 + phase ** 2 * 1.1
+                outer = inner + 0.06 + phase * 0.22
+                steps = int((outer - inner) * w * 0.6) + 2
+                for step in range(steps):
+                    r = inner + (outer - inner) * step / steps
+                    color = _mix((90, 70, 200), (230, 220, 255) if near else (200, 140, 255), math.ceil(step / steps * 3) / 3)
+                    stage.plot(w / 2 + math.cos(angle) * r * w * 0.5, mid + math.sin(angle) * r * sky * 0.5, color)
+            for hoop in range(2):
+                phase = (tunnel * 1.2 + hoop / 2) % 1.0
+                _scene_ring(stage, w / 2, mid, 2 + phase ** 2 * w * 0.55, _mix((90, 70, 220), (255, 120, 220), phase),
+                            0.7 * (1 - phase), squash=0.5)
+        # The ship holds on the left third, shivering as the drive charges, then goes.
+        launch = _ease_in(_span(t, 0.38, 0.56))
+        art_w, art_h = self.sprite_size(self.art)
+        if launch < 1.0:
+            x = w * 0.22 - art_w / 2 + launch * w * 1.1
+            y = mid - art_h // 2 + (1 if index % 2 and 0.2 < t < 0.38 else 0)
+            charge = _span(t, 0.05, 0.38)
+            flare = int((2 + charge * 6 + launch * w * 0.6) * self.zoom)
+            for d in range(flare):
+                heat = (1 - d / max(1, flare)) * (0.5 + charge * 0.5)
+                for spread in range(self.zoom):
+                    stage.plot(x - 1 - d, mid + spread - self.zoom // 2, _heat(heat))
+            _scene_sprite(stage, self.art, x, y, zoom=self.zoom)
+        # The flash where the ship went: the whole sky, gone white and fading.
+        # One flat color, so the frame that fills the sky is one SGR and spaces.
+        flash = 1.0 - abs(t - 0.58) / 0.08
+        if flash > 0.3:
+            color = _mix((70, 50, 140), (236, 230, 255), flash)
+            for py in range(sky):
+                for px in range(w):
+                    stage.plot(px, py, color)
+        title = f"JUMP  >>  {self.destination.upper()}" if self.destination else "JUMP  >>  UNCHARTED SPACE"
+        self.caption(stage, t, 0.62, title, _SPLASH_GOLD, self.detail)
+
+
+def _contact_title(kind: str, count: int) -> tuple[str, tuple]:
+    return {"patrol": ("CONCORD INTERDICTION", _SCENE_CONCORD), "bounty": ("BOUNTY TARGET ACQUIRED", _SPLASH_GOLD),
+            "escort": ("CONVOY UNDER ATTACK", _SCENE_ALARM), "ambush": ("THE WRECK WAKES UP", _SCENE_ALARM),
+            "squadron": (f"RAIDER SQUADRON  ·  {count} SHIPS", _SCENE_ALARM)}.get(kind, ("RAIDER CONTACT", _SCENE_ALARM))
+
+
+class _ContactScene(_Scene):
+    """A contact: the alert bar pulses, the hostiles swing in from the right
+    and the targeting brackets close on the one the pilot is about to fight."""
+
+    frames = 24
+
+    def __init__(self, width: int, height: int, *, hull: str, kind: str, names: list[str],
+                 target: int, tier: int, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.kind, self.target = kind, target
+        self.enemy = _SCENE_PATROL if kind == "patrol" else _SCENE_RAIDER
+        self.count = max(1, len(names))
+        self.title, self.color = _contact_title(kind, self.count)
+        name = _scene_text(names[target] if names else "unknown")
+        why = {"patrol": "your transponder flags as wanted", "bounty": "the warrant names this hull",
+               "escort": "raiders close on the convoy",
+               "ambush": "its guns were never dead"}.get(kind, f"threat tier {tier}")
+        self.detail = [(name, _SCENE_INK), ("  ·  ", _SCENE_SLATE), (why, _SCENE_SLATE)]
+
+    def enemy_spots(self, t: float) -> list[tuple[float, float]]:
+        """Where each hostile is, top-left pixel, at `t`: they arrive and settle."""
+        ew, eh = self.sprite_size(self.enemy)
+        settle = _ease_out(_span(t, 0.08, 0.5))
+        spots = []
+        for index in range(self.count):
+            home_x = self.width * (0.68 + 0.1 * index) - ew / 2
+            home_y = self.mid - eh // 2 + (index * 2 - (self.count - 1)) * (eh // 2 + 2)
+            spots.append((home_x + (1 - settle) * (self.width * 0.5 + index * 6), home_y))
+        return spots
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w = self.width
+        self.starfield(stage, drift=index * 0.3)
+        art_w, art_h = self.sprite_size(self.art)
+        if self.kind == "escort":
+            # The convoy, behind and below: two freighters that cannot fight.
+            freighter = _SCENE_HULLS["Freighter"]
+            for offset in range(2):
+                _scene_sprite(stage, freighter, w * 0.04 + offset * 8, self.mid + art_h // 2 + 2 + offset * 4,
+                              tint=(20, 24, 40), amount=0.45)
+        enter = _ease_out(_span(t, 0.0, 0.3))
+        sx = w * 0.22 - art_w / 2 - (1 - enter) * w * 0.3
+        sy = self.mid - art_h // 2
+        _scene_sprite(stage, self.art, sx, sy, zoom=self.zoom)
+        stage.plot(sx - 1, self.mid, _heat(0.7 + 0.2 * (index % 2)))
+        ew, eh = self.sprite_size(self.enemy)
+        strobe = index % 4 < 2
+        colors = dict(_SCENE_COLORS, x=(255, 64, 64) if strobe else (80, 20, 30),
+                      z=(40, 60, 120) if strobe else (80, 150, 255))
+        for number, (ex, ey) in enumerate(self.enemy_spots(t)):
+            _scene_sprite(stage, self.enemy, ex, ey, zoom=self.zoom, colors=colors,
+                          tint=(10, 10, 20), amount=0.0 if number == self.target else 0.35)
+            for d in range(1, 3 + index % 2):
+                stage.plot(ex + ew - 1 + d, ey + eh // 2, _heat(0.75 - d * 0.2))
+        # The brackets close on the target, then hold and blink.
+        lock = _ease_out(_span(t, 0.42, 0.62))
+        if lock > 0 and (t < 0.62 or index % 4 != 3):
+            ex, ey = self.enemy_spots(t)[self.target]
+            gap = 2 + (1 - lock) * 10
+            left, right = ex - gap, ex + ew - 1 + gap
+            top, bottom = ey - gap * 0.6, ey + eh - 1 + gap * 0.6
+            arm = 3 * self.zoom
+            for x, y, ux, uy in ((left, top, 1, 1), (right, top, -1, 1), (left, bottom, 1, -1), (right, bottom, -1, -1)):
+                for d in range(arm):
+                    stage.plot(x + ux * d, y, self.color)
+                    stage.plot(x, y + uy * d, self.color)
+        # The alert: a band across the top that pulses, red and blue for Concord.
+        pulse = 1.0 if index // 2 % 2 == 0 else 0.45
+        for x in range(w):
+            if self.kind == "patrol":
+                color = (220, 40, 50) if (x < w // 2) == strobe else (40, 90, 230)
+            else:
+                color = self.color
+            stage.plot(x, 0, _scale(color, pulse))
+        label = f" {self.title} "
+        if t < 0.62:
+            stage.text(1, [(label, _scale(self.color, 0.6 + 0.4 * pulse))])
+        self.caption(stage, t, 0.62, self.title, self.color, self.detail)
+
+
+class _KillScene(_Scene):
+    """A kill: two bolts cross the gap and the target comes apart."""
+
+    frames = 26
+
+    def __init__(self, width: int, height: int, *, hull: str, patrol: bool, name: str, loot: int, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.enemy = _SCENE_PATROL if patrol else _SCENE_RAIDER
+        ew, eh = self.sprite_size(self.enemy)
+        self.ex, self.ey = width * 0.68 - ew / 2, self.mid - eh // 2
+        palette = ("w", "b", "o") if patrol else ("r", "k", "s")
+        self.blast = _Blast(width * 0.68, self.mid, max(4.0, min(self.sky_px * 0.42, width * 0.16)), seed,
+                            chunks=tuple(_SCENE_COLORS[key] for key in palette * 3))
+        self.patrol = patrol
+        name = _scene_text(name)
+        self.title = "CONCORD VESSEL DESTROYED" if patrol else "TARGET DESTROYED"
+        self.detail = ([(name, _SCENE_INK), ("  ·  ", _SCENE_SLATE), ("Concord will not forget this", _SCENE_ALARM)]
+                       if patrol else [(name, _SCENE_INK), ("  ·  ", _SCENE_SLATE), (f"salvage +{loot:,}cr", _SPLASH_GOLD)])
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w = self.width
+        self.starfield(stage, drift=index * 0.3)
+        art_w, art_h = self.sprite_size(self.art)
+        sx, sy = w * 0.2 - art_w / 2, self.mid - art_h // 2
+        nose = sx + art_w
+        target = self.ex + 2
+        boom = _span(t, 0.24, 0.9)
+        # Recoil: the hull kicks back a pixel with each shot.
+        recoil = 1 if any(0 <= t - shot < 0.04 for shot in (0.04, 0.14)) else 0
+        _scene_sprite(stage, self.art, sx - recoil, sy, zoom=self.zoom)
+        stage.plot(sx - 1 - recoil, self.mid, _heat(0.75))
+        if boom <= 0.04:
+            _scene_sprite(stage, self.enemy, self.ex, self.ey, zoom=self.zoom,
+                          tint=(255, 255, 255), amount=0.7 if 0.2 < t < 0.24 else 0.0)
+        for shot, lane in ((0.04, -1), (0.14, 1)):
+            flight = _span(t, shot, shot + 0.1)
+            if 0 < flight < 1:
+                head = nose + (target - nose) * flight
+                _scene_bolt(stage, head - 5 * self.zoom, head, self.mid + lane * self.zoom, (255, 90, 190), self.zoom)
+            elif flight >= 1 and t < shot + 0.14:
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        stage.blend(target + dx, self.mid + lane * self.zoom + dy, (255, 240, 200), 0.9 - 0.3 * abs(dx * dy))
+        self.blast.draw(stage, boom)
+        self.caption(stage, t, 0.6, self.title, _SCENE_ALARM if self.patrol else _SCENE_MINT, self.detail)
+
+
+class _LostScene(_Scene):
+    """The ship lost: fire comes in, the hull glows, it breaks apart, and the
+    screen goes dark under the tug's promise."""
+
+    frames = 30
+    hold = SCENE_HOLD_SECONDS + 0.4
+
+    def __init__(self, width: int, height: int, *, hull: str, patrol: bool, name: str, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.enemy = _SCENE_PATROL if patrol else _SCENE_RAIDER
+        art_w, art_h = self.sprite_size(self.art)
+        self.sx, self.sy = width * 0.36 - art_w / 2, self.mid - art_h // 2
+        hull_keys = [key for row in self.art for key in row if key != "."]
+        self.blast = _Blast(width * 0.36, self.mid, max(4.0, min(self.sky_px * 0.36, width * 0.15)), seed + ":lost",
+                            chunks=tuple(_SCENE_COLORS[key] for key in hull_keys[::6]))
+        self.detail = [("the ", _SCENE_SLATE), (_scene_text(name), _SCENE_INK), (" broke your hull", _SCENE_SLATE),
+                       ("  ·  ", _SCENE_SLATE), ("tug en route to Freeport", _SCENE_SLATE)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w = self.width
+        self.starfield(stage, drift=index * 0.2)
+        art_w, art_h = self.sprite_size(self.art)
+        ew, eh = self.sprite_size(self.enemy)
+        ex, ey = w * 0.8 - ew / 2, self.mid - eh // 2
+        if t < 0.7:
+            _scene_sprite(stage, self.enemy, ex, ey, zoom=self.zoom)
+        boom = _span(t, 0.36, 0.95)
+        if boom <= 0.03:
+            # Hit after hit: the hull shakes and heats from the inside out.
+            damage = _span(t, 0.05, 0.36)
+            shake = (index % 3 - 1) if damage > 0.3 else 0
+            _scene_sprite(stage, self.art, self.sx + shake, self.sy, zoom=self.zoom,
+                          tint=(255, 70, 40), amount=damage * 0.7 * (0.7 + 0.3 * (index % 2)))
+            for shot, lane in ((0.04, -1), (0.13, 1), (0.22, 0), (0.29, -1)):
+                flight = _span(t, shot, shot + 0.08)
+                if 0 < flight < 1:
+                    head = ex - (ex - (self.sx + art_w)) * flight
+                    _scene_bolt(stage, head, head + 5 * self.zoom, self.mid + lane * self.zoom, (255, 70, 60), self.zoom)
+                elif flight >= 1 and t < shot + 0.1:
+                    spark = random.Random(f"spark:{shot}:{index}")
+                    for _ in range(6):
+                        stage.plot(self.sx + art_w - spark.uniform(0, art_w * 0.5),
+                                   self.mid + spark.uniform(-art_h / 2, art_h / 2), _heat(spark.uniform(0.6, 1.0)))
+        self.blast.draw(stage, boom)
+        # Red alarm light washing the edges while the hull fails, then dark.
+        if 0.1 < t < 0.6:
+            alarm = (200, 20, 30) if index // 2 % 2 else (90, 10, 20)
+            for py in (0, self.sky_px - 1):
+                for px in range(w):
+                    stage.plot(px, py, alarm)
+        self.caption(stage, t, 0.66, "HULL BREACH  ·  SHIP LOST", _SCENE_ALARM, self.detail)
+
+
+class _EscapeScene(_Scene):
+    """A clean escape: the pursuer's fire falls behind as the drive takes the ship away."""
+
+    frames = 20
+
+    def __init__(self, width: int, height: int, *, hull: str, patrol: bool, name: str, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.enemy = _SCENE_PATROL if patrol else _SCENE_RAIDER
+        self.detail = [("the ", _SCENE_SLATE), (_scene_text(name), _SCENE_INK), (" falls behind", _SCENE_SLATE)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid = self.width, self.mid
+        speed = _ease_in(_span(t, 0.1, 0.55))
+        for x0, row, near in self.stars:
+            length = int(1 + speed * w * (0.3 if near else 0.15))
+            head = (x0 - index * (2 if near else 1) * (1 + speed * 5)) % (w + length)
+            for d in range(length):
+                stage.plot(head + d, row * 2 + (1 if near else 0),
+                           _mix((40, 40, 90), (200, 214, 255) if near else (120, 132, 170),
+                                math.ceil((1 - d / max(1, length)) * 3) / 3))
+        art_w, art_h = self.sprite_size(self.art)
+        ew, eh = self.sprite_size(self.enemy)
+        # The pursuer, flipped to face the way it chases, slipping back off the left edge.
+        ex = w * 0.12 - ew / 2 - _ease_in(_span(t, 0.2, 0.7)) * w * 0.4
+        _scene_sprite(stage, self.enemy, ex, mid - eh // 2 + 3, zoom=self.zoom, flip=True)
+        for shot, lane in ((0.08, 3), (0.22, -3)):
+            flight = _span(t, shot, shot + 0.2)
+            if 0 < flight < 1:
+                head = ex + ew + flight * w * 0.5
+                _scene_bolt(stage, head - 5 * self.zoom, head, mid + lane * self.zoom, (255, 80, 70), self.zoom)
+        go = _ease_in(_span(t, 0.3, 0.62))
+        x = w * 0.45 - art_w / 2 + go * w * 0.8
+        if x < w:
+            flare = int((4 + speed * 10 + go * w * 0.5) * self.zoom)
+            for d in range(flare):
+                for spread in range(self.zoom):
+                    stage.plot(x - 1 - d, mid + spread - self.zoom // 2, _heat(1 - d / max(1, flare)))
+            _scene_sprite(stage, self.art, x, mid - art_h // 2, zoom=self.zoom)
+        self.caption(stage, t, 0.6, "CONTACT BROKEN", _SCENE_MINT, self.detail)
+
+
+class _ScanScene(_Scene):
+    """A customs sweep: a Concord cutter's beam runs over the hull, and the
+    hold lights up where the contraband is."""
+
+    frames = 26
+
+    def __init__(self, width: int, height: int, *, hull: str, units: int, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.zoom_ship = min(3, self.zoom + 1) if self.sky_px >= 24 else self.zoom
+        art_w, art_h = len(self.art[0]) * self.zoom_ship, len(self.art) * self.zoom_ship
+        self.sx, self.sy = width * 0.34 - art_w / 2, self.mid - art_h // 2
+        # The flagged cells: hull pixels in the middle of the ship, a few of them.
+        rng = random.Random(f"scene-scan:{seed}")
+        inside = [(c, r) for r, row in enumerate(self.art) for c, key in enumerate(row)
+                  if key in "lhd" and 0.2 < c / len(row) < 0.8]
+        self.flags = rng.sample(inside, min(len(inside), max(2, min(6, units // 3 + 2))))
+        self.detail = [("Concord customs", _SCENE_CONCORD), ("  ·  ", _SCENE_SLATE),
+                       (f"{units} units flagged", _SCENE_INK)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, z = self.width, self.zoom_ship
+        self.starfield(stage, drift=index * 0.15)
+        art_w, art_h = len(self.art[0]) * z, len(self.art) * z
+        pw, ph = self.sprite_size(_SCENE_PATROL)
+        px, py = w * 0.8 - pw / 2, self.mid - ph // 2
+        strobe = index % 4 < 2
+        colors = dict(_SCENE_COLORS, x=(255, 64, 64) if strobe else (80, 20, 30),
+                      z=(40, 60, 120) if strobe else (80, 150, 255))
+        _scene_sprite(stage, _SCENE_PATROL, px, py, zoom=self.zoom, colors=colors)
+        sweep = _span(t, 0.1, 0.62)
+        # Two passes: right to left, then back.
+        beam_x = self.sx + art_w + 1 - (sweep * 2 if sweep < 0.5 else 2 - sweep * 2) * (art_w + 2)
+        _scene_sprite(stage, self.art, self.sx, self.sy, zoom=z)
+        scanned = 0.0 < sweep
+        if 0 < sweep < 1:
+            # The beam: a fan from the cutter's nose to a bright line on the hull.
+            for y in range(math.floor(self.sy) - 2, math.floor(self.sy + art_h) + 2):
+                stage.blend(beam_x, y, (140, 230, 255), 0.85)
+                for step in range(1, 7):
+                    fx = beam_x + (px - beam_x) * step / 7
+                    fy = y + (self.mid - y) * step / 7
+                    stage.blend(fx, fy, (90, 180, 255), 0.18)
+            for y in range(math.floor(self.sy), math.floor(self.sy + art_h)):
+                for x in range(math.floor(beam_x), math.floor(self.sx + art_w)):
+                    if stage.get(x, y) is not None:
+                        stage.blend(x, y, (110, 210, 255), 0.25)
+        if scanned:
+            revealed = sweep >= 0.5 or t > 0.62
+            blink = t > 0.62 and index % 4 < 2
+            for c, r in self.flags:
+                cx = self.sx + c * z
+                if revealed or cx > beam_x:
+                    for dy in range(z):
+                        for dx in range(z):
+                            stage.plot(cx + dx, self.sy + r * z + dy, (255, 255, 255) if blink else _SCENE_ALARM)
+        self.caption(stage, t, 0.64, "CONTRABAND DETECTED", _SCENE_ALARM, self.detail)
+
+
+class _DockScene(_Scene):
+    """The approach: the destination's station swells out of the dark in front
+    of its world, its ring turning and its lights the color of its trade."""
+
+    frames = 26
+
+    def __init__(self, width: int, height: int, *, economy: str, station: str, system: str,
+                 charted: bool, seed: str, contracts: int = 0, paid: int = 0):
+        super().__init__(width, height, seed)
+        self.economy = economy if economy in _SCENE_LIGHTS else "Industrial"
+        self.lights = _SCENE_LIGHTS[self.economy]
+        self.title = f"DOCKING  ·  {_scene_text(station).upper()}"
+        # A payday leads, then a first visit, which is news; the economy is on
+        # the deck either way, so it is what a narrow caption drops first.
+        self.detail = []
+        if contracts:
+            done = "contract complete" if contracts == 1 else f"{contracts} contracts complete"
+            self.detail += [(f"+{paid:,}cr ", _SPLASH_GOLD), (done, _SCENE_MINT), ("  ·  ", _SCENE_SLATE)]
+        self.detail += [(_scene_text(system), _SCENE_INK), ("  ·  ", _SCENE_SLATE)]
+        if charted:
+            self.detail += [("new system charted", _SCENE_MINT), ("  ·  ", _SCENE_SLATE)]
+        self.detail.append((self.economy, _SCENE_SLATE))
+        # The world behind the station never moves: compose it once.
+        self.planet: dict[tuple[int, int], tuple] = {}
+        radius = max(4.0, min(self.sky_px * 0.62, width * 0.3))
+        pcx, pcy = width * 0.78, self.sky_px * 0.92
+        bands = _SCENE_WORLD_BANDS[self.economy]
+        for y in range(self.sky_px):
+            for x in range(width):
+                dx, dy = (x + 0.5 - pcx) / radius, (y + 0.5 - pcy) / radius
+                disc = dx * dx + dy * dy
+                if disc > 1.0:
+                    continue
+                z = math.sqrt(1.0 - disc)
+                light = max(0.0, -0.62 * dx - 0.5 * dy + 0.6 * z)
+                band = (dy * 3.0 + 0.2 * math.sin(dx * 5.0 + dy * 3.0)) % len(bands)
+                low = int(band)
+                color = _mix(bands[low], bands[(low + 1) % len(bands)], band - low)
+                shaded = _mix((8, 6, 20), color, 0.08 + 0.95 * light)
+                if z < 0.3 and light > 0.15:
+                    shaded = _mix(shaded, (150, 210, 255), (0.3 - z) * 1.5)
+                self.planet[(x, y)] = shaded
+        self.max_radius = max(5.0, min(self.sky_px * 0.4, width * 0.2))
+        self.cx = width * 0.38
+
+    def station_pixel(self, u: float, v: float, spin: float, blink: bool) -> tuple | None:
+        """The station at (u, v), in units of its own radius, centre at 0."""
+        economy, lights = self.economy, self.lights
+        hull_lit, hull_dark = (196, 204, 222), (92, 100, 124)
+        if economy == "Haven":
+            hull_lit, hull_dark = (120, 100, 150), (52, 40, 72)
+        shade = _mix(hull_lit, hull_dark, max(0.0, min(1.0, (u + v) * 0.5 + 0.5)))
+        if economy == "Mining":
+            # A worked asteroid with a lit docking arm cut into its face.
+            angle = math.atan2(v, u)
+            edge = 0.78 + 0.07 * math.sin(3 * angle + 0.6) + 0.05 * math.sin(7 * angle + 2.0)
+            if abs(v) < 0.07 and -1.3 < u < -0.4:
+                return lights if blink and abs(u + 1.25) < 0.06 else (150, 150, 160)
+            r = math.hypot(u, v)
+            if r <= edge:
+                z = math.sqrt(max(0.0, 1 - (r / edge) ** 2))
+                light = max(0.0, -0.6 * u - 0.5 * v + 0.6 * z)
+                rock = _mix((50, 40, 36), (176, 150, 124), 0.15 + 0.85 * light)
+                pit = math.sin(u * 13 + 1.0) * math.sin(v * 11 + 2.0)
+                if pit > 0.75:
+                    rock = _scale(rock, 0.7)
+                if abs(u + 0.3) < 0.06 and abs(v - 0.1) < 0.06:
+                    return lights
+                return rock
+            return None
+        if economy == "Tech":
+            # A spire with its sensor dish and two wings of panels.
+            if abs(u) < 0.05 and -1.0 < v < 0.8:
+                return lights if v < -0.92 and blink else shade
+            if 0.3 < abs(u) < 1.25 and abs(v) < 0.16:
+                cell = (abs(u) * 10) % 1 < 0.15 or abs(v) > 0.12
+                return (40, 70, 140) if not cell else (150, 170, 200)
+            if abs(u) <= 0.3 and abs(v) < 0.04:
+                return shade
+            if math.hypot(u, v + 0.75) < 0.28 and v > -0.75:
+                return _mix((220, 228, 240), (110, 120, 140), (u + 0.3) / 0.6)
+            if math.hypot(u, v) < 0.22:
+                return lights if blink and math.hypot(u, v) < 0.07 else shade
+            return None
+        # The ring stations: Agricultural, Industrial and Haven.
+        tilt = 0.42
+        rho = math.hypot(u, v / tilt)
+        angle = math.atan2(v / tilt, u)
+        ring = 0.78 <= rho <= 1.0
+        front = v > 0
+        hub = math.hypot(u, v) < 0.24
+        if economy == "Industrial" and abs(v) < 0.06 and 0.2 < abs(u) < 1.35:
+            if abs(u) > 1.28:
+                return lights if blink else (120, 80, 50)
+            return shade if (abs(u) * 12) % 1 > 0.25 else hull_dark
+        if economy == "Industrial" and abs(abs(u) - 1.15) < 0.12 and abs(v) < 0.14:
+            return _mix((170, 120, 80), hull_dark, (v + 0.14) / 0.28)
+        if ring and (front or not hub):
+            seam = (angle * 6 / math.pi + spin) % 1.0
+            if 0.86 <= rho <= 0.92 and seam < 0.18:
+                return lights if (blink or economy != "Haven") else _scale(lights, 0.5)
+            if economy == "Agricultural" and seam > 0.55:
+                return _mix((70, 150, 90), (30, 70, 50), (v / tilt + 1) / 2)
+            return _mix(shade, (20, 20, 30), 0.35 if not front else 0.0)
+        if hub:
+            z = math.sqrt(max(0.0, 1 - (math.hypot(u, v) / 0.24) ** 2))
+            dome = (120, 200, 130) if economy == "Agricultural" and v < -0.05 else hull_lit
+            if abs(u) < 0.05 and abs(v) < 0.05 and blink:
+                return lights
+            return _mix(hull_dark, dome, 0.2 + 0.8 * max(0.0, -0.5 * u - 0.5 * v + 0.6 * z))
+        if (abs(v) < 0.04 and 0.24 < abs(u) < 0.8) or (abs(u) < 0.03 and 0.1 < abs(v) < 0.8 * tilt):
+            return hull_dark
+        return None
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w = self.width
+        # Stars stream out from the centre as the station is approached.
+        push = 1 + 0.25 * _ease_out(t)
+        for x0, row, near in self.stars:
+            x = w / 2 + (x0 - w / 2) * push
+            y = self.sky_rows / 2 + (row - self.sky_rows / 2) * push
+            if 0 <= x < w and 0 <= y < self.sky_rows:
+                stage.mark(int(y), int(x), "+" if near else "·", (200, 214, 255) if near else (100, 112, 150))
+        for (x, y), color in self.planet.items():
+            stage.plot(x, y, color)
+        scale = 0.18 + 0.82 * _ease_out(_span(t, 0.0, 0.5))
+        radius = self.max_radius * scale
+        spin = index * 0.06
+        blink = index % 4 < 2
+        cy = self.mid
+        reach_x, reach_y = int(radius * 1.4) + 1, int(radius * 1.1) + 1
+        for y in range(math.floor(cy) - reach_y, math.floor(cy) + reach_y + 1):
+            for x in range(math.floor(self.cx) - reach_x, math.floor(self.cx) + reach_x + 1):
+                color = self.station_pixel((x + 0.5 - self.cx) / radius, (y + 0.5 - cy) / radius, spin, blink)
+                if color is not None:
+                    stage.plot(x, y, color)
+        # The approach path: beacons running from the bottom-left in to the dock.
+        if t < 0.8:
+            for beacon in range(5):
+                along = ((index * 0.07 + beacon / 5) % 1.0)
+                bx = self.cx - radius * 1.3 - (1 - along) * w * 0.3
+                by = cy + radius * 0.3 + (1 - along) * self.sky_px * 0.4
+                stage.plot(bx, by, _mix((60, 60, 90), self.lights, along))
+        self.caption(stage, t, 0.6, self.title, _SPLASH_GOLD, self.detail)
+
+
+# The wrecks and workboats of the quieter scenes. A hulk is a freighter with
+# the light gone out of it and holes where its plating was; the tug wears
+# hazard stripes so it reads as a workboat at a glance.
+_SCENE_HULK = ("...dd..d........",
+               ".hhhh.hhhhh.....",
+               "fhll..lllldhh...",
+               "fhhh.hhhhhh.hh..",
+               "fhdd..ddd.dd....",
+               ".hhh...hhhh.....",
+               "...d............")
+_SCENE_TUG = ("..hhh.......",
+              ".tqtqtqthh..",
+              "tqtqtqtqtqhc",
+              ".tqtqtqthh..",
+              "..hhh.......")
+_SCENE_COLORS.update(t=(240, 190, 40), q=(44, 40, 36))
+
+
+class _SalvageScene(_Scene):
+    """Salvage: a dead hulk tumbles past, and a tractor beam draws its prize
+    aboard. A landmark's investigation is the same moment at a named site."""
+
+    frames = 24
+
+    def __init__(self, width: int, height: int, *, hull: str, credits: int, site: str | None, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.title = "SITE INVESTIGATED" if site else "SALVAGE RECOVERED"
+        place = _scene_text(site) if site else "a derelict hulk"
+        self.detail = [(f"+{credits:,}cr", _SPLASH_GOLD), ("  ·  ", _SCENE_SLATE), (place, _SCENE_INK)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid, z = self.width, self.mid, self.zoom
+        self.starfield(stage, drift=index * 0.15)
+        art_w, art_h = self.sprite_size(self.art)
+        sx, sy = w * 0.2 - art_w / 2, mid - art_h // 2
+        _scene_sprite(stage, self.art, sx, sy, zoom=z)
+        hulk_w, hulk_h = self.sprite_size(_SCENE_HULK)
+        # The hulk drifts and rolls: every few frames it shows its belly.
+        hx = w * 0.7 - hulk_w / 2 - t * w * 0.05
+        hy = mid - hulk_h // 2 - 2 * z + math.sin(t * 3) * z
+        _scene_sprite(stage, _SCENE_HULK if index // 6 % 2 == 0 else tuple(reversed(_SCENE_HULK)), hx, hy,
+                      zoom=z, tint=(16, 14, 26), amount=0.55)
+        # A spark where a cable has parted, now and then.
+        if index % 5 == 0:
+            stage.plot(hx + hulk_w * 0.4, hy + hulk_h * 0.4, _heat(0.9))
+        pull = _ease_out(_span(t, 0.18, 0.66))
+        start_x, start_y = hx + hulk_w * 0.3, hy + hulk_h // 2
+        end_x, end_y = sx + art_w + 1, mid
+        crate_x = start_x + (end_x - start_x) * pull
+        crate_y = start_y + (end_y - start_y) * pull
+        if 0.12 < t < 0.7:
+            # The tractor beam: a dotted green line that crawls toward the ship.
+            steps = max(2, int(abs(start_x - end_x)))
+            for step in range(steps):
+                if (step + index) % 3:
+                    continue
+                along = step / steps
+                stage.blend(end_x + (start_x - end_x) * along, end_y + (start_y - end_y) * along, (110, 255, 170), 0.6)
+        if pull < 1.0:
+            glow = (255, 220, 110) if index % 2 else (255, 190, 70)
+            for dy in range(2 * z):
+                for dx in range(3 * z):
+                    stage.plot(crate_x + dx - z, crate_y + dy - z, glow)
+        else:
+            # Taken aboard: the hold lights up for a moment.
+            if t < 0.8:
+                for dx in range(art_w // 2):
+                    stage.blend(sx + art_w // 4 + dx, mid, (255, 220, 110), 0.7)
+        self.caption(stage, t, 0.62, self.title, _SPLASH_GOLD, self.detail)
+
+
+class _DistressScene(_Scene):
+    """A distress call answered: a crippled freighter blinks its beacon and
+    vents, and its escape pods cross the gap to the pilot's ship."""
+
+    frames = 24
+
+    def __init__(self, width: int, height: int, *, hull: str, credits: int, fuel: int, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        rng = random.Random(f"scene-pods:{seed}")
+        self.pods = [(rng.uniform(0.0, 0.3), rng.uniform(-3, 3)) for _ in range(5)]
+        self.vents = [(rng.uniform(0, 1), rng.uniform(-1, 1)) for _ in range(10)]
+        self.detail = [(f"+{credits:,}cr", _SPLASH_GOLD), ("  ·  ", _SCENE_SLATE),
+                       (f"{fuel} fuel spent", _SCENE_SLATE), ("  ·  ", _SCENE_SLATE), ("Concord takes note", _SCENE_CONCORD)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid, z = self.width, self.mid, self.zoom
+        self.starfield(stage, drift=index * 0.1)
+        art_w, art_h = self.sprite_size(self.art)
+        approach = _ease_out(_span(t, 0.0, 0.3))
+        sx, sy = w * 0.28 - art_w / 2 - (1 - approach) * w * 0.25, mid - art_h // 2
+        _scene_sprite(stage, self.art, sx, sy, zoom=z)
+        wreck = _SCENE_HULLS["Freighter"]
+        ww, wh = self.sprite_size(wreck)
+        wx, wy = w * 0.68 - ww / 2, mid - wh // 2
+        _scene_sprite(stage, wreck, wx, wy, zoom=z, flip=True, tint=(40, 24, 30), amount=0.5)
+        # The beacon: amber and red, three short and three long, roughly.
+        beacon = (255, 70, 60) if index % 3 == 0 else (255, 180, 60) if index % 3 == 1 else None
+        if beacon is not None:
+            for dy in range(z):
+                for dx in range(z):
+                    stage.plot(wx + ww // 2 + dx, wy - z + dy, beacon)
+        # Atmosphere venting from a breach: a plume of cooling grey.
+        for along, side in self.vents:
+            age = (along + index * 0.05) % 1.0
+            stage.plot(wx + ww * 0.3 + side * 2, wy + wh + age * 8 * z, _mix((200, 210, 230), (40, 44, 60), age))
+        for delay, lane in self.pods:
+            cross = _span(t, 0.3 + delay, 0.62 + delay)
+            if 0 < cross < 1:
+                px = wx - 1 - (wx - 1 - (sx + art_w)) * cross
+                stage.plot(px, mid + lane * z, (240, 246, 255))
+                stage.plot(px + 1, mid + lane * z, (120, 200, 255))
+        self.caption(stage, t, 0.62, "SURVIVORS ABOARD", _SCENE_MINT, self.detail)
+
+
+class _DataBurstScene(_Scene):
+    """A trader's data burst: a freighter crosses far off, its signal rings
+    spread, and the numbers stream into the pilot's ship."""
+
+    frames = 20
+
+    def __init__(self, width: int, height: int, *, hull: str, what: str, where: str, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.detail = [(_scene_text(what), _SCENE_INK), (" at ", _SCENE_SLATE), (_scene_text(where), _SCENE_INK),
+                       ("  ·  ", _SCENE_SLATE), ("quote recorded", _SCENE_SLATE)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid, z = self.width, self.mid, self.zoom
+        self.starfield(stage, drift=index * 0.2)
+        art_w, art_h = self.sprite_size(self.art)
+        sx, sy = w * 0.22 - art_w / 2, mid - art_h // 2 + 2 * z
+        _scene_sprite(stage, self.art, sx, sy, zoom=z)
+        trader = _SCENE_HULLS["Freighter"]
+        tw, th = self.sprite_size(trader)
+        tx, ty = w * 0.85 - tw / 2 - t * w * 0.25, max(1, mid // 3)
+        _scene_sprite(stage, trader, tx, ty, zoom=z, flip=True, tint=(20, 26, 50), amount=0.3)
+        ox, oy = tx, ty + th // 2
+        if t < 0.7:
+            for ring in range(3):
+                phase = (t * 2.2 + ring / 3) % 1.0
+                _scene_ring(stage, ox, oy, 2 + phase * w * 0.5, (110, 220, 255), 0.55 * (1 - phase), squash=0.6)
+        # The quote itself, a stream of bits along the line between the ships.
+        flow = _span(t, 0.15, 0.7)
+        if 0 < flow < 1:
+            target_x, target_y = sx + art_w // 2, sy
+            for bit in range(8):
+                along = (flow * 2 + bit / 8) % 1.0
+                x = ox + (target_x - ox) * along
+                y = oy + (target_y - oy) * along
+                stage.mark(int(y // 2), int(x), "1" if (bit + index) % 3 else "0", (110, 220, 255))
+        self.caption(stage, t, 0.62, "DATA BURST INTERCEPTED", _SCENE_CONCORD, self.detail)
+
+
+class _TowScene(_Scene):
+    """Stranded: a salvage tug hauls the dark ship home on a cable."""
+
+    frames = 24
+
+    def __init__(self, width: int, height: int, *, hull: str, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.detail = [("empty tank, empty pockets", _SCENE_SLATE), ("  ·  ", _SCENE_SLATE), ("no charge", _SCENE_MINT)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid, z = self.width, self.mid, self.zoom
+        self.starfield(stage, drift=index * 0.5)
+        art_w, art_h = self.sprite_size(self.art)
+        tug_w, tug_h = self.sprite_size(_SCENE_TUG)
+        travel = t * w * 0.35
+        tug_x = w * 0.55 + travel - tug_w / 2
+        ship_x = tug_x - w * 0.3 - art_w
+        _scene_sprite(stage, self.art, ship_x, mid - art_h // 2, zoom=z, tint=(10, 12, 24), amount=0.6)
+        _scene_sprite(stage, _SCENE_TUG, tug_x, mid - tug_h // 2, zoom=z)
+        # The cable, sagging a little, from the tug's stern to the ship's nose.
+        start, end = ship_x + art_w, tug_x - 1
+        for x in range(math.floor(start), math.floor(end) + 1):
+            along = (x - start) / max(1, end - start)
+            stage.plot(x, mid + math.sin(along * math.pi) * 1.5 * z, (150, 150, 160))
+        if index % 4 < 2:
+            stage.plot(tug_x + tug_w // 2, mid - tug_h // 2 - 1, (255, 190, 60))
+        for d in range(1, 3 + index % 2):
+            stage.plot(tug_x - d, mid - z, _heat(0.8 - d * 0.2))
+        self.caption(stage, t, 0.6, "TOWED TO FREEPORT ANCHORAGE", _SPLASH_GOLD, self.detail)
+
+
+class _RefitScene(_Scene):
+    """A commissioning: the old hull sits in the drydock's gantry, a welding
+    seam runs along it, and the new hull is what is left behind."""
+
+    frames = 28
+
+    def __init__(self, width: int, height: int, *, old: str, new: str, hull_hp: int, seed: str):
+        super().__init__(width, height, seed)
+        self.old = _SCENE_HULLS.get(old, _SPLASH_SHIP)
+        self.new = _SCENE_HULLS.get(new, _SPLASH_SHIP)
+        self.zoom_ship = min(3, self.zoom + 1) if self.sky_px >= 30 else self.zoom
+        self.title = f"COMMISSIONED  ·  {_scene_text(new).upper()}-CLASS"
+        self.detail = [(f"refit from {_scene_text(old)}", _SCENE_SLATE), ("  ·  ", _SCENE_SLATE),
+                       (f"hull {hull_hp}", _SCENE_INK)]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid, z = self.width, self.mid, self.zoom_ship
+        self.starfield(stage)
+        widest = max(len(self.old[0]), len(self.new[0])) * z
+        tallest = max(len(self.old), len(self.new)) * z
+        left = w / 2 - widest / 2
+        seam = left - 2 + _span(t, 0.12, 0.62) * (widest + 4)
+        done = t >= 0.62
+        # The gantry: rails above and below, posts every so often, work lights.
+        top, bottom = mid - tallest // 2 - 3, mid + tallest // 2 + 2
+        for x in range(math.floor(left) - 6, math.ceil(left + widest) + 6):
+            stage.plot(x, top, (96, 104, 128))
+            stage.plot(x, bottom, (96, 104, 128))
+            if (x - math.floor(left)) % 8 == 0:
+                for y in range(top - 2, top):
+                    stage.plot(x, y, (70, 76, 96))
+                for y in range(bottom + 1, bottom + 3):
+                    stage.plot(x, y, (70, 76, 96))
+                light = (120, 255, 150) if done else (255, 170, 60) if index % 4 < 2 else (110, 70, 30)
+                stage.plot(x, top + 1, light)
+                stage.plot(x, bottom - 1, light)
+        for art, keep in ((self.old, lambda x: x >= seam), (self.new, lambda x: x < seam)):
+            art_w, art_h = len(art[0]) * z, len(art) * z
+            x0, y0 = w / 2 - art_w / 2, mid - art_h // 2
+            for row_index, row in enumerate(art):
+                for column, key in enumerate(row):
+                    if key == ".":
+                        continue
+                    for dy in range(z):
+                        for dx in range(z):
+                            x = x0 + column * z + dx
+                            if keep(x):
+                                stage.plot(x, y0 + row_index * z + dy, _SCENE_COLORS[key])
+        if 0.12 < t < 0.62:
+            # The seam: a white-hot line with sparks thrown off it.
+            spark = random.Random(f"scene-weld:{index}")
+            for y in range(top + 1, bottom):
+                stage.plot(seam, y, (255, 250, 230))
+            for _ in range(8):
+                stage.plot(seam + spark.uniform(-1, 4), spark.uniform(top + 1, bottom - 1), _heat(spark.uniform(0.5, 1.0)))
+        if done:
+            art_w = len(self.new[0]) * z
+            for d in range(1, 2 + int(_span(t, 0.62, 0.8) * 4) * z):
+                stage.plot(w / 2 - art_w / 2 - d, mid, _heat(0.9 - d * 0.08))
+        self.caption(stage, t, 0.64, self.title, _SPLASH_GOLD, self.detail)
+
+
+class _FinaleScene(_Scene):
+    """Retirement: the ship that flew the career sails for a rising sun under
+    the name the career ends with."""
+
+    frames = 32
+    hold = SCENE_HOLD_SECONDS + 1.2
+
+    def __init__(self, width: int, height: int, *, hull: str, finale: str, pilot: str, seed: str):
+        super().__init__(width, height, seed)
+        self.art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        self.title = _scene_text(finale).upper()
+        self.detail = [(_scene_text(pilot), _SCENE_INK), ("  ·  ", _SCENE_SLATE), ("career archived", _SCENE_SLATE),
+                       ("  ·  ", _SCENE_SLATE), ("a new voyage begins", _SPLASH_GOLD)]
+        # The sun never moves: its disc and corona are composed once.
+        self.sun: dict[tuple[int, int], tuple] = {}
+        radius = max(5.0, min(self.sky_px * 0.7, width * 0.3))
+        cx, cy = width * 0.72, self.sky_px * 1.05
+        for y in range(self.sky_px):
+            for x in range(width):
+                d = math.hypot(x + 0.5 - cx, (y + 0.5 - cy) * 1.1) / radius
+                if d <= 1.0:
+                    self.sun[(x, y)] = _mix((255, 250, 220), (255, 150, 60), d ** 2)
+                elif d <= 1.5:
+                    self.sun[(x, y)] = _mix((150, 60, 70), (30, 10, 30), (d - 1.0) / 0.5)
+        self.sun_x, self.sun_y = cx, cy - radius
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid, z = self.width, self.mid, self.zoom
+        self.starfield(stage)
+        # Two steps of dawn, not a fade: the disc is a third of the sky, and
+        # every shade of it is the whole disc sent again.
+        light = 0.55 if t < 0.12 else 1.0
+        for (x, y), color in self.sun.items():
+            stage.plot(x, y, _scale(color, light))
+        art_w, art_h = self.sprite_size(self.art)
+        # The ship sails out, slowly, into the light; its engine is the last of it.
+        go = _ease_in(_span(t, 0.1, 0.85))
+        x = w * 0.18 - art_w / 2 + go * (self.sun_x - w * 0.18)
+        y = mid - art_h // 2 + go * (self.sun_y - mid) * 0.6
+        if go < 0.95:
+            _scene_sprite(stage, self.art, x, y, zoom=z, tint=(40, 20, 40), amount=go * 0.8)
+            for d in range(1, 3 + index % 2):
+                stage.plot(x - d, y + art_h // 2, _heat(0.85 - d * 0.2))
+        self.caption(stage, t, 0.66, self.title, _SPLASH_GOLD, self.detail)
+
+
+def accolade_announcements(earned: list) -> list[str]:
+    """The deck's rows for what a moment earned: each one by name when there
+    are a few, a single count when a returning career catches up on many."""
+    if len(earned) <= 3:
+        return [f"Achievement unlocked: {a.name} -- {a.description}" for a in earned]
+    return [f"{len(earned)} achievements unlocked. [S] Status, [A] Achievements lists them."]
+
+
+# Bronze, silver and gold: (lit, shaded).
+_MEDAL_METALS = {1: ((222, 150, 92), (120, 66, 30)), 2: ((226, 232, 244), (118, 128, 150)),
+                 3: (_SPLASH_GOLD, (170, 104, 24))}
+
+
+def _accolade_scene(width: int, height: int, earned: list, *, seed: str) -> "_EmblemScene":
+    """One medal for whatever a moment earned, struck in its best metal."""
+    tier = max(accolade.tier for accolade in earned)
+    if len(earned) == 1:
+        return _EmblemScene(width, height, kind="medal", tier=tier, seed=seed,
+                            title=f"Achievement unlocked  ·  {earned[0].name}", detail=earned[0].description)
+    return _EmblemScene(width, height, kind="medal", tier=tier, seed=seed,
+                        title=f"{len(earned)} achievements unlocked", detail=[a.name for a in earned])
+
+
+class _EmblemScene(_Scene):
+    """A milestone: an emblem swells out of a burst of light, a glint runs
+    across it, and its name is set under it. `kind` is "rank" (gold
+    chevrons, one per rank held), "concord" (a shield and star) or
+    "blackwake" (a dark diamond cut by a wake)."""
+
+    frames = 24
+    hold = SCENE_HOLD_SECONDS + 0.6
+
+    def __init__(self, width: int, height: int, *, kind: str, rank: int = 0, title: str,
+                 detail: str | list[str], seed: str, tier: int = 3):
+        super().__init__(width, height, seed)
+        self.kind, self.rank = kind, max(1, min(5, rank + 1))
+        self.metal = _MEDAL_METALS[max(1, min(3, tier))]
+        self.color = {"concord": _SCENE_CONCORD, "blackwake": (255, 90, 200),
+                      "medal": self.metal[0]}.get(kind, _SPLASH_GOLD)
+        self.title = _scene_text(title).upper()
+        # Several details are whole phrases: a narrow caption drops the last
+        # ones rather than cutting one in half.
+        parts = [detail] if isinstance(detail, str) else detail
+        self.detail = []
+        for index, part in enumerate(parts):
+            if index:
+                self.detail.append(("  ·  ", _SCENE_SLATE))
+            self.detail.append((_scene_text(part), _SCENE_SLATE if len(parts) == 1 else _SCENE_INK))
+        self.size = max(4.0, min(self.sky_px * 0.44, width * 0.2))
+
+    def emblem_pixel(self, u: float, v: float) -> tuple | None:
+        """The emblem at (u, v), in units of its own size, centre at 0."""
+        if self.kind == "concord":
+            if v < -0.85 or abs(u) > 0.75 * (1.0 if v < 0.3 else max(0.0, 1 - (v - 0.3) / 0.6)):
+                return None
+            edge = abs(u) > 0.75 * (1.0 if v < 0.3 else max(0.0, 1 - (v - 0.3) / 0.6)) - 0.1 or v < -0.75
+            if edge:
+                return (232, 240, 255)
+            angle = math.atan2(v + 0.05, u) + math.pi / 2
+            k = angle * 5 / (2 * math.pi)
+            if math.hypot(u, v + 0.05) < max(0.13, 0.4 * (1 - 1.7 * abs(k - round(k)))):
+                return (255, 255, 255)
+            return _mix((90, 150, 250), (30, 60, 150), (v + 0.85) / 1.75)
+        if self.kind == "medal":
+            # A medal on a ribbon: two straps, a rim, a struck star.
+            if -1.0 < v < -0.38:
+                along = (v + 1.0) / 0.62
+                if abs(abs(u) - (0.42 - 0.3 * along)) < 0.12:
+                    return _mix((200, 90, 180), (110, 50, 150), along) if u < 0 else _mix((150, 70, 200), (90, 40, 140), along)
+            r = math.hypot(u, v - 0.2)
+            if r > 0.62:
+                return None
+            bright, dark = self.metal
+            if r > 0.5:
+                return _mix(bright, (255, 255, 255), 0.3) if u + v < 0.2 else bright
+            angle = math.atan2(v - 0.2, u) + math.pi / 2
+            k = angle * 5 / (2 * math.pi)
+            # Flat shades, lit and shadowed: a gradient here snaps into stripes.
+            if r < max(0.12, 0.38 * (1 - 1.7 * abs(k - round(k)))):
+                return _mix(bright, (255, 255, 255), 0.55) if u + v < 0.3 else bright
+            return _mix(bright, dark, 0.35 if u + (v - 0.2) < 0 else 0.6)
+        if self.kind == "blackwake":
+            reach = abs(u) + abs(v)
+            if reach > 0.9:
+                return None
+            if reach > 0.78:
+                return (255, 90, 200)
+            if abs(v - 0.2 * math.sin(u * 6.0)) < 0.08 and reach < 0.66:
+                return (255, 130, 220)
+            return _mix((70, 30, 80), (24, 10, 34), (v + 0.9) / 1.8)
+        # Chevrons point up, stacked from the top, one per rank held.
+        for number in range(self.rank):
+            centre = -0.75 + number * 0.34 + 0.5 * abs(u)
+            if abs(u) < 0.8 and abs(v - centre) < 0.11:
+                return _mix((255, 236, 150), (210, 140, 40), (v + 0.8) / 1.6)
+        return None
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        w, mid = self.width, self.mid
+        self.starfield(stage)
+        cx = w / 2
+        # The burst behind it: rays that come up in two steps and stay.
+        rays = 0.0 if t < 0.1 else 0.35 if t < 0.2 else 0.6
+        if rays:
+            for ray in range(16):
+                angle = ray * math.pi / 8 + 0.2
+                for step in range(int(self.size * 0.9), int(self.size * 2.2)):
+                    stage.blend(cx + math.cos(angle) * step, mid + math.sin(angle) * step * 0.8, self.color,
+                                rays * (1 - (step - self.size * 0.9) / (self.size * 1.3)))
+        scale = 0.3 + 0.7 * _ease_out(_span(t, 0.0, 0.3))
+        size = self.size * scale
+        glint = _span(t, 0.36, 0.6)
+        reach = int(size) + 1
+        for y in range(math.floor(mid) - reach, math.floor(mid) + reach + 1):
+            for x in range(math.floor(cx) - reach, math.floor(cx) + reach + 1):
+                u, v = (x + 0.5 - cx) / size, (y + 0.5 - mid) / size
+                color = self.emblem_pixel(u, v)
+                if color is None:
+                    continue
+                # A glint runs across it on the diagonal.
+                if 0 < glint < 1 and abs((u + v) * 0.5 - (glint * 2.4 - 1.2)) < 0.1:
+                    color = _mix(color, (255, 255, 255), 0.8)
+                stage.plot(x, y, color)
+        self.caption(stage, t, 0.6, self.title, self.color, self.detail)
+
+
+def play_scene(make: Callable[[int, int], _Scene]) -> bool:
+    """Play one in-flight scene, if anyone is watching. Returns whether it drew.
+
+    `make` builds the scene for the composition's size, and is only called
+    when the scene will play: a scripted session or a `fast` caller pays for
+    nothing. Rules as the splash's, less its hold: skipped when motion is off,
+    with no live terminal, or with keys already waiting; ended by any key,
+    which is taken with the rest of its input unit; ended by a resize, which
+    is left for the screen that follows to apply.
+    """
+    if scenes_switched_off() or motion_interrupted():
+        return False
+    cols, rows, top, left = _splash_box(_OUTPUT_WIDTH, _OUTPUT_HEIGHT)
+    scene = make(cols, rows)
+    previous = [[(" ", None, None)] * cols for _ in range(rows)]
+    out(f"{ESC}[?25l{ESC}[0m")
+    clear_screen()
+    try:
+        for index in range(scene.frames + 1):
+            if index < scene.frames:
+                current = scene.frame(index)
+                out(_splash_delta(previous, current, top, left, red=True))
+                previous = current
+            if not motion_pause(SCENE_FRAME_SECONDS if index < scene.frames else scene.hold) or _RESIZE_PENDING:
+                if not _RESIZE_PENDING:
+                    _splash_drain()
+                break
+    finally:
+        out(f"{ESC}[0m")
+        clear_screen()
+        out(f"{ESC}[?25h")
+    return True
+
+
+def _scene_seed(world: World, moment: str) -> str:
+    """The same scene for the same moment of the same career, and a new one next time."""
+    travel = world.save.pending_travel or {}
+    return f"{world.save.seed}:{world.save.turn}:{travel.get('destination', world.here.id)}:{moment}"
+
+
+def play_contact_scene(world: World, pirate: Pirate, encounter: dict, *, patrol: bool) -> bool:
+    """The contact at the start of a fresh fight, told apart by who it is."""
+    names, target, kind = [pirate.name], 0, "raider"
+    travel = world.save.pending_travel
+    if patrol:
+        kind = "patrol"
+    elif encounter.get("warrant") is not None:
+        kind = "bounty"
+    elif encounter.get("ambush") is not None:
+        kind = "ambush"
+    elif travel is not None and travel.get("phase") == "escorts":
+        kind = "escort"
+    elif len(encounter.get("pirates", ())) > 1:
+        kind = "squadron"
+        names = [entry["name"] for entry in encounter["pirates"]]
+        target = min(encounter.get("index", 0), len(names) - 1)
+    return play_scene(lambda w, h: _ContactScene(
+        w, h, hull=world.save.ship.hull_class, kind=kind, names=names, target=target,
+        tier=pirate.tier, seed=_scene_seed(world, f"contact:{pirate.name}")))
+
+
+def play_combat_outcome_scene(world: World, pirate: Pirate, outcome: str, action: str, *,
+                              patrol: bool, loot: int) -> bool:
+    """A kill, a loss or a clean break; a bribe, a surrender or a withdrawal
+    is a conversation, not a spectacle, and plays nothing."""
+    hull, seed = world.save.ship.hull_class, _scene_seed(world, f"{outcome}:{pirate.name}")
+    if outcome == "won":
+        return play_scene(lambda w, h: _KillScene(w, h, hull=hull, patrol=patrol, name=pirate.name, loot=loot, seed=seed))
+    if outcome == "destroyed":
+        return play_scene(lambda w, h: _LostScene(w, h, hull=hull, patrol=patrol, name=pirate.name, seed=seed))
+    if outcome == "escaped" and action in ("E", "D"):
+        return play_scene(lambda w, h: _EscapeScene(w, h, hull=hull, patrol=patrol, name=pirate.name, seed=seed))
+    return False
 
 
 def create_career(p: Palette, info: dict, *, welcome: str | None = None) -> str | None:
@@ -6612,14 +8295,32 @@ def screen_station_menu(p: Palette, world: World) -> str:
         # state (a refuel/repair that spent the last credits, a jump
         # that burned the last fuel with no encounter) in one place.
         out_line()
+        towed = world.save.current_system != 0
         rescued = rescue_stranded_pilot(world)
         # The tow puts the pilot at Freeport: that is a station transition, so
         # Freeport's board is prepared here rather than left stale (#417 review).
         world.checkpoint()
+        if towed:
+            play_scene(lambda w, h: _TowScene(w, h, hull=world.save.ship.hull_class, seed=_scene_seed(world, "tow")))
         out_line(f"{p.wrong}{rescued}{RESET}")
         pause(p)
     if career_rank_index(world.save.pilot) > world.save.pilot.highest_rank_seen:
         world.checkpoint()  # a rank earned since the last tick is noticed and saved here
+    if world.pending_promotions:
+        # `commit` lists a promotion only once the save holding it succeeded,
+        # so the scene shows a rank that is already kept. The highest one is
+        # the one worth a ceremony when an action earned two.
+        title = world.pending_promotions[-1]
+        rank = next((number for number, (_, name) in enumerate(RANKS) if name == title), 0)
+        play_scene(lambda w, h: _EmblemScene(w, h, kind="rank", rank=rank, title=f"Promoted  ·  {title}",
+                                             detail="rank retained for this career", seed=_scene_seed(world, "rank")))
+    earned = list(world.pending_accolades)
+    world.pending_accolades.clear()
+    # A rank's achievement is the promotion's own moment: listed, not played twice.
+    ceremony = [a for a in earned if not (world.pending_promotions and a.metric == "rank")]
+    if ceremony:
+        play_scene(lambda w, h: _accolade_scene(w, h, ceremony, seed=_scene_seed(world, "accolades")))
+    completed[0:0] = accolade_announcements(earned)
     completed[0:0] = [f"Promoted to {title}; rank retained for this career." for title in world.pending_promotions]
     world.pending_promotions.clear()
     completed[0:0] = world.hop_report
@@ -6678,6 +8379,10 @@ def _screen_faction_contact(p: Palette, world: World, faction: str) -> None:
         if not confirm(f"Join {info['label']} with a one-time {info['grant']:,}cr grant?", p): continue
         result = join_faction(world, faction)
         world.commit()
+        play_scene(lambda w, h: _EmblemScene(
+            w, h, kind="concord" if faction == FACTION_CONCORD else "blackwake", title=info["label"],
+            detail=("Commission accepted" if faction == FACTION_CONCORD else "Welcome to the family")
+            + f"  ·  {info['contact']}", seed=_scene_seed(world, f"join:{faction}")))
         page = 0
 
 
@@ -7237,6 +8942,9 @@ def screen_landmark(p: Palette, world: World) -> None:
         if action == "I" and available:
             result = investigate_landmark(world)
             world.commit()
+            play_scene(lambda w, h: _SalvageScene(w, h, hull=world.save.ship.hull_class,
+                                                  credits=world.landmark["reward_credits"], site=world.landmark["label"],
+                                                  seed=_scene_seed(world, "landmark")))
             page = 0
 
 
@@ -9044,6 +10752,8 @@ def _hull_refit_screen(p: Palette, world: World, target_class: str, cost: int) -
         world.save.pilot.note(f"Commissioned a {target_class}-class hull refit.")
         world.save.pilot.highlight(f"Commissioned a {target_class}-class hull refit.")
         world.commit()
+        play_scene(lambda w, h: _RefitScene(w, h, old=previous_class, new=target_class, hull_hp=ship.hull_hp,
+                                            seed=_scene_seed(world, "refit")))
         out_line(f"{p.gold}{BOLD}Your {previous_class} is towed into drydock and emerges a {target_class}.{RESET}")
         return f"Commissioned a {target_class} hull for {cost}cr."
 
@@ -9706,6 +11416,47 @@ def screen_missions(p: Palette, world: World) -> None:
             screen_mission_details(p, world, mission, active=active)
 
 
+ACCOLADE_TIER_TONES = {1: "caution", 2: "value", 3: "key"}  # bronze, silver, gold
+
+
+def accolade_lines(save: SaveData, rarity: tuple[dict[str, int], int] | None = None) -> list[str]:
+    """Every achievement, group by group: earned ones with the career that
+    earned them and how rare they are on this board, the rest with their
+    progress. Hidden ones are only a count until earned, so a list cannot
+    spoil them. Read-only: nothing here unlocks or writes anything."""
+    p = pal()
+    record = save.accolades or {}
+    unlocked = record.get("unlocked", {})
+    metrics = accolade_metrics(save)
+    holders, pilots = rarity if rarity is not None else ({}, 0)
+    earned = sum(1 for accolade in ACCOLADES if accolade.id in unlocked)
+    lines = [f"{p.slate}Unlocked{RESET} {gauge(earned, len(ACCOLADES), 10, tone='good')} "
+             f"{p.ink}{earned}/{len(ACCOLADES)}{RESET}"
+             + (f"{p.slate}; rarity across {plural(pilots, 'pilot')} on this board.{RESET}" if pilots else f"{p.slate}.{RESET}")]
+    for group in ACCOLADE_GROUPS:
+        members = [accolade for accolade in ACCOLADES if accolade.group == group]
+        lines.append(section(group.upper()))
+        secret = 0
+        for accolade in members:
+            tone = p.tone(ACCOLADE_TIER_TONES[accolade.tier])
+            if accolade.id in unlocked:
+                share = holders.get(accolade.id, 0) * 100 // pilots if pilots else None
+                lines.append(f"{tone}{glyph('earned')} {accolade.name}{RESET} {p.slate}{accolade.description}"
+                             f" Career #{unlocked[accolade.id]}." + (f" {share}% of pilots." if share is not None else "")
+                             + RESET)
+            elif accolade.hidden:
+                secret += 1
+            else:
+                progress = (f" {min(metrics[accolade.metric], accolade.target):,}/{accolade.target:,}."
+                            if accolade.target > 1 else "")
+                lines.append(f"{p.deep}{glyph('unearned')}{RESET} {p.ink}{accolade.name}{RESET} "
+                             f"{p.slate}{accolade.description}{progress}{RESET}")
+        if secret:
+            lines.append(f"{p.deep}{glyph('unearned')}{RESET} {p.slate}{plural(secret, 'hidden achievement')}"
+                         f" still to find.{RESET}")
+    return lines
+
+
 def pilot_record_lines(world: World, view: str = "O") -> list[str]:
     """Complete retained records, without display truncation or state changes."""
     pilot, ship = world.save.pilot, world.save.ship
@@ -9886,8 +11637,11 @@ def screen_career_finale(p: Palette, world: World) -> str | None:
         retired_ship = dataclasses.replace(world.save.ship)  # the ship that flew this career, for its portrait
         world.reset(fresh.save)
         world.pending_promotions.extend(fresh.pending_promotions)
+        world.pending_accolades.extend(fresh.pending_accolades)
         world.commit()
         # Saved first, shown second: the ending is narration of something durable.
+        play_scene(lambda w, h: _FinaleScene(w, h, hull=retired_ship.hull_class, finale=label,
+                                             pilot=world.save.pilot.handle, seed=_scene_seed(world, "finale")))
         screen_career_ending(p, world.save, retired_ship)
         # `reset` cleared the notes with everything else, so this is set after
         # it. Written to the terminal instead, the line was erased by the new
@@ -9896,22 +11650,27 @@ def screen_career_finale(p: Palette, world: World) -> str | None:
         return "A new career begins."
 
 
-def screen_status(p: Palette, world: World) -> None:
+def screen_status(p: Palette, world: World, save_dir: Path | None = None) -> None:
+    """`save_dir` lets the achievements view say how rare each one is here."""
     view, page, result = "O", 0, None
     cache = {}
     while True:
-        footer = "[<] Prev [>] Next [O] Pilot [C] Jobs [H] Log [D] Dossiers "
+        footer = "[<] Prev [>] Next [O] Pilot [C] Jobs [H] Log [D] Dossiers [A] Achievements "
         footer += "[R] Finale [B] Back: "
-        title = "Pilot Record: " + {"O":"Overview", "C":"Contracts", "H":"History", "D":"Dossiers"}[view]
+        title = "Pilot Record: " + {"O":"Overview", "C":"Contracts", "H":"History", "D":"Dossiers",
+                                    "A":"Achievements"}[view]
         if view not in cache:
-            lines = pilot_record_lines(world, view)
+            if view == "A":
+                lines = accolade_lines(world.save, accolade_rarity(save_dir) if save_dir is not None else None)
+            else:
+                lines = pilot_record_lines(world, view)
             if result: lines.insert(0, "Result: " + result)
             cache[view] = _service_pages(lines, title, footer)
         key, page, count = _draw_service_page(p, title, [], footer, page, pages=cache[view])
         if key == RESIZE_KEY: cache, page = {}, 0  # the cached pages were cut for the old terminal
         if key in ("B", "Q"): return
         if (moved := page_step(key, page, count)) is not None: page = moved
-        elif key in ("O", "C", "H", "D"): view, page = key, 0
+        elif key in ("O", "C", "H", "D", "A"): view, page = key, 0
         elif key == "R":
             previous = world.save.pilot.retirements
             response = screen_career_finale(p, world)
@@ -10689,10 +12448,16 @@ def _show_result(p: Palette, world: World, lines: list[str]) -> None:
         out_line(f"{p.gold}{line}{RESET}")
 
 
-def _encounter_result(p: Palette, world: World, state: dict, lines: list[str]) -> None:
-    """Commit both effects and completion before revealing their result."""
+def _encounter_result(p: Palette, world: World, state: dict, lines: list[str],
+                      scene: Callable[[int, int], "_Scene"] | None = None) -> None:
+    """Commit both effects and completion before revealing their result.
+
+    A `scene` plays between the two, so it shows what is already kept, and
+    never on a resume: a done encounter returns before reaching here."""
     state.update(done=True, result=lines)
     world.commit()
+    if scene is not None:
+        play_scene(scene)
     _show_result(p, world, lines)
 
 
@@ -10728,6 +12493,8 @@ def _resolve_random_travel_encounter(p: Palette, world: World, dest: GalaxySyste
             state.pop("combat", None)
             if outcome != "won":
                 state["index"] = len(pirates)
+            elif len(pirates) > 1 and state["index"] == len(pirates):
+                bump_accolade(world.save, "squadrons")  # the last of them, in the commit that moves on
             world.commit()
         _encounter_result(p, world, state, [])
     elif kind == "derelict":
@@ -10795,7 +12562,9 @@ def _encounter_derelict(p: Palette, world: World) -> None:
             reward = world.event_rng.randint(60, 100 + max(0, encounter_danger(world)) * 120)
             world.save.pilot.credits += reward
             world.save.pilot.note(f"Salvaged a derelict hulk (+{reward}cr).")
-            _encounter_result(p, world, state, [f"Salvage recovered: {reward}cr."])
+            bump_accolade(world.save, "derelicts")
+            _encounter_result(p, world, state, [f"Salvage recovered: {reward}cr."], scene=lambda w, h: _SalvageScene(
+                w, h, hull=world.save.ship.hull_class, credits=reward, site=None, seed=_scene_seed(world, "salvage")))
             return
         state["ambush"] = dataclasses.asdict(generate_pirate(world, danger=encounter_danger(world)))
         world.commit()
@@ -10818,10 +12587,12 @@ def _encounter_distress_call(p: Palette, world: World) -> None:
     world.save.pilot.credits += reward
     adjust_reputation(world, FACTION_CONCORD, 3)
     world.save.pilot.note(f"Answered a distress call (+{reward}cr, Concord standing up).")
+    bump_accolade(world.save, "distress")
     _encounter_result(p, world, state, [
         f"You divert to help -- {fuel_cost} fuel spent. Grateful survivors "
         f"pay {reward}cr, and Concord takes note.",
-    ])
+    ], scene=lambda w, h: _DistressScene(w, h, hull=world.save.ship.hull_class, credits=reward, fuel=fuel_cost,
+                                        seed=_scene_seed(world, "distress")))
 
 
 def _encounter_market_tip(p: Palette, world: World, dest: GalaxySystem) -> None:
@@ -10844,7 +12615,8 @@ def _encounter_market_tip(p: Palette, world: World, dest: GalaxySystem) -> None:
     buy = f"{quote['buy']}cr" if quote["buy"] is not None else "prohibited"
     _encounter_result(p, world, state, [
         f"You intercept a trader's data burst: {label} at {system.name}, buy {buy}, sell {quote['sell']}cr. Recorded on day {world.save.turn}.",
-    ])
+    ], scene=lambda w, h: _DataBurstScene(w, h, hull=world.save.ship.hull_class, what=label, where=system.name,
+                                         seed=_scene_seed(world, "tip")))
 
 
 def _resolve_escort_missions(p: Palette, world: World, dest_id: int) -> None:
@@ -10891,6 +12663,7 @@ def _resolve_escort_missions(p: Palette, world: World, dest_id: int) -> None:
                     world.save.pilot.highlight(f"First mission complete: {mission.description}.")
                 world.save.pilot.missions_completed += 1
                 world.save.pilot.note(f"Escort complete: {mission.description} (+{reward}cr, +{CONCORD_STANDING_PER_CONTRACT} Concord standing)")
+                bump_accolade(world.save, "escorts")
                 world.save.pilot.highlight(f"Escorted a convoy safely to {dest.name}.")
                 lines.append(f"Convoy delivered safely! +{reward}cr and +{CONCORD_STANDING_PER_CONTRACT} Concord standing")
             else:
@@ -10971,11 +12744,13 @@ def _resolve_bounty(p: Palette, world: World, travel: dict) -> None:
             world.save.pilot.highlight(f"First mission complete: {bounty.description}.")
         world.save.pilot.missions_completed += 1
         world.save.pilot.note(f"Bounty complete: {bounty.description} (+{reward}cr)")
+        bump_accolade(world.save, "bounties")
         lines.append(f"Bounty complete! +{reward}cr")
         world.event_rng.random()  # Preserve the historical bounty-completion draw.
         if state.get("warrant") is not None and not state["warrant"]["matches"]:
             world.save.pilot.notoriety += NOTORIETY_PER_WRONG_BOUNTY_KILL
             adjust_reputation(world, FACTION_CONCORD, -3)
+            bump_accolade(world.save, "wrong_bounties")
             world.save.pilot.note("Bounty identification risk accepted: incorrect target destroyed -- notoriety rises.")
             lines.append("The target was an incorrect match. The stated identification penalty applies: "
                          f"+{NOTORIETY_PER_WRONG_BOUNTY_KILL} notoriety, Concord standing -3.")
@@ -11051,6 +12826,9 @@ def screen_travel(p: Palette, world: World, dest_id: int) -> None:
         }
         world.commit()
         world.hop_report = []
+        play_scene(lambda w, h: _JumpScene(
+            w, h, hull=world.save.ship.hull_class, destination=dest.name if was_discovered else None,
+            burn=burn, fuel=world.save.ship.fuel, day=world.save.turn, seed=_scene_seed(world, "jump")))
         out_line(f"{p.gold}{jumping}{RESET}")
         _show_result(p, world, lines)
     dest_id = travel["destination"]
@@ -11077,18 +12855,27 @@ def screen_travel(p: Palette, world: World, dest_id: int) -> None:
     if travel["phase"] == "arrival":
         lines = []
         inspect = False
+        completed = paid = 0  # contracts this arrival finished, and what they paid
         if not world.ship_destroyed_this_hop:
             world.save.current_system = dest_id
             lines = settle_futures_contracts(world)
+            credits_before = world.save.pilot.credits
             lines += check_mission_completions(
                 world, just_discovered=None if travel["was_discovered"] else dest_id,
             )
+            completed = sum(1 for line in lines if line.startswith("Mission complete:"))
+            paid = max(0, world.save.pilot.credits - credits_before)
             if has_contraband(world) and dest.economy != "Haven":
                 chance = customs_risk_for(world, dest)
                 inspect = world.event_rng.random() < chance
         travel["phase"] = "customs"
         travel["encounter"] = {"inspect": inspect}
         world.commit()
+        if not world.ship_destroyed_this_hop:
+            play_scene(lambda w, h: _DockScene(
+                w, h, economy=dest.economy, station=dest.station_name, system=dest.name,
+                charted=not travel["was_discovered"], seed=_scene_seed(world, "dock"),
+                contracts=completed, paid=paid))
         _show_result(p, world, lines)
     if travel["encounter"].get("inspect"):
         screen_customs(p, world)
@@ -11279,6 +13066,7 @@ def _screen_combat_session(p: Palette, world: World, pirate: Pirate, *, patrol: 
             "hull_before": world.save.ship.hull_hp,
         }
         world.commit()
+        play_contact_scene(world, pirate, encounter, patrol=patrol)
     else:
         pirate = Pirate(**combat["pirate"])
         if combat["outcome"] is not None:
@@ -11330,10 +13118,11 @@ def _screen_combat_session(p: Palette, world: World, pirate: Pirate, *, patrol: 
             page = 0
             continue
         lines = []
-        outcome = None
+        outcome, loot = None, 0
         # What the two hulls read before the exchange, so the bars can be walked
         # to their new readings afterwards -- after the commit, never before it.
         opened_at = (pirate.hp, ship.hull_hp)
+        was_outclassed = not patrol and outclassed(world, pirate, tactics)
         engaging = (action in ("F", "E") or (action == "G" and tactics["brace_ready"])
                     or (action == "D" and not patrol and cargo_aboard) or (action == "P" and not patrol and can_pay))
         if warrant is not None and engaging: warrant["engaged"] = True
@@ -11362,6 +13151,12 @@ def _screen_combat_session(p: Palette, world: World, pirate: Pirate, *, patrol: 
                     adjust_reputation(world, FACTION_BLACKWAKE, -1)
                     lines.append(f"Salvage recovered: {loot}cr.")
                 outcome = "won"
+                # Counted with the kill, in the commit below: a resumed fight
+                # returns its kept outcome and never reaches here again.
+                if patrol: bump_accolade(world.save, "patrol_kills")
+                if was_outclassed: bump_accolade(world.save, "giant_slayer")
+                if ship.hull_hp >= hull_before: bump_accolade(world.save, "flawless")
+                if 0 < ship.hull_hp * 20 < hull_hp_max(ship): bump_accolade(world.save, "close_calls")
         elif action == "E" or (action == "D" and not patrol and cargo_aboard):
             dumped = False
             available_cargo = [c for c, quantity in world.save.cargo.items() if quantity > 0]
@@ -11379,6 +13174,7 @@ def _screen_combat_session(p: Palette, world: World, pirate: Pirate, *, patrol: 
             if world.event_rng.random() < combat_evade_chance(world, pirate, dumped_cargo=dumped, tactics=tactics, patrol=patrol):
                 lines.append("You break contact and escape.")
                 outcome = "escaped"
+                bump_accolade(world.save, "escapes")
             else:
                 lines.append("Evasion failed -- they're still on you.")
                 _, retaliation = tactical_retaliation(world, pirate, tactics)
@@ -11390,6 +13186,7 @@ def _screen_combat_session(p: Palette, world: World, pirate: Pirate, *, patrol: 
                 adjust_reputation(world, FACTION_BLACKWAKE, 2)
                 lines.append(f"The {pirate.name} takes {cost}cr and peels off.")
                 outcome = "escaped"
+                bump_accolade(world.save, "raider_bribes")
             else:
                 lines.append("They refuse the bribe and press the attack!")
                 _, retaliation = tactical_retaliation(world, pirate, tactics)
@@ -11419,6 +13216,7 @@ def _screen_combat_session(p: Palette, world: World, pirate: Pirate, *, patrol: 
                     lethal if lethal is not None else max(0, ship.hull_hp), hull_hp_max(ship))
         page = 0
         if outcome is not None:
+            play_combat_outcome_scene(world, pirate, outcome, action, patrol=patrol, loot=loot)
             report_hop(world, lines)
             for line in lines: out_line(f"  {line}")
             return outcome
@@ -11464,6 +13262,7 @@ def resolve_customs(world: World, action: str) -> list[str]:
             raise ValueError(f"Insufficient credits: bribe requires {cost}cr. No cargo or credits changed.")
         if world.event_rng.random() < 0.6:
             world.save.pilot.credits -= cost
+            bump_accolade(world.save, "customs_bribes")
             return [f"{cost}cr changes hands quietly. Move along."]
         paid = min(world.save.pilot.credits, fine)
         world.save.pilot.credits -= paid
@@ -11471,6 +13270,7 @@ def resolve_customs(world: World, action: str) -> list[str]:
             _dispose_cargo(world, c, world.save.cargo.get(c, 0))
         adjust_reputation(world, FACTION_CONCORD, -5)
         world.save.pilot.notoriety += NOTORIETY_PER_CUSTOMS_BUST
+        bump_accolade(world.save, "busts")
         return [f"Bribe refused -- contraband confiscated; {paid}cr collected against a {fine}cr fine. No debt remains."]
     for c in CONTRABAND_COMMODITIES:
         _dispose_cargo(world, c, world.save.cargo.get(c, 0))
@@ -11483,6 +13283,8 @@ def screen_customs(p: Palette, world: World) -> None:
     if state.get("done"):
         _show_result(p, world, state.get("result", []))
         return
+    play_scene(lambda w, h: _ScanScene(w, h, hull=world.save.ship.hull_class, units=customs_quote(world)[0],
+                                       seed=_scene_seed(world, "customs")))
     page, result = 0, None
     while True:
         lines = customs_display_lines(world)
@@ -11779,7 +13581,7 @@ def _run_game(info: dict) -> int:
                 if dest is not None:
                     screen_travel(p, world, dest)
             elif choice == "S":
-                screen_status(p, world)
+                screen_status(p, world, save_dir)
                 continue
             elif choice == "H":
                 screen_hall_of_fame(p, world, save_dir, user_id)
