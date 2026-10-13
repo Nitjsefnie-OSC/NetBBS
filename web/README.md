@@ -25,6 +25,8 @@ web/
   shots/
     raw-*.txt            raw ANSI as the door wrote it
     shot-*.html          the same capture converted for embedding
+    cast-*.json          a game's animated scene, frame by frame, as it wrote it
+    scene-*.json         the same scene as player data, and scene-*.html its poster
 ```
 
 The three icon files are generated, never edited: the picture is the 16x16
@@ -175,6 +177,37 @@ needs `shot-tall` (17–24 rows do; fewer do not). Recapturing changes those
 numbers — the Colors screen gained rows and needed the class, the directory
 screen lost them and no longer did — so read that report rather than assuming
 the classes still fit.
+
+## Scenes: animated captures
+
+The bundled games play short full-screen scenes during play, and the doors page
+and the landing page replay them. A scene is recorded as a **cast**: every
+frame's raw ANSI, with the wait the game asked for after it.
+`website_capture_door_scene.py` plays the scene through the game's own `play_*`
+function at 80x24 in truecolor. Only the terminal around it is replaced: stdout
+records, and the frame wait reports that no key came. `--list` names every scene.
+
+```sh
+PYTHONPATH=src python scripts/website_capture_door_scene.py voidrunner jump \
+  web/shots/cast-voidrunner-jump.json
+python scripts/website_scene_to_html.py web/shots/cast-voidrunner-jump.json \
+  web/shots/scene-voidrunner-jump.json --poster web/shots/scene-voidrunner-jump.html
+```
+
+`website_scene_to_html.py` paints each frame with the same terminal emulator
+as the stills and keeps only the cells each frame changes. That data goes into
+the page as `<script type="application/json" id="scene-<door>-<scene>">`. The
+page's player script draws the same one-`<span>`-per-cell grid and applies
+the frames at the game's timing. It cycles through the scenes listed in its
+chips while it is on screen, and pauses when scrolled away. With reduced motion
+it never starts by itself. The poster, the scene's last frame, is the
+`<pre>`'s static content. A page shows it until the player starts, and it is
+all a page shows with scripts off.
+
+- **A scene needs `line-height:1.2`, not the stills' 1.55.** Its pictures are
+  half blocks, and the taller rows split every pixel into stripes.
+- **Re-record after vendoring a new game release.** A cast is that release's
+  bytes, so `VENDORED.json` and the casts change together.
 
 ## House vocabulary
 
