@@ -72,7 +72,7 @@ caller, add `"DOOR_SCENES":"0"` to that door's profile environment JSON. It is
 separate from `DOOR_SPLASH`, so either can stay on.
 
 Voidrunner keeps 66 achievements per caller account, across retirements and
-every career, under **Pilot Record ▸ Achievements**. They live in the career
+every career, on the game's Pilot Record screen under <kbd>A</kbd>. They live in the career
 saves and the `scores/` records already under the save root, so backups and
 restores need nothing new. An existing career unlocks what it has already done
 the first time it is opened with this version.

@@ -966,7 +966,7 @@ docking, fights and milestones, War Dialer after raids, jobs and busts, and
 Retro Trivia at the end of a round. A scene shows a result that has already been
 saved. Any key ends it, and that key is used up, so it can't choose anything on
 the next screen. Voidrunner also keeps achievements for your account, across
-every career, under **Pilot Record ▸ Achievements**.
+every career: open Pilot Record in the game and press <kbd>A</kbd>.
 
 - Each game has its own controls and help.
 - Quit through the game's own menu to return to NetBBS.
