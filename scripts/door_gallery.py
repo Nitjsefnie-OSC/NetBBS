@@ -171,9 +171,10 @@ WALKS: dict[str, list[tuple[str, bytes]]] = {
         ("Contract Details", b"B1"),
         ("Navigation Chart", b"C"),
         ("Pilot Record", b"S", "played"),
-        # The record's other three views, and the finale, are each one more key.
+        # The record's other four views, and the finale, are each one more key.
         ("Pilot Record, jobs", b"SC", "played"),
         ("Pilot Record, log", b"SH", "played"),
+        ("Pilot Record, achievements", b"SA", "played"),
         ("Career Dossiers", b"SD", "played"),
         ("Career Finale", b"SR", "played"),
         # The ending a retirement is shown (issue #644): Status, Finale, Retire,
