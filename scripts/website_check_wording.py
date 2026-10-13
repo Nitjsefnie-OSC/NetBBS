@@ -36,7 +36,8 @@ PAGES = {
     "doors.html": "https://www.netbbs.org/doors.html",
     "mrc.html": "https://www.netbbs.org/mrc.html",
 }
-PROTECTED = re.compile(r"<pre\b.*?</pre>|<style>.*?</style>|<script>.*?</script>", re.S)
+# A scene player's data (`<script type="application/json">`) is terminal art, like a capture.
+PROTECTED = re.compile(r"<pre\b.*?</pre>|<style>.*?</style>|<script\b[^>]*>.*?</script>", re.S)
 TAG = re.compile(r"<[^>]+>")
 # "Link" is a proper noun, so only a capitalised occurrence is the product --
 # a hyperlink, a serial link and the MRC hub link are ordinary English. The
