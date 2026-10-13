@@ -21,7 +21,8 @@ Upgrading is a wheel swap and a restart. **Rolling back is not**: see
 It is a minor release because callers get new features, and because
 Voidrunner careers gain a saved field that older versions refuse.
 
-You can watch every scene at [www.netbbs.org/doors.html](https://www.netbbs.org/doors.html#scenes),
+Sixteen of the scenes, from all three games, play on
+[www.netbbs.org/doors.html](https://www.netbbs.org/doors.html#scenes),
 replayed from the games' own output.
 
 ## Voidrunner v1.2.1: scenes and achievements (PR #1292)
@@ -127,7 +128,8 @@ need nothing.
   under the parallel run's load: a door outbound receipt test and a bot
   announcement test, neither touched here. Each passed three times out of
   three when run alone. The timing-sensitive test passed.
-- **Website capture:** all sixteen scenes on the website were played by the
+- **Website capture:** the sixteen scenes on the website (seven Voidrunner, six War Dialer,
+  three Retro Trivia) were played by the
   games' own `play_*` functions inside this tree. Only the terminal was
   replaced, and each cast ends on the scene's real caption.
 - **Not yet checked live:** scenes over real Telnet and SSH sessions and in
