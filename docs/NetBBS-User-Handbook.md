@@ -961,6 +961,13 @@ Each game opens with a short animated title screen. Any key skips it; once it
 has finished, it stays up until you press a key. Voidrunner and War Dialer
 leave it out when their display settings turn motion off.
 
+The games also play short animated scenes during play: Voidrunner at jumps,
+docking, fights and milestones, War Dialer after raids, jobs and busts, and
+Retro Trivia at the end of a round. A scene shows a result that has already been
+saved. Any key ends it, and that key is used up, so it can't choose anything on
+the next screen. Voidrunner also keeps achievements for your account, across
+every career: open Pilot Record in the game and press <kbd>A</kbd>.
+
 - Each game has its own controls and help.
 - Quit through the game's own menu to return to NetBBS.
 - A busy game may have a session limit; try again later.

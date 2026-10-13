@@ -135,7 +135,9 @@ WORKERS = 4  # panels are independent subprocesses; a gallery is 150+ of them.
 #        and a launch costs no animation; this one turns the splash back on and
 #        keeps what was drawn between the splash's own clear and its handover.
 #        A preset without motion has no splash, so `SPLASH_PRESETS` names the
-#        presets this walk is taken in.
+#        presets this walk is taken in. Every walk, this one included, runs
+#        with `DOOR_SCENES=0`: a mid-game scene clears the screen it follows,
+#        and a key typed into one is spent on it rather than on the walk.
 #
 # A walk photographs one screen: the one it is looking at when its keys run out.
 # Passing *through* a picker on the way somewhere else therefore reviews nothing
@@ -169,9 +171,10 @@ WALKS: dict[str, list[tuple[str, bytes]]] = {
         ("Contract Details", b"B1"),
         ("Navigation Chart", b"C"),
         ("Pilot Record", b"S", "played"),
-        # The record's other three views, and the finale, are each one more key.
+        # The record's other four views, and the finale, are each one more key.
         ("Pilot Record, jobs", b"SC", "played"),
         ("Pilot Record, log", b"SH", "played"),
+        ("Pilot Record, achievements", b"SA", "played"),
         ("Career Dossiers", b"SD", "played"),
         ("Career Finale", b"SR", "played"),
         # The ending a retirement is shown (issue #644): Status, Finale, Retire,
@@ -654,6 +657,7 @@ class Door:
                    VOIDRUNNER_SAVE_DIR=str(state / "saves"),
                    WAR_DIALER_DB_PATH=str(state / "war-dialer.db"),
                    DOOR_SPLASH="1" if splash else "0",
+                   DOOR_SCENES="0",
                    PYTHONIOENCODING="utf-8")
         self.proc = subprocess.Popen(
             [sys.executable, str(door)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
