@@ -186,6 +186,9 @@ frame's raw ANSI, with the wait the game asked for after it.
 `website_capture_door_scene.py` plays the scene through the game's own `play_*`
 function at 80x24 in truecolor. Only the terminal around it is replaced: stdout
 records, and the frame wait reports that no key came. `--list` names every scene.
+Voidrunner's Viewport pictures are recorded the same way through
+`show_viewport_picture`. They idle until a key for up to 21 seconds, so a cast
+keeps the opening and the first nine seconds (`VIEWPORT_FRAMES`).
 
 ```sh
 PYTHONPATH=src python scripts/website_capture_door_scene.py voidrunner jump \

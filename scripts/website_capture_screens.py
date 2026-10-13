@@ -440,7 +440,7 @@ async def capture_chat(tmp: Path) -> str:
         people = _people(db)
         channel = create_channel(db, "lobby", creator=people["keeper"],
                                  description="General chat")
-        channel = set_topic(db, channel, "release day: 7.24.0", set_by=people["keeper"])
+        channel = set_topic(db, channel, "release day: 7.25.0", set_by=people["keeper"])
 
         # alice called earlier this evening and has gone: what `seen` reports.
         stamps = iter([ago(95), ago(52)])
@@ -453,7 +453,7 @@ async def capture_chat(tmp: Path) -> str:
 
         said = [
             ("join", "wren", None, 14),
-            ("message", "wren", "evening -- did the 7.24.0 wheel land yet?", 13.5),
+            ("message", "wren", "evening -- did the 7.25.0 wheel land yet?", 13.5),
             ("join", "otto", None, 12),
             ("message", "otto", "just pulled it. the outbox can finally drop dead letters", 11),
             ("message", "wren", "and every breadcrumb says where you came from now", 10),
@@ -535,9 +535,9 @@ async def capture_chat(tmp: Path) -> str:
                 await until(lambda: shown(answer), f"the answer to {line!r}")
 
             await say(2.4, "otto", "evening keeper")
-            await type_(3, "evening both. 7.24.0 is out", "7.24.0 is out")
-            await say(4, "wren", "saw it! voidrunner flies a whole jump scene now")
-            await say(5, "otto", "and war dialer sends the feds when you get busted")
+            await type_(3, "evening both. 7.25.0 is out", "7.25.0 is out")
+            await say(4, "wren", "saw it! the voidrunner viewport draws my ship now")
+            await say(5, "otto", "scorch marks and all. mine is smoking")
             await say(7, "wren", "hi keeper! ask Baud about alice, she was on earlier")
             await type_(8, "!seen alice", "last recorded")
             await say(9, "otto", "ha, missed her. her ANSI is up in the art area though")
