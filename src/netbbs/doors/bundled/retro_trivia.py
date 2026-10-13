@@ -1743,12 +1743,15 @@ def play_splash(p: Palette, info: dict, width: int, height: int,
 # typing-ahead skips it, a frame goes out every tenth of a second, and
 # DOOR_SPLASH=0 turns it off with the splash -- with one difference: it does
 # not wait for a key when it is done, because the results screen behind it
-# does that.
+# does that. It holds its last picture a few seconds instead, then moves on.
 
 FINALE_FRAMES = 34
 #: How long the last answer's verdict stays readable before the finale clears
 #: it, and so how long the door listens for typing-ahead first.
 FINALE_GRACE_SECONDS = 1.5
+#: How long the finished picture stays up before the results screen replaces
+#: it. A key cuts it short, and is spent on it like any other key in the show.
+FINALE_HOLD_SECONDS = 4.0
 
 #: The sign's pixel face: the splash's letters and the rest the finale spells.
 _SIGN_FONT = {
@@ -2295,6 +2298,8 @@ def play_finale(p: Palette, info: dict, score: int, total: int, width: int, heig
             out(frame)
             if poll.take(SPLASH_FRAME_SECONDS):
                 break
+        else:
+            poll.take(FINALE_HOLD_SECONDS)
     finally:
         out(f"{RESET}{ESC}[2J{ESC}[H{ESC}[?25h")
     return True

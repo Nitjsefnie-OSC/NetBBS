@@ -71,6 +71,11 @@ inside NetBBS:** to turn Voidrunner's and War Dialer's scenes off for every
 caller, add `"DOOR_SCENES":"0"` to that door's profile environment JSON. It is
 separate from `DOOR_SPLASH`, so either can stay on.
 
+Voidrunner's Viewport draws the caller's ship, station and last discovery as
+full-screen pictures that idle until a key, and that key is the next command.
+With `DOOR_SCENES=0` or the `fast` preset they are still pictures, and `mono`,
+`plain` and terminals too small for one keep the older text portraits.
+
 Voidrunner keeps 66 achievements per caller account, across retirements and
 every career, on the game's Pilot Record screen under <kbd>A</kbd>. They live in the career
 saves and the `scores/` records already under the save root, so backups and
