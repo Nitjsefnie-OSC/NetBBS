@@ -77,6 +77,7 @@ import contextlib
 import dataclasses
 import errno
 import functools
+import itertools
 import json
 import math
 import os
@@ -293,7 +294,7 @@ def _load_door_info(drop_file: str | None = None) -> dict:
 class Palette:
     """Voidrunner's presentation palette (issue #493 §4).
 
-    Nine named roles, not nine colors a screen may pick from: *what a token
+    Ten named roles, not ten colors a screen may pick from: *what a token
     is* decides its color, so the same fact is the same color on every
     screen, and chrome is never the color of content. Truecolor is the
     design target; the 256-color index beside each RGB is the first
@@ -322,14 +323,16 @@ class Palette:
                      # already holds 33. 110 is `hull` and 237 is `deep`, the
                      # two chrome roles: dark cyan and bright black are the
                      # sixteen-color readings of "recedes behind the content".
-                     110: 36, 237: 90, 255: 97, 137: 37, 84: 92, 215: 33}.get(idx256, 37)
+                     110: 36, 237: 90, 255: 97, 137: 37, 84: 92, 215: 33,
+                     # 250 is `text`, prose: white, like the labels around it.
+                     250: 37}.get(idx256, 37)
             return f"{ESC}[{color}m"
         if self._truecolor:
             r, g, b = rgb
             return f"{ESC}[38;2;{r};{g};{b}m"
         return f"{ESC}[38;5;{idx256}m"
 
-    # -- the nine roles ----------------------------------------------------
+    # -- the ten roles -----------------------------------------------------
     @property
     def hull(self) -> str:
         """Frames, section headers, station names.
@@ -386,6 +389,20 @@ class Palette:
         return self._sgr((179, 155, 125), 137)
 
     @property
+    def text(self) -> str:
+        """Running prose: the sentences a row is made of when it is not a
+        `Label: value` pair or a table (v1.2.2 play-test).
+
+        Prose used to fall to `slate`, so a screen made of sentences -- the
+        guide, the viewport, a contract's terms -- was nearly all the label
+        color, and the labels that color exists to separate disappeared into
+        it. A cool light grey sits between `ink` and `slate`: readable as the
+        body of the screen, a step below the values in it, and neutral so the
+        warm labels still read as a different kind of thing.
+        """
+        return self._sgr((188, 196, 208), 250)
+
+    @property
     def mint(self) -> str:
         return self._sgr((108, 242, 160), 84)
 
@@ -396,6 +413,18 @@ class Palette:
     @property
     def alarm(self) -> str:
         return self._sgr((255, 92, 108), 203)
+
+    def rgb(self, color: tuple[int, int, int]) -> str:
+        """Any color, at this preset's depth: for a value whose color is
+        computed, such as achievement progress, rather than one of the roles."""
+        if _OUTPUT_STYLE in ("mono", "plain"):
+            return ""
+        if _OUTPUT_STYLE == "basic":
+            index = _splash_16(color, True)
+            return f"{ESC}[{30 + index if index < 8 else 90 + index - 8}m"
+        if self._truecolor:
+            return f"{ESC}[38;2;{color[0]};{color[1]};{color[2]}m"
+        return f"{ESC}[38;5;{_splash_256(color)}m"
 
     # -- legacy aliases ----------------------------------------------------
     @property
@@ -442,7 +471,7 @@ class Palette:
         """A severity tone by name, for a component handed one as data."""
         return {"good": self.mint, "caution": self.amber, "danger": self.alarm,
                 "info": self.hull, "brand": self.plasma, "key": self.gold,
-                "value": self.ink, "label": self.slate,
+                "value": self.ink, "label": self.slate, "text": self.text,
                 # A column heading is a section header, which `hull` already
                 # means. It was `label`, so a table's headings were the color
                 # of the sentence above them and the footnote below them and
@@ -5927,6 +5956,13 @@ _ROLE_TONES = (
 # A number, a credit figure, a ratio, a percentage, a signed delta: the values
 # a caller reads off a row.
 _VALUE_RE = re.compile(r"[+-]?\d[\d,]*(?:\.\d+)?(?:\s?cr|%|/\d[\d,]*)?")
+# `Label: value` -- a short label opening a row or a clause, and the clause it
+# introduces (v1.2.2 play-test). Up to four words: `Procurement at this station:` is a
+# label, `Estimate is not total profit:` is a sentence. The clause ends at a
+# sentence or a semicolon, because what follows one is usually a hint
+# (`Deadline: none. Jumps advance the day.`), which stays in the prose role.
+_LABEL_VALUE_RE = re.compile(r"(?:^|(?<=[.;] ))\s*[A-Za-z][\w'-]*(?: [\w'-]+){0,3}: +"
+                             r"(?P<value>(?:[^.;]|\.(?! ))+?)(?=[.;](?: |$)|$)")
 # Gold is hotkeys and credits and nothing else, so a credit figure is claimed
 # before the generic value pass that would paint it as an ordinary number.
 _CREDIT_RE = re.compile(r"[+-]?\d[\d,]*(?:\.\d+)?\s?cr\b")
@@ -6013,15 +6049,29 @@ def style_body_line(text: str, *, key_labels: bool = False) -> str:
     for match in _VALUE_RE.finditer(text):
         claim(match.start(), match.end(), f"{p.ink}{match.group(0)}{RESET}")
 
+    # Whatever no pattern claimed is prose, colored by where it sits: a label's
+    # words are slate, the clause it introduces is ink like the numbers in it,
+    # and everything else is text. A credit, a key or a severity word inside a
+    # value clause keeps the role it claimed above.
+    base = [p.text] * len(text)
+    for match in _LABEL_VALUE_RE.finditer(text):
+        base[match.start():match.start("value")] = [p.slate] * (match.start("value") - match.start())
+        base[match.start("value"):match.end("value")] = [p.ink] * (match.end("value") - match.start("value"))
+
+    def prose(start: int, end: int) -> list[str]:
+        parts = []
+        for role, run in itertools.groupby(range(start, end), key=base.__getitem__):
+            run = list(run)
+            parts.append(f"{role}{text[run[0]:run[-1] + 1]}{RESET}")
+        return parts
+
     spans.sort()
     out_parts, cursor = [], 0
     for start, end, styled in spans:
-        if start > cursor:
-            out_parts.append(f"{p.slate}{text[cursor:start]}{RESET}")
+        out_parts.extend(prose(cursor, start))
         out_parts.append(styled)
         cursor = end
-    if cursor < len(text):
-        out_parts.append(f"{p.slate}{text[cursor:]}{RESET}")
+    out_parts.extend(prose(cursor, len(text)))
     return "".join(out_parts)
 
 
@@ -6727,7 +6777,7 @@ def play_splash(info: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 SCENE_FRAME_SECONDS = 0.07
-SCENE_HOLD_SECONDS = 0.8
+SCENE_HOLD_SECONDS = 2.0  # play-test: 0.8 s took the picture away before it had been seen
 SCENE_COLOR_STEP = 24
 
 
@@ -7444,6 +7494,30 @@ class _ScanScene(_Scene):
         self.caption(stage, t, 0.64, "CONTRABAND DETECTED", _SCENE_ALARM, self.detail)
 
 
+def _scene_planet(width: int, height_px: int, economy: str, pcx: float, pcy: float,
+                  radius: float) -> dict[tuple[int, int], tuple]:
+    """A banded world lit from the upper left, as {(x, y): color} for the pixels
+    of a `width` x `height_px` sky it covers. Composed once: it never moves."""
+    planet: dict[tuple[int, int], tuple] = {}
+    bands = _SCENE_WORLD_BANDS.get(economy, _SCENE_WORLD_BANDS["Industrial"])
+    for y in range(height_px):
+        for x in range(width):
+            dx, dy = (x + 0.5 - pcx) / radius, (y + 0.5 - pcy) / radius
+            disc = dx * dx + dy * dy
+            if disc > 1.0:
+                continue
+            z = math.sqrt(1.0 - disc)
+            light = max(0.0, -0.62 * dx - 0.5 * dy + 0.6 * z)
+            band = (dy * 3.0 + 0.2 * math.sin(dx * 5.0 + dy * 3.0)) % len(bands)
+            low = int(band)
+            color = _mix(bands[low], bands[(low + 1) % len(bands)], band - low)
+            shaded = _mix((8, 6, 20), color, 0.08 + 0.95 * light)
+            if z < 0.3 and light > 0.15:
+                shaded = _mix(shaded, (150, 210, 255), (0.3 - z) * 1.5)
+            planet[(x, y)] = shaded
+    return planet
+
+
 class _DockScene(_Scene):
     """The approach: the destination's station swells out of the dark in front
     of its world, its ring turning and its lights the color of its trade."""
@@ -7467,25 +7541,8 @@ class _DockScene(_Scene):
             self.detail += [("new system charted", _SCENE_MINT), ("  ·  ", _SCENE_SLATE)]
         self.detail.append((self.economy, _SCENE_SLATE))
         # The world behind the station never moves: compose it once.
-        self.planet: dict[tuple[int, int], tuple] = {}
-        radius = max(4.0, min(self.sky_px * 0.62, width * 0.3))
-        pcx, pcy = width * 0.78, self.sky_px * 0.92
-        bands = _SCENE_WORLD_BANDS[self.economy]
-        for y in range(self.sky_px):
-            for x in range(width):
-                dx, dy = (x + 0.5 - pcx) / radius, (y + 0.5 - pcy) / radius
-                disc = dx * dx + dy * dy
-                if disc > 1.0:
-                    continue
-                z = math.sqrt(1.0 - disc)
-                light = max(0.0, -0.62 * dx - 0.5 * dy + 0.6 * z)
-                band = (dy * 3.0 + 0.2 * math.sin(dx * 5.0 + dy * 3.0)) % len(bands)
-                low = int(band)
-                color = _mix(bands[low], bands[(low + 1) % len(bands)], band - low)
-                shaded = _mix((8, 6, 20), color, 0.08 + 0.95 * light)
-                if z < 0.3 and light > 0.15:
-                    shaded = _mix(shaded, (150, 210, 255), (0.3 - z) * 1.5)
-                self.planet[(x, y)] = shaded
+        self.planet = _scene_planet(width, self.sky_px, self.economy, width * 0.78, self.sky_px * 0.92,
+                                    max(4.0, min(self.sky_px * 0.62, width * 0.3)))
         self.max_radius = max(5.0, min(self.sky_px * 0.4, width * 0.2))
         self.cx = width * 0.38
 
@@ -8152,8 +8209,13 @@ def ship_gauge_rows(world: World) -> list[str]:
     # crew roster -- every one of them a value a caller reads off the row. It
     # was declared `label`, so it came out the color of `HULL` and `FUEL` in
     # column 0, which really are labels (issue #532).
+    # Its words are not the color of the number beside them, though: `60/60
+    # Intact` read as one value. The hull's condition takes its severity, the
+    # rest are prose (play-test, v1.2.2).
+    condition = {"Intact": "good", "Scuffed": "text", "Damaged": "caution", "Critical": "danger"}[hull_condition(ship)]
     drawn = table(["", "", "", ""], rows, "llrl",
-                  styles=[["label", "value", "value", "value"] for _ in rows],
+                  styles=[["label", "value", "value", condition if number == 0 else "text"]
+                          for number in range(len(rows))],
                   optional=(3,))[1:]  # the headers are the gauge labels themselves
     # Tinted before it is laid in: a row that carries the art is already styled,
     # so raw art would be the one thing on the deck with no role (#493 review).
@@ -8913,17 +8975,573 @@ def viewport_content(world: World, view: str) -> tuple[list[str],list[str],list[
     return [],[],["No discovery portrait recorded. Visit a landmark to see its portrait."],"Discovery"
 
 
+# ---------------------------------------------------------------------------
+# The viewport, drawn. The in-flight scenes' half-block pixels, used for a
+# screen rather than a moment: the pilot's ship, the station they are docked
+# at and the landmark they found, filling the terminal above a caption that
+# carries every fact the ASCII portrait's text did.
+#
+# A viewport picture is a place, not a story, so it has no ending: it opens
+# its blast shutters and then idles -- engines flicker, a ring turns, a beacon
+# blinks -- until the caller presses a key, and that key is the command the
+# action bar asked for, not a skip. The idle runs for `VIEWPORT_MOTION_FRAMES`
+# and then holds still, so a caller who walks away is not sent a picture a
+# second forever. Motion follows the scenes' rules: none in `fast`, none with
+# `DOOR_SCENES` off, none with nobody watching. Those still get the picture,
+# drawn once; `mono` and `plain` keep the ASCII portraits, which need no
+# color, and so does a terminal too small to hold a picture over its caption.
+# ---------------------------------------------------------------------------
+
+VIEWPORT_FRAME_SECONDS = 0.15
+VIEWPORT_MOTION_FRAMES = 140  # 21 s of idle motion, then the picture holds
+VIEWPORT_SHUTTER_FRAMES = 4
+VIEWPORT_MIN_SKY_ROWS = 6
+_VIEWPORT_TEXT = (188, 196, 208)  # the palette's `text`: prose in a caption
+_VIEWPORT_CONDITION_TONES = {"Intact": _SCENE_MINT, "Scuffed": _SCENE_INK, "Damaged": (255, 179, 71),
+                             "Critical": _SCENE_ALARM}
+
+
+def viewport_pictures() -> bool:
+    """Whether this caller's preset draws the viewport as pictures: any preset
+    with color. `mono` and `plain` keep the ASCII portraits."""
+    return _OUTPUT_STYLE in ("auto", "fast", "basic")
+
+
+def _viewport_rows(items: list[list[tuple[str, tuple]]], width: int) -> list[list[tuple[str, tuple]]]:
+    """Caption items laid out in rows of `width`, whole items only, ` · ` between
+    them on a row. An item wider than a row gets one to itself, cut to fit."""
+    rows: list[list[tuple[str, tuple]]] = []
+    used = 0
+    for item in items:
+        size = sum(_visible_width(text) for text, _ in item)
+        if rows and used + 5 + size <= width:
+            rows[-1] = rows[-1] + [("  ·  ", _SCENE_SLATE)] + item
+            used += 5 + size
+        else:
+            if size > width:
+                item = [(_fit_text("".join(text for text, _ in item), width), item[0][1])]
+                size = width
+            rows.append(list(item))
+            used = size
+    return rows
+
+
+def _viewport_prose(text: str, width: int, color: tuple = _VIEWPORT_TEXT) -> list[list[tuple[str, tuple]]]:
+    """A sentence or two as caption rows, wrapped at word boundaries."""
+    import textwrap
+    return [[(line, color)] for line in textwrap.wrap(_scene_text(text), max(8, width))]
+
+
+class _ViewportScene(_Scene):
+    """A picture with an idle loop: the sky above, the caption below, and the
+    shutters that open on it. `still` is the frame a caller without motion sees.
+
+    The caption is a title and as many rows as its facts need; the sky takes
+    the rest. `fits` is False when that leaves too little sky for a picture."""
+
+    still = VIEWPORT_SHUTTER_FRAMES
+
+    def __init__(self, width: int, height: int, *, title: str, title_color: tuple,
+                 items: list[list[tuple[str, tuple]]], prose: str = "", seed: str):
+        super().__init__(width, height, seed)
+        room = width - 4
+        self.title, self.title_color = _fit_text(title, width - 2), title_color
+        self.lines = _viewport_rows(items, room) + (_viewport_prose(prose, room) if prose else [])
+        self.caption_row = self.rows - 1 - len(self.lines)
+        self.sky_rows = self.caption_row - 1
+        self.sky_px = max(0, self.sky_rows * 2)
+        self.mid = self.sky_px // 2
+        self.fits = self.sky_rows >= VIEWPORT_MIN_SKY_ROWS
+        rng = random.Random(f"viewport-stars:{seed}")
+        count = max(8, width * max(1, self.sky_rows) // 50)
+        self.stars = [(rng.uniform(0, width), rng.randrange(max(1, self.sky_rows)), rng.random() < 0.2)
+                      for _ in range(count)]
+
+    def frame(self, index: int) -> list[list[tuple[str, tuple | None, tuple | None]]]:
+        stage = _Stage(self.width, self.height)
+        self.draw(stage, index, 0.0)
+        self.shutters(stage, index)
+        self.caption_block(stage)
+        return stage.cells()
+
+    def caption_block(self, stage: _Stage) -> None:
+        rule_y = self.sky_rows * 2 + 1
+        for x in range(1, self.width - 1):
+            stage.plot(x, rule_y, _mix(_SPLASH_GOLD, _SPLASH_PLASMA, x / max(1, self.width - 1)))
+        stage.text(self.caption_row, [(self.title, self.title_color)])
+        for offset, pieces in enumerate(self.lines):
+            stage.text(self.caption_row + 1 + offset, pieces)
+
+    def shutters(self, stage: _Stage, index: int) -> None:
+        """Blast shutters part from the middle of the sky as the view opens."""
+        if index >= VIEWPORT_SHUTTER_FRAMES:
+            return
+        gap = _ease_out(index / VIEWPORT_SHUTTER_FRAMES) * self.mid
+        for y in range(self.sky_px):
+            if abs(y + 0.5 - self.mid) < gap:
+                continue
+            # Flat plates with a gold edge: every shutter row that moves is
+            # a row sent again, so they carry no pattern to send.
+            color = _SPLASH_GOLD if abs(y + 0.5 - self.mid) - gap < 1.0 else (52, 60, 74)
+            for x in range(self.width):
+                stage.plot(x, y, color)
+
+    def twinkle(self, stage: _Stage, index: int, drift: float = 0.0) -> None:
+        """The stars, a near one now and then catching the light."""
+        for number, (x0, row, near) in enumerate(self.stars):
+            x = int(x0 - drift * (2 if near else 1)) % self.width
+            if near:
+                bright = (index + number * 7) % 23 == 0
+                stage.mark(row, x, "*" if bright else "+", (255, 255, 255) if bright else (200, 214, 255))
+            else:
+                stage.mark(row, x, "·" if (x * 7 + row) % 4 else ".", (82, 94, 128) if (x + row) % 2 else (120, 132, 170))
+
+
+class _ViewportShip(_ViewportScene):
+    """The pilot's ship, scaled up and lit: plating catches the light along its
+    top edges and falls into shadow underneath, the drive burns, the running
+    lights blink, and the world it is docked at hangs behind it. Damage is
+    scorch marks, then sparks, then smoke and a cockpit alarm."""
+
+    _SCORCHES = {"Intact": 0, "Scuffed": 2, "Damaged": 5, "Critical": 9}
+
+    def __init__(self, width: int, height: int, *, hull: str, condition: str, hull_hp: str, fuel: str,
+                 cargo: str, economy: str, seed: str):
+        items = [[("Hull ", _SCENE_SLATE), (hull_hp, _SCENE_INK)], [("Fuel ", _SCENE_SLATE), (fuel, _SCENE_INK)],
+                 [("Cargo ", _SCENE_SLATE), (cargo, _SCENE_INK)]]
+        super().__init__(width, height, title=f"{hull.upper()}  ·  {condition.upper()}",
+                         title_color=_VIEWPORT_CONDITION_TONES.get(condition, _SCENE_INK), items=items, seed=seed)
+        self.condition = condition
+        art = _SCENE_HULLS.get(hull, _SPLASH_SHIP)
+        rng = random.Random(f"viewport-ship:{seed}")
+        zoom = max(1, min(int(width * 0.52) // len(art[0]), int(self.sky_px * 0.62) // len(art)))
+        self.zoom = zoom
+        art_w, art_h = len(art[0]) * zoom, len(art) * zoom
+        x0, y0 = round(width * 0.5 - art_w / 2), round(self.mid - art_h / 2)
+
+        def filled(r: int, c: int) -> bool:
+            return 0 <= r < len(art) and 0 <= c < len(art[0]) and art[r][c] != "."
+
+        self.hull: dict[tuple[int, int], tuple] = {}
+        self.glass: list[tuple[int, int]] = []
+        for r, row in enumerate(art):
+            for c, key in enumerate(row):
+                if key == ".":
+                    continue
+                for dy in range(zoom):
+                    for dx in range(zoom):
+                        color = _scale(_SCENE_COLORS[key], 1.05 - 0.4 * (r * zoom + dy) / max(1, art_h - 1))
+                        if dy == 0 and not filled(r - 1, c):
+                            color = _mix(color, (255, 255, 255), 0.35)
+                        if dy == zoom - 1 and not filled(r + 1, c):
+                            color = _mix(color, (8, 8, 18), 0.5)
+                        if dx == 0 and not filled(r, c - 1):
+                            color = _mix(color, (255, 255, 255), 0.12)
+                        if dx == zoom - 1 and not filled(r, c + 1):
+                            color = _mix(color, (8, 8, 18), 0.3)
+                        if zoom >= 3 and key in "hld" and dx == 0 and c % 3 == 0 and filled(r, c - 1):
+                            color = _mix(color, (8, 8, 18), 0.22)  # a plating seam
+                        if key == "c":
+                            color = _mix(color, (255, 255, 255), 0.45 if dx + dy < zoom else 0.0)
+                            self.glass.append((x0 + c * zoom + dx, y0 + r * zoom + dy))
+                        self.hull[(x0 + c * zoom + dx, y0 + r * zoom + dy)] = color
+        # The drive: every row of the hull's back face burns.
+        rear = min(next(c for c, key in enumerate(row) if key != ".") for row in art)
+        self.nozzles = [y0 + r * zoom + dy for r, row in enumerate(art)
+                        if next(c for c, key in enumerate(row) if key != ".") <= rear + 1 for dy in range(zoom)]
+        self.tail = x0 + rear * zoom
+        tops = [(x, y) for (x, y) in self.hull if not (x, y - 1) in self.hull]
+        self.red_light = min(tops, key=lambda p: (p[1], -p[0]))
+        bottoms = [(x, y) for (x, y) in self.hull if not (x, y + 1) in self.hull]
+        self.green_light = max(bottoms, key=lambda p: (p[1], p[0]))
+        surface = sorted(p for p in self.hull if p not in self.glass)
+        self.scorches = [surface[rng.randrange(len(surface))] for _ in range(self._SCORCHES.get(condition, 0))]
+        for sx, sy in self.scorches:
+            reach = max(1, zoom // 2)
+            for dy in range(-reach, reach + 1):
+                for dx in range(-reach - 1, reach + 2):
+                    if (sx + dx, sy + dy) in self.hull:
+                        near = 1 - math.hypot(dx * 0.7, dy) / (reach + 1.2)
+                        self.hull[(sx + dx, sy + dy)] = _mix(self.hull[(sx + dx, sy + dy)], (34, 26, 24), max(0.0, near))
+        self.planet = _scene_planet(width, self.sky_px, economy, width * 0.9, self.sky_px * 0.12,
+                                    max(4.0, self.sky_px * 0.42))
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        self.twinkle(stage, index, drift=index * 0.12)
+        for (x, y), color in self.planet.items():
+            stage.plot(x, y, color)
+        # The plume: white at the nozzle, through plasma to nothing. Only its
+        # tip breathes, a row at a time, so a frame resends a few cells.
+        for number, y in enumerate(self.nozzles):
+            length = self.zoom * 3 + (1 if (index // 2 + number) % 3 == 0 else 0)
+            for step in range(length):
+                along = min(1.0, step / max(1, self.zoom * 3 - 1))
+                color = _mix((255, 255, 255), (120, 200, 255), along * 2) if along < 0.5 \
+                    else _mix((255, 90, 190), (40, 10, 50), (along - 0.5) * 2)
+                stage.blend(self.tail - 1 - step, y, color, 1.0 - along * 0.6)
+        for (x, y), color in self.hull.items():
+            stage.plot(x, y, color)
+        if self.condition == "Critical" and index % 10 < 5:
+            for x, y in self.glass:
+                stage.blend(x, y, _SCENE_ALARM, 0.65)
+        if index % 12 < 6:
+            stage.plot(*self.red_light, (255, 60, 60))
+        else:
+            stage.plot(*self.green_light, (90, 255, 140))
+        if self.condition in ("Damaged", "Critical"):
+            for number, (x, y) in enumerate(self.scorches):
+                if (index + number * 7) % 11 < 2:
+                    stage.plot(x, y, _heat(0.95))
+                    stage.plot(x + 1, y - 1, _heat(0.7))
+        if self.condition == "Critical":
+            # Smoke from the worst of it, trailing aft and up as the ship flies.
+            for x, y in self.scorches[:2]:
+                for puff in range(4):
+                    age = (index // 2 * 0.06 + puff / 4) % 1.0
+                    stage.blend(x - age * self.zoom * 9, y - age * self.zoom * 3, (150, 150, 162), 0.6 * (1 - age))
+
+
+class _ViewportStation(_ViewportScene):
+    """The station the pilot is docked at, as the docking scene drew it but
+    close and still: its ring turns, its lights blink in its trade's color, and
+    traffic comes and goes along the approach."""
+
+    station_pixel = _DockScene.station_pixel
+
+    def __init__(self, width: int, height: int, *, station: str, items: list, economy: str, seed: str):
+        super().__init__(width, height, title=_scene_text(station).upper(), title_color=_SPLASH_GOLD,
+                         items=items, seed=seed)
+        self.economy = economy if economy in _SCENE_LIGHTS else "Industrial"
+        self.lights = _SCENE_LIGHTS[self.economy]
+        self.planet = _scene_planet(width, self.sky_px, self.economy, width * 0.82, self.sky_px * 0.95,
+                                    max(4.0, min(self.sky_px * 0.7, width * 0.32)))
+        self.radius = max(5.0, min(self.sky_px * 0.44, width * 0.24))
+        self.cx = width * 0.38
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        self.twinkle(stage, index)
+        for (x, y), color in self.planet.items():
+            stage.plot(x, y, color)
+        radius, cy = self.radius, self.mid
+        spin, blink = index * 0.025, index % 10 < 5
+        reach_x, reach_y = int(radius * 1.4) + 1, int(radius * 1.1) + 1
+        for y in range(math.floor(cy) - reach_y, math.floor(cy) + reach_y + 1):
+            for x in range(math.floor(self.cx) - reach_x, math.floor(self.cx) + reach_x + 1):
+                color = self.station_pixel((x + 0.5 - self.cx) / radius, (y + 0.5 - cy) / radius, spin, blink)
+                if color is not None:
+                    stage.plot(x, y, color)
+        # Traffic: two small ships working in along the approach, a beacon
+        # line marking it.
+        dock_x, dock_y = self.cx - radius * 1.25, cy + radius * 0.25
+        for beacon in range(6):
+            along = beacon / 6
+            bx = dock_x - (1 - along) * self.width * 0.32
+            by = dock_y + (1 - along) * self.sky_px * 0.35
+            lit = (index // 2 - beacon) % 6 == 0
+            stage.plot(bx, by, self.lights if lit else (60, 64, 90))
+        for ship in range(2):
+            along = (index * 0.006 + ship * 0.5) % 1.0
+            sx = dock_x - (1 - along) * self.width * 0.32
+            sy = dock_y + (1 - along) * self.sky_px * 0.35 - 2
+            _scene_sprite(stage, _SPLASH_SHIP_SMALL, sx - 3, sy - 1, tint=(10, 12, 30), amount=0.4 * along)
+
+
+class _ViewportSite(_ViewportScene):
+    """A landmark, each drawn as itself: the colony ship and its wound, the
+    cathedral's rose window still lit, the shipyard's broken cradles and the
+    field they shed, the listening post with its dish still turned outward.
+    With no landmark recorded, the scanner sweeps empty space."""
+
+    def __init__(self, width: int, height: int, *, site: str | None, items: list, prose: str, seed: str):
+        title = _scene_text(site).upper() if site else "NO DISCOVERY RECORDED"
+        super().__init__(width, height, title=title, title_color=_SPLASH_GOLD if site else _SCENE_SLATE,
+                         items=items, prose=prose, seed=seed)
+        self.site = site
+        self.scale = max(4.0, min(self.width * 0.42, self.sky_px * 0.9))
+        rng = random.Random(f"viewport-site:{seed}")
+        self.debris = [(rng.uniform(-1.6, 1.6), rng.uniform(-0.9, 0.9), rng.uniform(-1, 1), rng.uniform(-0.6, 0.6),
+                        rng.choice(((120, 120, 130), (150, 96, 64), (90, 96, 110))))
+                       for _ in range(14 + int(self.scale))]
+
+    def draw(self, stage: _Stage, index: int, t: float) -> None:
+        self.twinkle(stage, index)
+        painter = {"the Derelict Ark": self.ark, "the Silent Cathedral": self.cathedral,
+                   "the Shattered Yard": self.yard, "the Long Watch": self.watch}.get(self.site or "", self.scanner)
+        painter(stage, index)
+
+    def ark(self, stage: _Stage, index: int) -> None:
+        cx, cy, s = self.width * 0.5, self.mid, self.scale
+        length, girth = s * 1.05, max(3.0, s * 0.2)
+        gash_x = cx + length * 0.18
+        for x in range(math.floor(cx - length), math.ceil(cx + length) + 1):
+            u = (x + 0.5 - cx) / length
+            if abs(u) > 1:
+                continue
+            half = girth * (1 - abs(u) ** 8) ** 0.5 * (1.15 if u < -0.72 else 1.0)
+            for y in range(math.floor(cy - half), math.ceil(cy + half) + 1):
+                v = (y + 0.5 - cy) / max(0.5, half)
+                if abs(v) > 1:
+                    continue
+                # The wound: a diagonal tear clean through the hull.
+                tear = abs((x - gash_x) * 0.55 - (y - cy) * 1.1)
+                if tear < girth * 0.35:
+                    if tear > girth * 0.25:
+                        stage.plot(x, y, _heat(0.45 + 0.1 * ((index // 4 + x) % 3)))
+                    continue
+                z = math.sqrt(max(0.0, 1 - v * v))
+                light = max(0.0, 0.25 + 0.75 * (-0.55 * v + 0.6 * z))
+                color = _mix((22, 26, 26), (150, 160, 148), light)
+                if int(x - cx) % max(4, int(length / 7)) == 0:
+                    color = _scale(color, 0.62)  # a hull rib
+                if -0.45 < v < -0.25 and x % 3 == 0 and u > -0.7:
+                    lit = (x * 13) % 17 == 0 or ((x * 7) % 19 == 0 and index % 9 < 3)
+                    color = (255, 222, 150) if lit else (30, 40, 52)
+                stage.plot(x, y, color)
+            # The cryo bay: a row of pods along the spine, all of them dark.
+            if -0.6 < u < 0.05 and x % 3 != 2:
+                stage.plot(x, cy - half - 1, (88, 112, 120) if x % 3 == 0 else (52, 66, 74))
+        for x0, y0, vx, vy, color in self.debris[: len(self.debris) // 2]:
+            age = (index * 0.004 + (x0 + 2) / 4) % 1.0
+            stage.plot(gash_x + (x0 * 0.15 + vx * age) * s * 0.6, cy + (y0 * 0.3 + vy * age) * s * 0.6, color)
+
+    def cathedral(self, stage: _Stage, index: int) -> None:
+        cx, cy, s = self.width * 0.5, self.mid + self.sky_px * 0.02, self.scale * 0.8
+        stone_lit, stone_dark = (196, 186, 214), (70, 62, 92)
+
+        def stone(x: float, y: float, left: float, right: float) -> tuple:
+            return _mix(stone_lit, stone_dark, max(0.0, min(1.0, (x - left) / max(1.0, right - left) * 0.9 + 0.1)))
+
+        def spire(x_mid: float, half: float, top: float, peak: float, bottom: float) -> None:
+            for y in range(math.floor(peak), math.ceil(bottom) + 1):
+                width = half if y >= top else half * (y - peak) / max(1.0, top - peak)
+                for x in range(math.floor(x_mid - width), math.ceil(x_mid + width) + 1):
+                    if abs(x + 0.5 - x_mid) <= width:
+                        stage.plot(x, y, stone(x, y, x_mid - half, x_mid + half))
+
+        # The platform the cathedral stands on, a shallow disc.
+        for x in range(math.floor(cx - s * 0.95), math.ceil(cx + s * 0.95)):
+            for y in range(math.floor(cy + s * 0.5), math.ceil(cy + s * 0.62)):
+                u = (x - cx) / (s * 0.95)
+                if abs(u) <= 1:
+                    stage.plot(x, y, _mix((110, 104, 130), (40, 36, 56), (u + 1) / 2))
+        for side in (-1, 1):
+            spire(cx + side * s * 0.52, s * 0.13, cy - s * 0.3, cy - s * 0.62, cy + s * 0.5)
+        spire(cx, s * 0.3, cy - s * 0.25, cy - s * 0.65, cy + s * 0.5)
+        spire(cx, s * 0.05, cy - s * 0.65, cy - min(s * 1.05, self.mid + s * 0.1), cy - s * 0.6)
+        # The rose window: stained glass in four colors, and a light behind it
+        # that has not gone out.
+        glow = 0.55 + 0.35 * ((index // 3) % 6 in (2, 3))
+        glass = ((60, 90, 220), (210, 40, 60), (240, 190, 60), (150, 70, 200))
+        rx, ry, rr = cx, cy - s * 0.08, max(1.5, s * 0.17)
+        for y in range(math.floor(ry - rr), math.ceil(ry + rr) + 1):
+            for x in range(math.floor(rx - rr * 1.2), math.ceil(rx + rr * 1.2) + 1):
+                d = math.hypot((x + 0.5 - rx) / 1.2, y + 0.5 - ry)
+                if d <= rr:
+                    sector = int((math.atan2(y + 0.5 - ry, x + 0.5 - rx) + math.pi) / (2 * math.pi) * 8) % 4
+                    color = (255, 236, 190) if d < rr * 0.3 else glass[sector]
+                    stage.plot(x, y, _scale(color, glow) if d < rr * 0.92 else stone_dark)
+        # Lancet windows down the towers, dim.
+        for side in (-1, 1):
+            for y in range(math.floor(cy - s * 0.2), math.ceil(cy + s * 0.35), 3):
+                stage.plot(cx + side * s * 0.52, y, _scale(glass[(y // 3) % 4], 0.5))
+                stage.plot(cx + side * s * 0.52, y + 1, _scale(glass[(y // 3) % 4], 0.35))
+
+    def yard(self, stage: _Stage, index: int) -> None:
+        cx, cy, s = self.width * 0.5, self.mid, self.scale
+        steel, primer = (118, 126, 140), (176, 112, 62)
+
+        def line(x0: float, y0: float, x1: float, y1: float, color: tuple) -> None:
+            steps = max(1, int(max(abs(x1 - x0), abs(y1 - y0))))
+            for step in range(steps + 1):
+                stage.plot(x0 + (x1 - x0) * step / steps, y0 + (y1 - y0) * step / steps, color)
+
+        for number, (left, tilt) in enumerate(((cx - s * 0.95, 0.0), (cx + s * 0.1, 0.18))):
+            right, top, bottom = left + s * 0.85, cy - s * 0.4, cy + s * 0.4
+            # The hull frame in its cradle: ribs, primer-orange, the second
+            # cradle's half-built ship bent where it fused.
+            for rib in range(5):
+                x = left + s * 0.12 + rib * s * 0.15
+                bend = tilt * rib * s * 0.08
+                for step in range(int(s * 0.6)):
+                    angle = math.pi * step / max(1, int(s * 0.6))
+                    stage.plot(x + math.sin(angle) * s * 0.05 + bend * math.sin(angle),
+                               cy - math.cos(angle) * s * 0.3, primer if rib % 2 == 0 else _scale(primer, 0.75))
+            line(left, top, left, bottom, steel)
+            line(right, top + tilt * s, right, bottom, steel)
+            line(left, bottom, right, bottom, steel)
+            if number == 0:
+                line(left, top, right, top, steel)
+                line(left, top, right, bottom, _scale(steel, 0.6))
+                line(left, bottom, right, top, _scale(steel, 0.6))
+            else:
+                line(left, top, left + s * 0.35, top + s * 0.1, steel)  # the beam that sheared
+        # Whatever lost containment still glows between the cradles.
+        gx, gy = cx - s * 0.02, cy - s * 0.05
+        pulse = 0.25 + 0.15 * ((index // 4) % 4 in (1, 2))
+        for y in range(math.floor(gy - s * 0.2), math.ceil(gy + s * 0.2)):
+            for x in range(math.floor(gx - s * 0.2), math.ceil(gx + s * 0.2)):
+                d = math.hypot(x + 0.5 - gx, (y + 0.5 - gy) * 1.4) / (s * 0.2)
+                if d < 1:
+                    stage.blend(x, y, (90, 255, 200), pulse * (1 - d))
+        for x0, y0, vx, vy, color in self.debris:
+            age = (index * 0.003 + (y0 + 1) / 2) % 1.0
+            stage.plot(cx + (x0 + vx * age * 0.5) * s * 0.7, cy + (y0 + vy * age * 0.3) * s * 0.55, color)
+        if index % 23 < 2:
+            # A welding arm somewhere in the wreck, still trying to finish the job.
+            sx, sy = left - s * 0.6, cy + s * 0.4
+            for dx, dy in ((0, 0), (1, -1), (-1, -1), (1, 1)):
+                stage.plot(sx + dx, sy + dy, (200, 230, 255) if dx == dy == 0 else (120, 180, 255))
+
+    def watch(self, stage: _Stage, index: int) -> None:
+        cx, cy, s = self.width * 0.42, self.mid + self.sky_px * 0.16, self.scale * 0.66
+        steel = (150, 156, 170)
+        mast_top = cy - s * 0.55
+        for y in range(math.floor(mast_top), math.ceil(cy + s * 0.25)):
+            stage.plot(cx, y, steel)
+            stage.plot(cx + 1, y, _scale(steel, 0.6))
+        # The habitat at the foot of the mast, its logging lights chasing.
+        for y in range(math.floor(cy + s * 0.2), math.ceil(cy + s * 0.45)):
+            for x in range(math.floor(cx - s * 0.22), math.ceil(cx + s * 0.24)):
+                stage.plot(x, y, _mix((170, 176, 190), (60, 64, 80), (x - cx + s * 0.22) / (s * 0.46)))
+        row = math.floor(cy + s * 0.32)
+        for x in range(math.floor(cx - s * 0.18), math.ceil(cx + s * 0.2), 2):
+            stage.plot(x, row, (120, 255, 170) if (x // 2 - index) % 8 == 0 else (30, 60, 50))
+        # Solar wings either side.
+        for side in (-1, 1):
+            for x in range(int(s * 0.28), int(s * 0.75)):
+                for y in range(math.floor(cy + s * 0.25), math.ceil(cy + s * 0.4)):
+                    cell = x % 4 == 0 or (y - math.floor(cy + s * 0.25)) % 3 == 0
+                    stage.plot(cx + side * x, y, (150, 170, 200) if cell else (36, 64, 140))
+        # The dish, turned up and out, and its feed.
+        dish_x, dish_y, radius = cx + 2, mast_top, max(3.0, s * 0.45)
+        rim = dish_x + radius * 0.5
+        for y in range(math.floor(dish_y - radius), math.ceil(dish_y + radius) + 1):
+            v = (y + 0.5 - dish_y) / radius
+            if abs(v) > 1:
+                continue
+            # The bowl, filled from its back to the rim: lit inside, dark behind.
+            back = dish_x + v * v * radius * 0.5
+            for x in range(math.floor(back), math.ceil(rim) + 1):
+                inside = (x - back) / max(1.0, rim - back)
+                stage.plot(x, y, _mix((236, 240, 250), (96, 104, 124), 0.25 + 0.5 * inside + 0.25 * (v + 1) / 2)
+                           if x > back + 0.5 else (70, 76, 92))
+        focus_x = dish_x + radius * 1.1
+        for x in range(math.floor(dish_x + 1), math.ceil(focus_x)):
+            stage.plot(x, dish_y, (110, 116, 132))
+        stage.plot(focus_x, dish_y, (220, 228, 240))
+        if index % 12 < 2:
+            stage.plot(cx, mast_top - 1, (255, 60, 60))
+        # Listening still: a ring spreads from the dish now and then, dotted,
+        # in steps, so it costs a few cells a frame rather than a circle's worth.
+        phase = (index % 30) // 2 / 10
+        if phase < 1:
+            radius = 2 + phase * s * 0.8
+            for step in range(max(8, int(radius * 2))):
+                angle = math.pi * (step / max(8, int(radius * 2)) - 0.5)
+                stage.blend(focus_x + math.cos(angle) * radius, dish_y + math.sin(angle) * radius * 0.7,
+                            (110, 220, 255), 0.6 * (1 - phase))
+
+    def scanner(self, stage: _Stage, index: int) -> None:
+        cx, cy = self.width * 0.5, self.mid
+        radius = max(3.0, min(self.sky_px * 0.46, self.width * 0.3))
+        for ring in (0.33, 0.66, 1.0):
+            _scene_ring(stage, cx, cy, radius * ring, (40, 110, 70), 0.8, squash=1.0)
+        angle = index * 0.2
+        for trail in range(2):
+            a = angle - trail * 0.12
+            for step in range(int(radius)):
+                stage.blend(cx + math.cos(a) * step, cy + math.sin(a) * step, (110, 255, 160), 0.8 - trail * 0.4)
+
+
+def viewport_scene(world: World, view: str, width: int, height: int) -> _ViewportScene:
+    """The picture for viewport `view` at `width` x `height`, carrying every
+    fact the ASCII portrait's text did, the way its caption has room for it."""
+    ship, here = world.save.ship, world.here
+    seed = f"{world.save.seed}:{here.id}:{view}"
+    if view == "1":
+        return _ViewportShip(width, height, hull=ship.hull_class, condition=hull_condition(ship),
+                             hull_hp=f"{ship.hull_hp}/{hull_hp_max(ship)}", fuel=f"{ship.fuel}/{fuel_capacity(ship)}",
+                             cargo=f"{sum(world.save.cargo.values())}/{cargo_capacity(ship)}", economy=here.economy,
+                             seed=seed)
+    if view == "2":
+        items = [[(_scene_text(here.name), _SCENE_INK), (f" ({here.x},{here.y})", _SCENE_SLATE)],
+                 [(_scene_text(sector_for(here)), _SCENE_INK)], [(here.economy, _SCENE_INK)],
+                 [("danger ", _SCENE_SLATE), (f"{here.danger}/5", _SCENE_INK)]]
+        for module, sid in specialist_stations(world).items():
+            if sid == here.id:
+                info = WORKSHOPS[module]
+                items.append([("Specialist: ", _SCENE_SLATE), (_scene_text(info["name"]), _SCENE_INK),
+                              ("; ", _SCENE_SLATE), (_scene_text(info["owner"]), _VIEWPORT_TEXT)])
+        return _ViewportStation(width, height, station=here.station_name, items=items, economy=here.economy,
+                                seed=seed)
+    if here.id == world.landmark["system_id"] or world.save.flags.get("landmark_investigated"):
+        if world.save.flags.get("landmark_investigated"):
+            status = [("Salvage already claimed.", _SCENE_SLATE)]
+        else:
+            status = [("Unclaimed salvage: ", _SCENE_SLATE), (f"{world.landmark['reward_credits']:,}cr", _SPLASH_GOLD)]
+        return _ViewportSite(width, height, site=world.landmark["label"], items=[status],
+                             prose=world.landmark["flavor"], seed=seed)
+    return _ViewportSite(width, height, site=None, items=[],
+                         prose="No discovery portrait recorded. Visit a landmark to see its portrait.", seed=seed)
+
+
+def viewport_footer(width: int) -> str:
+    full = "[1] Ship [2] Station [3] Discovery [B] Back: "
+    return full if _visible_width(full) <= width - 1 else "[1-3] View [B] Back: "
+
+
+def show_viewport_picture(scene: _ViewportScene, footer: str, top: int, left: int) -> str:
+    """Draw `scene` at (`top`, `left`), the action bar on its empty bottom row,
+    and idle until a key comes; return that key as the command it is.
+
+    Unlike a scene, the key is not taken: it is what the bar asked for. A
+    resize ends the idle and comes back as `RESIZE_KEY`, from the same prompt
+    every other action bar reads through."""
+    animate = not scenes_switched_off() and not motion_interrupted()
+    rows = scene.height
+    out(f"{ESC}[?25l{ESC}[0m")
+    clear_screen()
+    blank = [[(" ", None, None)] * scene.width for _ in range(rows)]
+    index = 0 if animate else scene.still
+    previous = scene.frame(index)
+    prompt_at = f"{ESC}[{top + rows};{left + 1}H"
+    end_at = f"{ESC}[{top + rows};{left + 1 + _visible_width(footer)}H"
+    out(_splash_delta(blank, previous, top, left, red=True) + f"{ESC}[0m{prompt_at}{style_action_bar(footer)}"
+        f"{ESC}[0m{end_at}{ESC}[?25h")
+    if animate:
+        for index in range(index + 1, VIEWPORT_MOTION_FRAMES):
+            if not motion_pause(VIEWPORT_FRAME_SECONDS) or _RESIZE_PENDING:
+                break
+            current = scene.frame(index)
+            delta = _splash_delta(previous, current, top, left, red=True)
+            if delta:
+                out(f"{ESC}[?25l{delta}{ESC}[0m{end_at}{ESC}[?25h")
+            previous = current
+    return read_command_at_prompt()
+
+
 def screen_viewport(p: Palette, world: World, view: str = "1") -> None:
     page=0;footer="[1-3] View [<>] Page [B] Back: "
     while True:
-        large,compact,details,title=viewport_content(world,view)
-        details += ["Views: [1] Ship, [2] Station, [3] Discovery."]
-        color = p.wrong if view=="1" and hull_condition(world.save.ship)=="Critical" else p.gold if view=="1" and hull_condition(world.save.ship)!="Intact" else p.accent
-        pages=portrait_pages(p,large,compact,details,title,footer,color=color)
-        key,page,count=_draw_service_page(p,title,[],footer,page,pages=pages)
+        scene = None
+        if viewport_pictures():
+            cols, rows, top, left = _splash_box(_OUTPUT_WIDTH, _OUTPUT_HEIGHT)
+            scene = viewport_scene(world, view, cols, rows)
+        if scene is not None and scene.fits:
+            key = show_viewport_picture(scene, viewport_footer(cols), top, left)
+        else:
+            # The ASCII portrait: for `mono` and `plain`, and for a terminal too
+            # small to hold a picture above everything its caption says.
+            large,compact,details,title=viewport_content(world,view)
+            details += ["Views: [1] Ship, [2] Station, [3] Discovery."]
+            color = p.wrong if view=="1" and hull_condition(world.save.ship)=="Critical" else p.gold if view=="1" and hull_condition(world.save.ship)!="Intact" else p.accent
+            pages=portrait_pages(p,large,compact,details,title,footer,color=color)
+            key,page,count=_draw_service_page(p,title,[],footer,page,pages=pages)
+            if (moved := page_step(key, page, count)) is not None:
+                page = moved
+                continue
         if key in ("B","Q"):return
         if key in ("1","2","3"):view,page=key,0
-        elif (moved := page_step(key, page, count)) is not None: page = moved
 
 
 def screen_landmark(p: Palette, world: World) -> None:
@@ -11019,12 +11637,17 @@ def journey_resumed_lines(world: World) -> list[str]:
     # An uncharted bearing stays unnamed until the pilot arrives.
     destination = system.name if system is not None and system.discovered else "an uncharted system"
     # Short enough to fit the 40x12 floor with its frame and the pause under it.
-    text = [f"Welcome back, {world.save.pilot.handle}.",
-            f"Resuming your interrupted journey to {destination}, day {world.save.turn}: the same "
-            "encounter, nothing rerolled. Station access follows its resolution."]
+    # The callsign is the screen's one accent, the destination a place name.
+    p = pal()
+    named = system is not None and system.discovered
+    text = [f"{p.text}Welcome back, {RESET}{p.plasma}{BOLD}{_mission_plain(world.save.pilot.handle)}{RESET}{p.text}.{RESET}",
+            f"{p.text}Resuming your interrupted journey to {RESET}"
+            f"{p.hull if named else p.text}{_mission_plain(destination)}{RESET}{p.text}, day {RESET}"
+            f"{p.ink}{world.save.turn}{RESET}{p.text}: the same encounter, nothing rerolled. "
+            f"Station access follows its resolution.{RESET}"]
     rows: list[str] = []
     for line in text:
-        rows.extend(wrap_styled(style_body_line(_mission_plain(line)), _page_content_width()))
+        rows.extend(wrap_styled(line, _page_content_width()))
     return rows
 
 
@@ -11417,6 +12040,35 @@ def screen_missions(p: Palette, world: World) -> None:
 
 
 ACCOLADE_TIER_TONES = {1: "caution", 2: "value", 3: "key"}  # bronze, silver, gold
+# The same three as colors, for progress: the goal is drawn in its medal's color
+# and the count so far blends toward it from the brand's plasma as it closes in.
+# Plasma rather than anything cooler, because a blend from blue or grey into
+# gold passes through brown on the way (play-test, v1.2.2).
+ACCOLADE_TIER_RGB = {1: (255, 179, 71), 2: (232, 240, 255), 3: (255, 200, 60)}
+ACCOLADE_PROGRESS_START = (255, 90, 190)
+
+
+def accolade_description(text: str) -> str:
+    """A description as prose, with the numbers in it -- the 10 of `Complete
+    10 contracts`, the 5% of `under 5% of your hull` -- drawn as the values
+    they are, in bold: ink beside prose is too close in brightness to stand
+    out on its own. A credit figure is gold, as credits always are."""
+    p = pal()
+
+    def value(match: re.Match) -> str:
+        role = p.gold if match.group(0).endswith("cr") else p.ink
+        return f"{RESET}{role}{BOLD}{match.group(0)}{RESET}{p.text}"
+
+    return f"{p.text}{_VALUE_RE.sub(value, text)}{RESET}"
+
+
+def accolade_progress(current: int, target: int, tier: int) -> str:
+    """`current/target`, the count a step of the way from plasma to the goal's
+    medal color for every tenth of the way there."""
+    p = pal()
+    goal = ACCOLADE_TIER_RGB[tier]
+    near = _mix(ACCOLADE_PROGRESS_START, goal, (current * 10 // max(1, target)) / 10)
+    return f"{p.rgb(near)}{current:,}{RESET}{p.rgb(goal)}/{target:,}{RESET}"
 
 
 def accolade_lines(save: SaveData, rarity: tuple[dict[str, int], int] | None = None) -> list[str]:
@@ -11441,19 +12093,19 @@ def accolade_lines(save: SaveData, rarity: tuple[dict[str, int], int] | None = N
             tone = p.tone(ACCOLADE_TIER_TONES[accolade.tier])
             if accolade.id in unlocked:
                 share = holders.get(accolade.id, 0) * 100 // pilots if pilots else None
-                lines.append(f"{tone}{glyph('earned')} {accolade.name}{RESET} {p.slate}{accolade.description}"
-                             f" Career #{unlocked[accolade.id]}." + (f" {share}% of pilots." if share is not None else "")
-                             + RESET)
+                lines.append(f"{tone}{glyph('earned')} {accolade.name}{RESET} {accolade_description(accolade.description)}"
+                             f" {p.slate}Career{RESET} {p.ink}#{unlocked[accolade.id]}{RESET}{p.text}.{RESET}"
+                             + (f" {p.ink}{share}%{RESET}{p.text} of pilots.{RESET}" if share is not None else ""))
             elif accolade.hidden:
                 secret += 1
             else:
-                progress = (f" {min(metrics[accolade.metric], accolade.target):,}/{accolade.target:,}."
-                            if accolade.target > 1 else "")
+                progress = (f" {accolade_progress(min(metrics[accolade.metric], accolade.target), accolade.target, accolade.tier)}"
+                            f"{p.text}.{RESET}" if accolade.target > 1 else "")
                 lines.append(f"{p.deep}{glyph('unearned')}{RESET} {p.ink}{accolade.name}{RESET} "
-                             f"{p.slate}{accolade.description}{progress}{RESET}")
+                             f"{accolade_description(accolade.description)}{progress}")
         if secret:
-            lines.append(f"{p.deep}{glyph('unearned')}{RESET} {p.slate}{plural(secret, 'hidden achievement')}"
-                         f" still to find.{RESET}")
+            lines.append(f"{p.deep}{glyph('unearned')}{RESET} {p.ink}{secret}{RESET} {p.text}"
+                         f"{'hidden achievement' if secret == 1 else 'hidden achievements'} still to find.{RESET}")
     return lines
 
 
@@ -11650,13 +12302,26 @@ def screen_career_finale(p: Palette, world: World) -> str | None:
         return "A new career begins."
 
 
+def pilot_record_footer() -> str:
+    """The Pilot Record's action bar, on one row at 80 columns (issue #20).
+
+    `[A] Achievements` pushed the bar past the 79 columns a prompt may use, so a
+    terminal too narrow for the full bar gets the compact paging token and a
+    shorter label. The page title still says Achievements.
+    """
+    full = ("[<] Prev [>] Next [O] Pilot [C] Jobs [H] Log [D] Dossiers [A] Achievements "
+            "[R] Finale [B] Back: ")
+    if _visible_width(full) <= _OUTPUT_WIDTH - 1:
+        return full
+    return "[<] [>] [O] Pilot [C] Jobs [H] Log [D] Dossiers [A] Awards [R] Finale [B] Back:"
+
+
 def screen_status(p: Palette, world: World, save_dir: Path | None = None) -> None:
     """`save_dir` lets the achievements view say how rare each one is here."""
     view, page, result = "O", 0, None
     cache = {}
     while True:
-        footer = "[<] Prev [>] Next [O] Pilot [C] Jobs [H] Log [D] Dossiers [A] Achievements "
-        footer += "[R] Finale [B] Back: "
+        footer = pilot_record_footer()
         title = "Pilot Record: " + {"O":"Overview", "C":"Contracts", "H":"History", "D":"Dossiers",
                                     "A":"Achievements"}[view]
         if view not in cache:

@@ -188,7 +188,11 @@ WALKS: dict[str, list[tuple[str, bytes]]] = {
         ("Hall of Fame, careers", b"H5", "played"),
         ("Pilot Guide", b"G"),
         ("Trading Ledger", b"T"),
+        # The viewport opens on the ship; its other two pictures are a key each.
+        # With DOOR_SCENES=0 (every walk) each one is drawn as its still.
         ("Viewport", b"V"),
+        ("Viewport, station", b"V2"),
+        ("Viewport, discovery", b"V3"),
         ("Display Options", b"O"),
         ("Archive Contacts", b"N"),
         ("Concord Contacts", b"P"),

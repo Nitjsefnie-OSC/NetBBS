@@ -4104,18 +4104,22 @@ def play_splash(p: Palette, info: dict, season_number: int, width: int, height: 
 #   SysOp's `DOOR_SCENES=0` leaves the same world and the same receipt behind.
 # - Nothing is only in a scene: its closing caption repeats what the result
 #   screen after it says.
-# - It never waits for a key. It ends on its caption, held by frames that
-#   still write, so nothing watching the output for silence mistakes the hold
-#   for a screen waiting on a key and spends a keystroke skipping it.
+# - It never waits for a key. It ends on its caption, held long enough to read
+#   by frames that still write, so nothing watching the output for silence
+#   mistakes the hold for a screen waiting on a key and spends a keystroke
+#   skipping it. A key during the hold only ends that hold: the scene was seen,
+#   so the next one in its chain still plays.
 #
 # A scene is a script that paints a `_Stage` and snaps it; the stage sends only
 # the cells that changed, in the splash's own (row, column, segments) writes.
 # ---------------------------------------------------------------------------
 
 SCENE_FRAME_SECONDS = 0.045
-SCENE_HOLD_FRAMES = 18  # the caption's hold, about 0.8 seconds
+SCENE_HOLD_SECONDS = 3.0  # the caption's hold, long enough to read it
+SCENE_HOLD_FRAMES = round(SCENE_HOLD_SECONDS / SCENE_FRAME_SECONDS)
 SCENE_ABSENT, SCENE_SHOWN, SCENE_SKIPPED = "absent", "shown", "skipped"
 SCENE_HINT = "any key skips"
+SCENE_HOLD_HINT = "key continues"  # the hint's own cells, once the caption holds
 CRACKDOWN_RECEIPT = "Crackdown closed season"
 _SCENE_ROLL = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789#$%&"
 
@@ -4307,7 +4311,9 @@ class _Stage:
         return [(self.top + r + 1, self.left + start + 1, segments)] if segments else []
 
     def hold(self, frames: int = SCENE_HOLD_FRAMES) -> None:
-        """The caption's hold: a cursor blinking after it, a write every frame."""
+        """The caption's hold: a cursor blinking after it, a write every frame.
+        The hold is always a scene's last `frames` frames."""
+        self.put(0, self.cols - len(SCENE_HINT) - 1, SCENE_HOLD_HINT, self.p.grey)
         for tick in range(frames):
             if self.cursor:
                 self.put(*self.cursor, "█" if tick % 6 < 3 else " ", self.p.phosphor)
@@ -4324,13 +4330,15 @@ def play_scene(p: Palette, width: int, height: int,
             or width < MINIMUM_WIDTH or height < MINIMUM_HEIGHT):
         return SCENE_ABSENT
     frames = splash_bytes(compose())
+    held = max(0, len(frames) - SCENE_HOLD_FRAMES)  # the first frame of the hold
     outcome = SCENE_SHOWN
     out(f"{ESC}[?25l{ESC}[2J{ESC}[H")
     try:
-        for text in frames:
+        for index, text in enumerate(frames):
             out(text)
             if _beat(SCENE_FRAME_SECONDS, hand_back=False):
-                outcome = SCENE_SKIPPED
+                if index < held:
+                    outcome = SCENE_SKIPPED
                 break
     finally:
         out(f"{RESET}{ESC}[2J{ESC}[H{ESC}[?25h")
