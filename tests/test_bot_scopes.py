@@ -18,7 +18,7 @@ from netbbs.net import chat_flow
 from netbbs.timeutil import utc_now_iso
 from tests.test_bot_runtime import (  # noqa: F401
     db, lane, hub, presence, mailbox, history, sysop, alice, channel,
-    install, eventually, next_line, FakeSession,
+    install, eventually, next_line, FakeSession, CROSS_PROCESS_TIMEOUT,
 )
 
 
@@ -95,7 +95,7 @@ def test_real_chat_heading_who_actions_join_leave_and_no_replay(db, lane, hub, p
             assert written.count("Baud.bot reads this channel") >= 1  # the heading
             assert "reads this channel" in written.split("Who's in #lobby", 1)[1]  # its /who row
             session.input.put_nowait("/quit")
-            await asyncio.wait_for(task, 6)
+            await asyncio.wait_for(task, CROSS_PROCESS_TIMEOUT)
             await eventually(lambda: len(read_state(db, "Baud")["events"]) == 4)
             events = read_state(db, "Baud")["events"]
             assert [e["kind"] for e in events] == ["join", "message", "action", "leave"]
