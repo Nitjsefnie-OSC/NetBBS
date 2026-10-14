@@ -7,7 +7,8 @@ this records a scene as a *cast*: every frame's raw ANSI, exactly as the door
 wrote it, with the time the door waits after drawing it.
 
 The scene is played by the door's own `play_*` function, the one the game
-calls, at 80x24 in truecolor. Only the terminal around it is replaced:
+calls, at 80x24 in truecolor. Voidrunner's Viewport pictures go through
+`show_viewport_picture`, the same way, and are cut after `VIEWPORT_FRAMES`. Only the terminal around it is replaced:
 
 * **stdout** is a recorder, so the bytes are the door's real output;
 * **the frame wait** is where the door would poll for a key. It records the
@@ -79,6 +80,58 @@ def _voidrunner(make) -> Recorder:
         if not vr.play_scene(lambda w, h: make(vr, w, h)):
             raise SystemExit("Voidrunner did not play the scene; is DOOR_SCENES=0 set?")
     return recorder
+
+
+# The Viewport's pictures idle until a key for up to 21 s. The site keeps the
+# shutters opening and the first few seconds of idle, then "presses" Back.
+VIEWPORT_FRAMES = 60
+
+
+def _voidrunner_viewport(make) -> Recorder:
+    vr = _door("voidrunner")
+    vr._OUTPUT_STYLE, vr._PALETTE = "auto", vr.Palette(truecolor=True)
+    vr._OUTPUT_WIDTH, vr._OUTPUT_HEIGHT = WIDTH, HEIGHT
+    recorder = Recorder()
+
+    def pause(seconds: float) -> bool:
+        recorder.frame(seconds)
+        return len(recorder.frames) < VIEWPORT_FRAMES
+
+    cols, rows, top, left = vr._splash_box(WIDTH, HEIGHT)
+    scene = make(vr, cols, rows)
+    if not scene.fits:
+        raise SystemExit("the Viewport picture does not fit at 80x24")
+    with _patched(vr, motion_interrupted=lambda: False, motion_pause=pause, _RESIZE_PENDING=False,
+                  read_command_at_prompt=lambda: "B"), contextlib.redirect_stdout(recorder):
+        vr.show_viewport_picture(scene, vr.viewport_footer(cols), top, left)
+    # The recording always ends on the cut, never on a hold of the game's own,
+    # so the last frame gets one here: as long as a scene's held caption.
+    if recorder.pending:
+        recorder.frame(2.0)
+    else:
+        recorder.frames[-1]["wait"] = 2.0
+    return recorder
+
+
+def _landmark(vr, label):
+    return next(site for site in vr.LANDMARK_FLAVORS if site["label"] == label)
+
+
+VIEWPORT = {
+    "viewport-ship": lambda vr, w, h: vr._ViewportShip(
+        w, h, hull="Freighter", condition="Damaged", hull_hp="31/60", fuel="14/24", cargo="12/24",
+        economy="Industrial", seed="site-viewport-ship"),
+    "viewport-station": lambda vr, w, h: vr._ViewportStation(
+        w, h, station="Harbor Lights",
+        items=[[("Kepler Reach", vr._SCENE_INK), (" (27,23)", vr._SCENE_SLATE)],
+               [("Coreward Verge", vr._SCENE_INK)], [("Tech", vr._SCENE_INK)],
+               [("danger ", vr._SCENE_SLATE), ("1/5", vr._SCENE_INK)]],
+        economy="Tech", seed="site-viewport-station"),
+    "viewport-discovery": lambda vr, w, h: vr._ViewportSite(
+        w, h, site="the Derelict Ark",
+        items=[[("Unclaimed salvage: ", vr._SCENE_SLATE), ("3,000cr", vr._SPLASH_GOLD)]],
+        prose=_landmark(vr, "the Derelict Ark")["flavor"], seed="site-viewport-discovery"),
+}
 
 
 VOIDRUNNER = {
@@ -193,7 +246,8 @@ def _patched(module, **values):
 
 
 SCENES = {
-    "voidrunner": {name: (lambda make=make: _voidrunner(make)) for name, make in VOIDRUNNER.items()},
+    "voidrunner": {**{name: (lambda make=make: _voidrunner(make)) for name, make in VOIDRUNNER.items()},
+                   **{name: (lambda make=make: _voidrunner_viewport(make)) for name, make in VIEWPORT.items()}},
     "war_dialer": {name: (lambda compose=compose: _war_dialer(compose)) for name, compose in WAR_DIALER.items()},
     "retro_trivia": {name: (lambda st=st: _retro_trivia(*st)) for name, st in RETRO_TRIVIA.items()},
 }
