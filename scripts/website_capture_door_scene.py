@@ -104,8 +104,12 @@ def _voidrunner_viewport(make) -> Recorder:
     with _patched(vr, motion_interrupted=lambda: False, motion_pause=pause, _RESIZE_PENDING=False,
                   read_command_at_prompt=lambda: "B"), contextlib.redirect_stdout(recorder):
         vr.show_viewport_picture(scene, vr.viewport_footer(cols), top, left)
-    if recorder.pending:  # a picture that stopped moving early: its last frame holds
+    # The recording always ends on the cut, never on a hold of the game's own,
+    # so the last frame gets one here: as long as a scene's held caption.
+    if recorder.pending:
         recorder.frame(2.0)
+    else:
+        recorder.frames[-1]["wait"] = 2.0
     return recorder
 
 
