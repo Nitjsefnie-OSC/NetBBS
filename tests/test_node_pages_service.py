@@ -386,3 +386,68 @@ def test_the_page_offers_the_badge_snippet_escaped(tmp_path, registrations_db):
     assert '<img src="/~nibandquill/badge.svg"' in page
     assert ("&lt;a href=&quot;https://www.netbbs.org/~nibandquill&quot;&gt;&lt;img "
             "src=&quot;https://www.netbbs.org/~nibandquill/badge.svg&quot;") in page
+
+
+# -- the tagline (issue #1172) -----------------------------------------------------
+
+
+def test_the_tagline_is_shown_escaped_and_never_as_markup():
+    node = _node()
+    node["tagline"] = 'Retro <b>games</b> & <a href="https://spam.example">cheap pills</a>'
+    page = _one([_reg("nibandquill")], [node])
+    text = render_node_page(page, NOW)
+    assert ('<p class="tagline">Retro &lt;b&gt;games&lt;/b&gt; &amp; &lt;a href=&quot;https://spam.example&quot;'
+            '&gt;cheap pills&lt;/a&gt;</p>') in text
+    assert "<b>games" not in text and 'href="https://spam.example"' not in text
+
+
+def test_the_tagline_never_reaches_the_badge():
+    from services.node_pages.build import render_badge
+
+    node = _node()
+    node["tagline"] = "Night owls welcome"
+    assert "Night owls" not in render_badge(_one([_reg("nibandquill")], [node]))
+
+
+@pytest.mark.parametrize("tagline", [
+    "x" * 81, "bad\x1b[31mred", "Right‮to left", "line\nbreak", "   ", 42, None,
+])
+def test_a_malformed_tagline_is_left_out(tagline):
+    node = _node()
+    node["tagline"] = tagline
+    page = _one([_reg("nibandquill")], [node])
+    assert page.tagline is None
+    assert 'class="tagline"' not in render_node_page(page, NOW)
+
+
+@pytest.mark.parametrize("entry", ["nibandquill", FP_A, "NibAndQuill  # spam, 2026-10-14"])
+def test_a_hidden_tagline_is_left_out_and_the_page_stays(entry):
+    from services.node_pages.build import load_hidden_taglines
+
+    node = _node()
+    node["tagline"] = "Buy followers now"
+    hidden = frozenset({entry.split("#")[0].strip().lower()})
+    pages = select_pages([_reg("nibandquill")], [node], NOW, hidden_taglines=hidden)
+    assert len(pages) == 1 and pages[0].tagline is None
+    assert load_hidden_taglines(None) == frozenset()
+
+
+def test_the_hide_list_is_read_from_a_file_and_an_unreadable_one_stops_the_build(tmp_path, registrations_db):
+    node = _node(FP_A)
+    node["tagline"] = "Buy followers now"
+    map_path = _map_file(tmp_path, [node])
+    out = tmp_path / "nodes"
+    assert build(registrations_db, map_path, out, now=NOW) == 1
+    assert "Buy followers now" in (out / "nibandquill" / "index.html").read_text(encoding="utf-8")
+
+    hide = tmp_path / "hidden-taglines.txt"
+    hide.write_text("# taken down on a complaint\nnibandquill\n", encoding="utf-8")
+    assert build(registrations_db, map_path, out, now=NOW, hidden_taglines_path=hide) == 1
+    assert "Buy followers now" not in (out / "nibandquill" / "index.html").read_text(encoding="utf-8")
+
+    with pytest.raises(SourceError, match="hidden-tagline"):
+        build(registrations_db, map_path, out, now=NOW, hidden_taglines_path=tmp_path / "missing.txt")
+    assert (out / "nibandquill" / "index.html").is_file()  # the site stays as it was
+    args = ["--registrations", str(registrations_db), "--node-map", str(map_path), "--out", str(out),
+            "--hide-taglines", str(hide)]
+    assert main(args) == 0

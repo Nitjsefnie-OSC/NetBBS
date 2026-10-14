@@ -34,18 +34,18 @@ from netbbs.storage.database import Database
 NOW = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 EXPORTED_FIELDS = {
     "fingerprint", "friendly_name", "dns_name", "source", "first_contact_at", "last_heard_at", "dial_in",
-    "node_page", "software_version", "public_boards",
+    "node_page", "software_version", "public_boards", "tagline",
 }
 
 
 def _record(identity, *, created_at="2026-10-01T00:00:00+00:00", name=None, dns=None, dial_in=None,
             node_page=None, addresses=None, relays=None, software_version=None,
-            public_boards=None) -> PeerRecord:
+            public_boards=None, tagline=None) -> PeerRecord:
     descriptor = build_endpoint_descriptor(
         signing_identity=identity.signing_key, subject_fingerprint=identity.fingerprint,
         addresses=addresses, outgoing_only=addresses is None, created_at=created_at,
         friendly_name=name, canonical_dns_name=dns, dial_in=dial_in, node_page=node_page, relays=relays,
-        software_version=software_version, public_boards=public_boards,
+        software_version=software_version, public_boards=public_boards, tagline=tagline,
     )
     return PeerRecord(
         fingerprint=identity.fingerprint, root_public_key=bytes(identity.root.verify_key),
@@ -145,6 +145,7 @@ def test_a_met_node_is_exported_with_exactly_the_public_fields(db, own):
         node_page=NODE_PAGE_INDEXED,
         software_version="7.17",
         public_boards=[{"board_id": "ab" * 32, "name": "Lounge"}, {"board_id": "bad", "name": "Dropped"}],
+        tagline="  Retro games  and art ",
         addresses=[{"protocol": "http", "address": "203.0.113.9", "port": 7862}],
         relays=["f" * 64],
     ))
@@ -169,6 +170,7 @@ def test_a_met_node_is_exported_with_exactly_the_public_fields(db, own):
         "node_page": NODE_PAGE_INDEXED,
         "software_version": "7.17",
         "public_boards": [{"board_id": "ab" * 32, "name": "Lounge"}],
+        "tagline": "Retro games and art",
     }
     # The Link address and relay are on the SysOp's map, never here.
     text = json.dumps(document)

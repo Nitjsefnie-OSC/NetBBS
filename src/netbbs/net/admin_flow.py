@@ -373,8 +373,8 @@ from netbbs.link.dial_in import (
 )
 from netbbs.link.key_rotation import KeyRotationError
 from netbbs.link.node_page import (
-    NODE_PAGE_INDEXED, NODE_PAGE_OFF, NODE_PAGE_SHOWN, NODE_PAGE_STATES, NODE_PAGE_URL_PREFIX, get_node_page,
-    set_node_page_without_commit,
+    MAX_TAGLINE, NODE_PAGE_INDEXED, NODE_PAGE_OFF, NODE_PAGE_SHOWN, NODE_PAGE_STATES, NODE_PAGE_URL_PREFIX,
+    get_node_page, get_node_tagline, set_node_page_without_commit, set_node_tagline_without_commit,
 )
 from netbbs.link.node_identity import operational_key_history
 from netbbs.link.enforcement import (
@@ -10113,6 +10113,7 @@ async def _draw_managed_dns_status(
                 "Web page",
                 _node_page_lines(
                     previous_name or name, await lane.run(get_node_page),
+                    tagline=await lane.run(get_node_tagline),
                     # During a rename the page shown is the current name's,
                     # still live, whatever has become of the new one.
                     lapsed=status not in _MANAGED_DNS_ACTIVE_STATUSES and previous_name is None,
@@ -10128,6 +10129,7 @@ async def _draw_managed_dns_status(
             actions.append(menu_key("N", "ew name"))
     if status in _NODE_PAGE_STATUSES:
         actions.append(menu_key("W", "eb page"))
+        actions.append(menu_key("T", "agline"))
     if await lane.run(get_managed_dns_admin_token) is not None:
         # Design doc §16 Decision 4: the one node whose operator also
         # runs the service gets the service's own table here.
@@ -10145,7 +10147,9 @@ _NODE_PAGE_DESCRIPTIONS = {
 }
 
 
-def _node_page_lines(name: str, setting: str, *, lapsed: bool = False) -> list[Field | Note]:
+def _node_page_lines(
+    name: str, setting: str, *, lapsed: bool = False, tagline: str | None = None,
+) -> list[Field | Note]:
     """The "Web page" section of the DNS screen (design doc §8.13, issue
     #1165): where this node's page lives and the SysOp's choice about it.
     The page is built from what Reliable Link knows, so it appears only
@@ -10158,10 +10162,14 @@ def _node_page_lines(name: str, setting: str, *, lapsed: bool = False) -> list[F
             "Setting", _NODE_PAGE_DESCRIPTIONS[setting],
             color=MUTED_COLOR if setting == NODE_PAGE_OFF else VALUE_COLOR,
         ),
+        # Issue #1172: one line of the SysOp's own words, shown under the
+        # name. It is published only while the page is not off.
+        Field("Tagline", tagline or "(none)", color=VALUE_COLOR if tagline else MUTED_COLOR),
         Note(
             "A public page about this node: its name, how callers dial in, and when it joined and was "
             "last heard on NetBBS Link. It appears once Reliable Link has met this node, and a change "
-            "here reaches it with the next contact. [W]eb page steps through the settings."
+            "here reaches it with the next contact. [W]eb page steps through the settings; [T]agline "
+            f"sets one line of up to {MAX_TAGLINE} characters about this board, shown as plain text."
         ),
     ]
     if lapsed:
@@ -10170,6 +10178,42 @@ def _node_page_lines(name: str, setting: str, *, lapsed: bool = False) -> list[F
             "Set it to off here to take the page down."
         ))
     return rows
+
+
+async def _edit_node_tagline(session: Session, lane: DatabaseLane, actor: User) -> str:
+    """Issue #1172: edit the page's tagline in place -- the #557 field
+    convention: the line opens on the current text, Enter saves, blank
+    clears, Esc keeps. Returns the outcome line for the redrawn screen.
+    The setting and its audit entry commit together."""
+    current = await lane.run(get_node_tagline)
+    await session.write_line("")
+    await write_field_prompt(
+        session, colored(f"Tagline, up to {MAX_TAGLINE} characters ({_CLEAR_HINT}):", fg_color=MUTED_COLOR),
+        hint=_CLEAR_HINT,
+    )
+    try:
+        raw = await _read_seeded_line(session, initial=current or "")
+    except InputCancelled:
+        return colored("Tagline unchanged.", fg_color=MUTED_COLOR)
+
+    def _apply(db: Database) -> str | None:
+        db.connection.execute("BEGIN IMMEDIATE")
+        try:
+            stored = set_node_tagline_without_commit(db, raw)
+            record_action_without_commit(db, actor=actor, action="set_node_tagline", detail=stored or "(cleared)")
+        except BaseException:
+            db.connection.rollback()
+            raise
+        db.connection.commit()
+        return stored
+
+    try:
+        stored = await lane.run(_apply)
+    except ValueError as exc:
+        return colored(f"{exc} Tagline unchanged.", fg_color=ERROR_COLOR)
+    if stored is None:
+        return colored("Tagline cleared.", fg_color=MUTED_COLOR)
+    return colored("Tagline saved. It reaches the page with Reliable Link's next contact.", fg_color=MUTED_COLOR)
 
 
 def _managed_dns_state_guidance(
@@ -10330,6 +10374,9 @@ async def _managed_dns_status_screen(session: Session, lane: DatabaseLane, actor
 
             await lane.run(_step)
             status = await _draw_managed_dns_status(session, lane, actor)
+        elif choice == "t" and status in _NODE_PAGE_STATUSES:
+            _announce_line(session, await _edit_node_tagline(session, lane, actor))
+            status = await _draw_managed_dns_status(session, lane, actor)
         elif choice == "a" and await lane.run(get_managed_dns_admin_token) is not None:
             await session.write_line("")
             await administer_managed_dns_service(session, lane, actor)
@@ -10352,6 +10399,8 @@ async def _managed_dns_status_screen(session: Session, lane: DatabaseLane, actor
             if status in _NODE_PAGE_STATUSES:
                 help_entries.append(MenuEntry(label=menu_key("W", "eb page"),
                                               brief="Show, index or hide the web page"))
+                help_entries.append(MenuEntry(label=menu_key("T", "agline"),
+                                              brief="One line about this board"))
             if admin_token is not None:
                 help_entries.append(MenuEntry(label=menu_key("A", "dminister service"),
                                               brief="Every name the service holds"))

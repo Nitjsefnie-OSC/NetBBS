@@ -25,6 +25,14 @@ Issue #1171 adds two facts the page shows, both only while the page is not
   account may read, as `{"board_id", "name"}` with the board's Link name
   from its genesis. A node with guest login off lists none, since no board
   there is readable without an account.
+
+Issue #1172 adds the one piece of free text, `tagline`: a line the SysOp
+writes about the board, also only while the page is not `"off"`. It is
+remote text published on our domain, so it is held to a hard shape on
+both sides -- at most `MAX_TAGLINE` characters, printable text only (no
+control, format or bidi characters), runs of spaces folded to one -- and
+the reader drops anything else rather than repairing it. The page shows it
+HTML-escaped, never as markup or a link, and never on the badge.
 """
 
 from __future__ import annotations
@@ -102,6 +110,7 @@ class NodePageFacts:
     node_page: str | None = None
     software_version: str | None = None
     public_boards: tuple[dict, ...] = ()
+    tagline: str | None = None
 
 
 def own_software_version(version: str = __version__) -> str | None:
@@ -162,6 +171,7 @@ def own_node_page_facts(db: Database) -> NodePageFacts:
         node_page=descriptor_node_page(choice),
         software_version=own_software_version(),
         public_boards=guest_readable_linked_boards(db),
+        tagline=get_node_tagline(db),
     )
 
 
@@ -195,3 +205,53 @@ def advertised_public_boards(payload: object) -> tuple[dict, ...]:
         if len(boards) >= MAX_PUBLIC_BOARDS:
             break
     return tuple(boards)
+
+
+# Issue #1172 -------------------------------------------------------------
+
+MAX_TAGLINE = 80
+NODE_TAGLINE_CONFIG_KEY = "link_node_tagline"
+
+
+def clean_tagline(value: object) -> str | None:
+    """`value` as a tagline, or `None` when it cannot be one. Runs of
+    spaces fold to one and the ends are trimmed; then it must be a
+    non-empty string of at most `MAX_TAGLINE` characters, every one
+    printable -- which leaves out control characters and the format
+    characters that include the bidi overrides (`str.isprintable`)."""
+    if not isinstance(value, str):
+        return None
+    text = re.sub(" {2,}", " ", value).strip()
+    if not text or len(text) > MAX_TAGLINE or not text.isprintable():
+        return None
+    return text
+
+
+def get_node_tagline(db: Database) -> str | None:
+    """The SysOp's tagline, or `None`. A stored value that is no longer a
+    valid tagline reads as none, like the descriptor's reader."""
+    return clean_tagline(get_config(db, NODE_TAGLINE_CONFIG_KEY))
+
+
+def set_node_tagline_without_commit(db: Database, value: str) -> str | None:
+    """Store `value` as the tagline inside the caller's transaction and
+    return what was stored; an empty `value` clears it. Raises
+    `ValueError`, saying why, for text that cannot be a tagline."""
+    if not value.strip():
+        set_config_without_commit(db, NODE_TAGLINE_CONFIG_KEY, "")
+        return None
+    cleaned = clean_tagline(value)
+    if cleaned is None:
+        if len(" ".join(value.split())) > MAX_TAGLINE:
+            raise ValueError(f"A tagline is at most {MAX_TAGLINE} characters.")
+        raise ValueError("A tagline can hold printable text only.")
+    set_config_without_commit(db, NODE_TAGLINE_CONFIG_KEY, cleaned)
+    return cleaned
+
+
+def advertised_tagline(payload: object) -> str | None:
+    """The tagline an endpoint descriptor's `payload` states, or `None`.
+    Never raises; anything `clean_tagline` refuses is `None`."""
+    if not isinstance(payload, dict):
+        return None
+    return clean_tagline(payload.get("tagline"))

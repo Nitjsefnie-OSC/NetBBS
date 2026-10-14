@@ -4988,6 +4988,11 @@ A reader drops a version that is not two small numbers and any board entry
 without a well-formed board id and a printable name of at most 64
 characters, keeps each board once, and never refuses the hello over either.
 
+Under the same condition it may carry `tagline` (issue #1172, §8.13): one line
+of the SysOp's own words, at most 80 printable characters with no control,
+format or bidi characters. It is omitted when empty, and a reader drops any
+other value without refusing the hello.
+
 The protocol logic remains transport-independent. The `aiohttp` adapter is the
 boundary translating protocol messages to real HTTP requests and responses.
 
@@ -6202,9 +6207,24 @@ and a node without guest login lists none. Both facts travel in the node's
 descriptor (§8.2) and only while its page is not off, so a SysOp who turned
 the page off publishes nothing more for it.
 
+**A tagline (issue #1172).** One line of the SysOp's own words, under the
+name. It is remote text published on the project's domain, so it is held to
+a hard shape on both sides: at most 80 characters, every one printable (no
+control, format or bidi characters), runs of spaces folded to one. The
+node's console refuses anything else and says why; every reader -- the
+descriptor's, the export's, the generator's -- drops it instead of repairing
+it. The page writes it HTML-escaped as a paragraph, never markup, never a
+link (a URL stays text), and never on the badge. It travels in the
+descriptor as `tagline`, omitted when empty, and only while the page is not
+off. The project can take one node's tagline down without touching its
+page: the generator's `--hide-taglines` file lists names or fingerprints,
+and a list that cannot be read stops the build rather than letting a hidden
+line come back.
+
 **What it never shows.** The address the managed-DNS service last saw, which
 is where the node's operator lives as often as where the board does; the
-service's contact times; and any free text beyond the friendly name.
+service's contact times; and any free text beyond the friendly name and the
+tagline.
 
 **Still on NetBBS Link.** A state with its date, not a yes or no: *active* when
 last heard within 7 days, *quiet* within 30 days (the node map's stale point),
@@ -14169,7 +14189,10 @@ another node, and the dates are about the node, not the name.
 prose under the project's domain; a reliability or uptime history, which reads
 as shaming for a hobbyist board that sleeps at night. Software version and
 carried boards waited for the descriptor to publish them; issue #1171 below
-adds both.
+adds both. The tagline came later, on the terms issue #1172 set (§8.13): a
+hard length cap, printable text only, escaped and never a link, never on the
+badge, and a project-side list that takes one node's tagline down without its
+page.
 
 ### Issue #1171 — release and guest-readable boards on node pages — decided
 
