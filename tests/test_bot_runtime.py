@@ -28,14 +28,22 @@ def install(db, sysop, channel, **kwargs):
                     defaults=kwargs.pop("defaults", [channel.name]), enabled=kwargs.pop("enabled", True), **kwargs)
 
 
-async def eventually(predicate, timeout=6):
+# The bot is its own process, and an announcement crosses a post, the bot
+# runtime, that process and sometimes signed Link chat. Under a parallel full
+# suite a Python subprocess can take several seconds just to start, so these
+# positive waits get a generous bound (issue #1287, as tests/eventually.py):
+# they return the moment the line arrives, so the bound costs nothing when idle.
+CROSS_PROCESS_TIMEOUT = 30
+
+
+async def eventually(predicate, timeout=CROSS_PROCESS_TIMEOUT):
     async with asyncio.timeout(timeout):
         while not predicate():
             await asyncio.sleep(.02)
 
 
-async def next_line(queue, needle):
-    async with asyncio.timeout(6):
+async def next_line(queue, needle, timeout=CROSS_PROCESS_TIMEOUT):
+    async with asyncio.timeout(timeout):
         while True:
             message = await queue.get()
             if needle in getattr(message, "body", str(message)):
