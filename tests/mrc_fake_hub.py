@@ -44,6 +44,11 @@ class FakeMrcHub:
         self.unknown_commands: list[str] = []
         self.topics: dict[str, str] = {}
         self.banner: str | None = "|14Welcome to the fake hub"
+        # Issue #1283: the server stats query (a lone `~` on a connection
+        # of its own) -- the line it answers, and how many asked. None
+        # makes the hub close without answering.
+        self.server_stats: str | None = "3 2 5 1"
+        self.stats_queries = 0
         self._event = asyncio.Event()
 
     async def start(self) -> None:
@@ -115,10 +120,16 @@ class FakeMrcHub:
         ]
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        self.connections += 1
         self._writers.append(writer)
         try:
             handshake = await reader.readline()
+            if handshake.strip() == b"~":
+                self.stats_queries += 1
+                if self.server_stats is not None:
+                    writer.write((self.server_stats + "\n").encode("ascii"))
+                    await writer.drain()
+                return
+            self.connections += 1
             if not handshake:
                 return
             self.handshakes.append(handshake.decode("ascii", errors="replace").rstrip("\r\n"))
