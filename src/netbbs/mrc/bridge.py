@@ -601,6 +601,11 @@ class MrcBridge:
                 delay = min(delay * 2, max(self._room_count_poll, ROOM_COUNT_MAX_BACKOFF_SECONDS))
                 continue
             delay = self._room_count_poll
+            # A SysOp may have pointed the bridge at another hub while the
+            # query was out (`reload_settings` loads a new settings object):
+            # the old hub's count must not describe the new one.
+            if self._settings is not settings:
+                continue
             self._apply_room_count(params)
 
     async def _query_room_count(self, settings: MrcSettings) -> str | None:

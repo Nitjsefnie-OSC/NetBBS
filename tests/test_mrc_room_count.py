@@ -163,3 +163,31 @@ def test_a_count_change_with_a_caller_on_mrc_lists_once_within_the_bound(db, lan
             await fake.close()
 
     asyncio.run(scenario())
+
+
+def test_a_count_from_the_hub_before_a_reload_is_not_kept(db, lane, hub, presence, alice):
+    """Review of #1301: a SysOp who points the bridge at another hub while
+    a query to the old one is out must not get the old hub's count."""
+    import dataclasses
+
+    async def scenario():
+        fake, bridge = await _start(db, lane, hub, stats="3 2 5 1")
+        try:
+            await _wait_for(lambda: bridge.status().network_rooms == 2, what="the first count")
+            original = bridge._query_room_count
+
+            async def answer_after_a_reload(settings):
+                params = await original(settings)
+                # What reload_settings does: a new settings object while this was out.
+                bridge._settings = dataclasses.replace(settings)
+                return "3 99 5 1"
+
+            bridge._query_room_count = answer_after_a_reload
+            asked = fake.stats_queries
+            await _wait_for(lambda: fake.stats_queries >= asked + 3, what="three more polls")
+            assert bridge.status().network_rooms == 2
+        finally:
+            await bridge.close()
+            await fake.close()
+
+    asyncio.run(scenario())
