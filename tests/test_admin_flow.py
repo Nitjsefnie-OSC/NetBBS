@@ -3062,7 +3062,7 @@ def test_create_board_screen_fits_a_real_80x24_terminal(db, lane, sysop):
     # End-to-end through the real screen and real field specs, not a
     # synthetic proxy, so a future field added to `_board_field_specs`
     # that pushes this over budget again fails here immediately.
-    from netbbs.net.admin_flow import _board_screen
+    from netbbs.net.admin_boards import _board_screen
 
     session = FakeSession(["b"])
     asyncio.run(_board_screen(session, lane, sysop, existing=None))
@@ -3111,7 +3111,8 @@ def test_area_and_channel_screens_fit_80x24_and_the_board_screen_80x25(db, lane,
     # that path, not the newer pagination one, now that both exist.
     # Only a screen the *un*paginated fit-check actually rejects should
     # ever show the "Section N of M" hint.
-    from netbbs.net.admin_flow import _area_screen, _board_screen, _channel_screen
+    from netbbs.net.admin_flow import _area_screen, _channel_screen
+    from netbbs.net.admin_boards import _board_screen
 
     # The board screen gained "Color in posts" (issue #711), one row past
     # 24: at 80x24 it pages by section, which is that screen's designed
@@ -3445,7 +3446,7 @@ def test_transfer_board_origin_warns_before_offering_to_a_changed_identity(
     from netbbs.link.node_identity import bootstrap_node_identity
     from netbbs.link.protocol import LinkNode
     from netbbs.link.store import save_peer
-    from netbbs.net.admin_flow import _transfer_board_origin_screen
+    from netbbs.net.admin_boards import _transfer_board_origin_screen
 
     familiar_node = LinkNode(identity=bootstrap_node_identity("familiar-target"))
     changed_node = LinkNode(identity=bootstrap_node_identity("changed-target"))
@@ -3623,7 +3624,7 @@ def test_accept_board_origin_transfer_warns_about_a_changed_cryptographic_identi
     from netbbs.link.node_identity import bootstrap_node_identity
     from netbbs.link.protocol import LinkNode
     from netbbs.link.store import save_peer
-    from netbbs.net.admin_flow import _accept_board_origin_transfer_screen
+    from netbbs.net.admin_boards import _accept_board_origin_transfer_screen
 
     familiar_node = LinkNode(identity=bootstrap_node_identity("familiar-origin"))
     changed_node = LinkNode(identity=bootstrap_node_identity("changed-origin"))
@@ -11220,7 +11221,7 @@ def test_deleting_a_carried_board_from_elsewhere_hides_it_and_excluded_restores_
     from netbbs.link.carry import accept_genesis, carry_decision_counts
     from netbbs.link.events import build_board_genesis
     from netbbs.link.node_identity import bootstrap_node_identity
-    from netbbs.net.admin_flow import _delete_board_screen
+    from netbbs.net.admin_boards import _delete_board_screen
 
     remote = bootstrap_node_identity("hiding-origin")
     genesis = build_board_genesis(
@@ -11287,7 +11288,7 @@ def test_a_pending_post_is_shown_in_color_where_its_board_allows_it(db, lane, sy
 def test_color_in_posts_toggles_without_a_prompt(db, lane, sysop):
     """A toggle toggles (AGENTS.md; Codex review on #750)."""
     from netbbs.boards.boards import get_board_by_name
-    from netbbs.net.admin_flow import _board_screen
+    from netbbs.net.admin_boards import _board_screen
 
     # Name, then Down ten to "Color in posts" (the eleventh field), Enter toggles it.
     session = FakeSession(["ENTER", "Colorful", *(["DOWN"] * 10), "ENTER", "s"])

@@ -115,7 +115,7 @@ def test_a_community_blanket_write_grant_opens_its_boards(db, sysop, helper):
 
 def test_the_grant_screen_offers_read_and_post_as_access_presets():
     from netbbs.moderation.roles import ModeratorGrantError
-    from netbbs.net.admin_flow import _moderator_preset_label, _moderator_preset_permissions
+    from netbbs.net.admin_boards import _moderator_preset_label, _moderator_preset_permissions
 
     assert _moderator_preset_permissions("board", "post") == BoardPermission.READ | BoardPermission.WRITE
     assert _moderator_preset_permissions("file_area", "read") == BoardPermission.READ
@@ -136,7 +136,7 @@ def test_a_node_wide_blanket_read_grant_opens_every_board_it_covers(db, sysop, h
 
 
 def test_the_everything_scope_says_access_presets_are_for_boards_and_areas():
-    from netbbs.net.admin_flow import _EVERYWHERE, _moderator_preset_label
+    from netbbs.net.admin_boards import _EVERYWHERE, _moderator_preset_label
 
     assert "boards and areas only" in _moderator_preset_label(_EVERYWHERE, "post")
     assert _moderator_preset_label(_EVERYWHERE, "full") == "Full moderator"

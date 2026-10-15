@@ -460,7 +460,7 @@ def move(target: str, mapping: dict[str, str]) -> int:
     back = sorted(moved_names & still_read)
     if back:
         edits.insert_after_line(header_end, format_from(f"netbbs.net.{target}", back))
-    SOURCE.write_bytes(edits.apply())
+    SOURCE.write_bytes(edits.apply().rstrip(b"\n") + b"\n")
     destination.write_text(new, encoding="utf-8", newline="\n")
 
     # everyone else

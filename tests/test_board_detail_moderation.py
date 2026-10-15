@@ -14,7 +14,8 @@ from netbbs.files.areas import create_file_area
 from netbbs.files.entries import approve_file, upload_file
 from netbbs.moderation import BoardPermission, grant_permissions
 from netbbs.moderation.log import list_recent_actions
-from netbbs.net.admin_flow import _area_detail_screen, _board_detail_screen
+from netbbs.net.admin_flow import _area_detail_screen
+from netbbs.net.admin_boards import _board_detail_screen
 from tests.test_admin_flow import FakeSession, _visible, _written_text, db, lane, sysop  # noqa: F401 -- fixtures
 
 
