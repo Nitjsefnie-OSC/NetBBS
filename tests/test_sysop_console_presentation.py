@@ -162,6 +162,9 @@ def test_no_menu_description_is_long_enough_to_be_cut_mid_word():
     """`menu_grid` cuts a description at its column -- 34 characters in two
     columns at 80 -- rather than wrapping it (`_entry_block_lines`). Forty-nine
     had outgrown that and were shown as "Managed netbbs.org subdomain statu"."""
-    source = (_ROOT / "src/netbbs/net/admin_flow.py").read_text(encoding="utf-8")
+    # admin_flow.py and the admin_*.py modules split out of it (issue #1311)
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted((_ROOT / "src/netbbs/net").glob("admin*.py"))
+    )
     too_long = [brief for brief in re.findall(r'brief="([^"{}]*)"', source) if len(brief) > 34]
     assert not too_long, too_long

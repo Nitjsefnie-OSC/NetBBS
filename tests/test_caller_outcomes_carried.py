@@ -155,7 +155,9 @@ def test_a_failure_prefix_list_covers_a_refused_date():
 # redrawn afterwards is listed here with why.
 _CALLER_MODULES = sorted(
     p for p in (Path(__file__).resolve().parents[1] / "src" / "netbbs" / "net").glob("*.py")
-    if p.name not in {"admin_flow.py", "notices.py"}
+    # The SysOp console (admin_flow.py and the admin_*.py modules split out of
+    # it, issue #1311) is not a caller screen.
+    if not p.name.startswith("admin") and p.name != "notices.py"
 )
 _OUTCOME_WRITE = re.compile(
     r"write_line\((?:colored\()?f?[\"'](?:\\r\\n)?"
