@@ -52,6 +52,27 @@ twice, and nothing is echoed.
 If you have forgotten it, ask the SysOp to set a new one; nobody can recover
 the old one.
 
+#### Change your username
+
+Your username is the name you log in with, and who you are to other nodes on
+NetBBS Link, so the SysOp decides on a new one.
+
+1. Open **Profile ▸ Username** and type the name you would like. It is
+   checked at once, as a new account's name is.
+2. The SysOp approves or refuses it. Until then you keep your current name.
+   Typing another name replaces your request; a blank line withdraws it.
+3. If it is refused, you see why when you next log in.
+4. If it is approved, you are logged out with a line naming your new
+   username. Log in again with it.
+
+What changes and what stays:
+
+- Mail written to your old name, from this node, other nodes, or an FTN
+  network, still reaches you, and so does a `/msg`.
+- Your posts, files and sent mail keep the name they were written under.
+  Chat lines you wrote show your new name.
+- The SysOp approves one change every 30 days.
+
 ## Find your way around
 
 | At a glance | |
