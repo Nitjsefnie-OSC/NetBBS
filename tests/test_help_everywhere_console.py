@@ -23,6 +23,7 @@ from netbbs.link.trust import (
     register_subject,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_users
 from netbbs.net import admin_doors
 from netbbs.net import admin_files
 from netbbs.net import admin_boards
@@ -128,7 +129,7 @@ def test_the_node_management_screen_has_help(db, lane, sysop):
 def test_the_staff_permissions_screen_explains_each_permission(db, lane, sysop):
     carol = create_user(db, "carol", password="hunter2pw")
     session = FakeSession([H, " ", "a", "y", "b"])
-    result = asyncio.run(admin_flow._staff_permissions_screen(
+    result = asyncio.run(admin_users._staff_permissions_screen(
         session, lane, sysop, carol, None, description_level="brief",
     ))
     text = _visible(_written_text(session))
@@ -253,7 +254,7 @@ def test_the_revoke_which_choice_has_help(db, lane, sysop):
     attest_age(db, carol, __import__("datetime").date(1980, 1, 1), verifier=sysop)
     attest_name(db, carol, "Carol Example", verifier=sysop)
     session = FakeSession(["v", H, " ", "n", "y", "b"])
-    asyncio.run(admin_flow._user_detail_screen(session, lane, sysop, carol, None))
+    asyncio.run(admin_users._user_detail_screen(session, lane, sysop, carol, None))
     text = _visible(_written_text(session))
     _assert_help_then_redraw(text, "Revoke verification help", "choose which", "Revoke which")
     assert get_attestation(db, carol, "name") is None

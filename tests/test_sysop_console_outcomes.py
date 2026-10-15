@@ -267,7 +267,7 @@ def test_back_from_a_directory_vcard_lands_on_the_row_it_was_opened_from(db, sys
 def test_back_after_deleting_an_account_lands_on_its_neighbour():
     # #1109 review: the deleted account's id is gone from the reloaded list,
     # so Back fell to the top; it now lands on the next account down.
-    from netbbs.net.admin_flow import _neighbour_id
+    from netbbs.net.admin_users import _neighbour_id
 
     assert _neighbour_id([1, 2, 3], 2) == 3
     assert _neighbour_id([1, 2, 3], 3) == 2

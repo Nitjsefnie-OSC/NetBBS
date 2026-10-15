@@ -16,7 +16,7 @@ from netbbs.age_requirement import age_verification_refusal, name_verification_r
 from netbbs.attestation import AttestationError, attest_age, attest_name
 from netbbs.auth.users import CO_SYSOP_PRESET, SYSOP_LEVEL, create_user, set_can_verify_identity, set_staff_permissions
 from netbbs.net import main_menu
-from netbbs.net.admin_flow import _co_sysop_question
+from netbbs.net.admin_users import _co_sysop_question
 from netbbs.net.admin_fields import _NAME_REQUIREMENT_HELP, _VERIFIED_AGE_HELP
 from netbbs.storage.database import Database
 

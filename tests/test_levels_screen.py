@@ -22,6 +22,7 @@ from netbbs.net.redraw_preference import set_redraw_in_place_enabled
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
 from tests.test_detail_view import ScriptedSession, _Exhausted
+from netbbs.net import admin_users
 
 
 @pytest.fixture
@@ -185,14 +186,14 @@ def test_a_resource_opened_from_levels_gets_the_content_menus_services(db, lane,
         return screen
 
     for name in ("_channel_detail_screen", "_door_detail_screen", "_area_detail_screen"):
-        monkeypatch.setattr(admin_flow, name, recorder(name))
+        monkeypatch.setattr(admin_users, name, recorder(name))
     controls = SimpleNamespace(
         chat_hub="hub", mrc_bridge="bridge", door_services="doors", transfers="grants", backup_identity_dir="ids",
     )
     gates = list_gates(db)
     for kind in (GateKind.CHANNEL, GateKind.DOOR, GateKind.AREA_READ):
         gate = next(g for g in gates if g.kind is kind)
-        asyncio.run(admin_flow._open_gate_resource(
+        asyncio.run(admin_users._open_gate_resource(
             ScriptedSession([]), lane, sysop, gate, node_controls=controls, link_context=None,
         ))
 

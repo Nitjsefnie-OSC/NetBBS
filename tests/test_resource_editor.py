@@ -1963,7 +1963,7 @@ def test_console_fields_that_drew_their_own_prompt_now_edit_at_their_row(kind):
 
     import nacl.signing
 
-    from netbbs.net.admin_flow import _create_user_password_field, _create_user_pubkey_field
+    from netbbs.net.admin_users import _create_user_password_field, _create_user_pubkey_field
     from netbbs.net.admin_sessions import _delay_seconds_field
     from netbbs.net.admin_banners import _theme_color_field
 

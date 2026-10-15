@@ -39,6 +39,7 @@ from tests.test_admin_flow import FakeSession as AdminSession, _visible, _writte
 from tests.test_login_flow_identity_details_screen import FakeSession as ProfileSession
 from tests.test_login_flow_identity_details_screen import _visible as profile_visible
 from tests.test_login_flow_identity_details_screen import squeezed
+from netbbs.net import admin_users
 
 BORN = date(1980, 1, 1)
 
@@ -134,7 +135,7 @@ def test_clearing_the_birthdate_never_revokes_the_verified_age(db, sysop, carol)
 def _detail(session, lane, actor, target):
     from netbbs.net import admin_flow
 
-    asyncio.run(admin_flow._user_detail_screen(session, lane, actor, target, None))
+    asyncio.run(admin_users._user_detail_screen(session, lane, actor, target, None))
     return _visible(_written_text(session))
 
 
@@ -237,13 +238,13 @@ def test_the_account_screen_says_so_when_someone_else_revoked_first(db, lane, sy
     from netbbs.net import admin_flow
 
     attest_age(db, carol, BORN, verifier=sysop)
-    real_revoke = admin_flow.revoke_attestation
+    real_revoke = admin_users.revoke_attestation
 
     def revoke_after_another(db_, subject, attribute, *, actor):
         real_revoke(db_, subject, attribute, actor=actor)  # the other session
         return real_revoke(db_, subject, attribute, actor=actor)
 
-    monkeypatch.setattr(admin_flow, "revoke_attestation", revoke_after_another)
+    monkeypatch.setattr(admin_users, "revoke_attestation", revoke_after_another)
     text = _detail(AdminSession(["v", "y", "b"]), lane, sysop, carol)
     assert "Revoked the verified age" not in text
     assert "No verified age on record for 'carol' any more." in text

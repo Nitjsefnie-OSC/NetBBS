@@ -25,7 +25,7 @@ from netbbs.directory import get_bio
 from netbbs.guest import set_guest_user
 from netbbs.mail import list_mail_blocks
 from netbbs.moderation.log import list_actions_for_target_user
-from netbbs.net.admin_flow import _user_detail_keys
+from netbbs.net.admin_users import _user_detail_keys
 from netbbs.net.animation_preference import animations_enabled
 from netbbs.net.menu_description_preference import menu_description_level
 from netbbs.net.profile_flow import _edit_profile, _identity_details_screen
