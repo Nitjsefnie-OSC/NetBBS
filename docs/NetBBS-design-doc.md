@@ -2964,8 +2964,36 @@ carried exactly as written and filtered on output
   written in one transaction; a refusal names the board on the review screen
   and posts nothing. A reply or an edit is never cross-posted.
 
-Polls on boards are decided in §16, "Issue #1299 — polls on message boards",
-and not yet built. Until then a post is text only.
+**Polls** (issue #1299, decided in §16; built by #1332, `netbbs.boards.polls`,
+`netbbs.net.poll_view`). A poll is a post with side tables keyed by its root
+post: `board_polls`, `board_poll_options` and `board_poll_votes`. The subject is
+the question and the body introduces it.
+- **Asking:** `[N]ew poll` on a board's post list (not on an FTN board) opens a
+  poll draft editor -- the question, 2 to 10 answers, one answer or up to N, a
+  closing date 1 to 365 days ahead (7 by default), and whether results show
+  after voting or only after the close -- then the body editor and the review
+  screen, where `[Q]uestion and answers` reopens the poll. Nothing is stored
+  before `[P]ost`.
+- **Changing:** the answers, the choice mode and the results setting lock at the
+  first vote, and on a Linked board when the poll is posted. The closing date
+  stays editable through `[E]dit` while the poll is open; a closed poll stays
+  closed. A text edit is an ordinary revision.
+- **Voting:** `[V]ote` on the reader, for anyone who may reply there, opens the
+  answers as a draft with the caller's vote ticked; `[V]ote` stores it, and it
+  can be changed until the poll closes. A held poll takes no votes until it is
+  approved. The guest account holds one vote, which a later guest call cannot
+  change (#1075).
+- **Results:** after voting, or at once for a caller who cannot vote, or only
+  after the close when the author chose that; before then the poll says when.
+  From 60 columns one row per answer (label, bar, count, percentage of voters),
+  two rows below; `█`/`░`, or `#`/`.` with Unicode style off. Screens show
+  totals and the number of voters, never who voted what, and say how many
+  votes were not counted (§9.2).
+- **Closing and removal:** `[C]lose poll` for the author and the board's
+  moderators. A withdrawal or a takedown closes the poll and hides its totals.
+  Deleting the post (a rejection, the expiry sweep, a deleted board) deletes the
+  poll and its votes through `forget_orphaned_polls_without_commit`, beside
+  #842's file references; a deleted account's vote goes with it.
 
 ### 6.2 File areas
 
@@ -6462,6 +6490,38 @@ group can share it; an id longer than 64 characters or outside
 Self-authored edits become chained `board_post_edit` events. The original post
 remains immutable. Moderator edits and tombstones require separate authorized
 event types and advanced governance.
+
+**Polls** (§6.1, issue #1299). A poll's `board_post` carries an optional
+`"poll": {"options", "max_choices", "closes_at", "results"}`; a node that
+predates it, or cannot read it, shows the post without its poll. Because the
+root event is immutable, a Linked poll's answers are fixed when it is posted.
+Its closing date travels as `"poll": {"closes_at"}` on the author's
+`board_post_edit` or the origin's `board_post_moderator_edit`; `[C]lose poll`
+moves the closing date to now and sends such a revision, with the text
+unchanged and never held for approval. A carrying node's own moderator closes
+its copy only.
+
+A vote is a `board_poll_vote` event naming the board, the poll's root
+`board_post` content id, the voter (`node_vouched_user`) and the chosen answer
+positions, signed by the voter's home node. It depends only on the board's
+genesis: the poll's post may come later, and the vote is kept and counted when
+it does. Each node keeps one vote per author identity and poll -- the latest by
+`created_at`, the content id breaking a tie -- and drops the signed bytes of a
+vote it replaced. A voter renamed on their home node is one voter: votes
+under the old and the new name resolve through the aliases #1306 keeps, the
+latest wins, and the per-node cap counts them once; a vote signed under a
+name already renamed away is refused, as other content is. A vote is refused where the board's posting setting would
+refuse the voter's reply, and on a closed board. A node counts:
+- no vote dated after the poll closes;
+- no vote whose author or home node trust hides (§12), as their posts are hidden;
+- at most 50 voters per other home node per poll, in arrival order;
+and keeps at most 5,000 voter rows per poll, counting what it turned away. The
+results say how many votes were not counted. Each node's tally is its own
+view. Votes are served in the board's inventory and pushed with a node's own
+events; a node that predates the type relays them opaquely (#1022). The vote
+names its voter, so it is not secret from the network: every carrying node's
+operator can read who voted what, and the poll says so before a caller's first
+vote on it.
 
 ### 9.3 Carry and local materialization
 
@@ -15363,11 +15423,13 @@ M Q F R`, and the reader's are `R M G H W E T O K N P B`, so `L`, `V` and
 post plus `board_polls`, `board_poll_options` and `board_poll_votes`, keyed
 by the root post. The post's subject is the question, and its body introduces
 the poll.
-- **Creating:** `Po[l]l` on a board's list opens a poll draft editor
+- **Creating:** `[N]ew poll` on a board's list opens a poll draft editor
   (`edit_resource_draft`): the question; 2 to 10 answers; choices, either one
   or up to N; a closing date, 7 days ahead by default; and when results show
   (Decision 3). Then the body editor, then the review screen, then
-  `[P]ost`.
+  `[P]ost`. (Decided as `Po[l]l`; built by #1332 as `[N]ew poll`, since a key
+  is its label's first letter, §3.5. `[V]ote` is built as a draft of ticked
+  answers with `[V]ote` as its save, since a picker cannot commit several.)
 - **Changing:** answers and the choice mode lock at the first vote. The
   closing date stays editable. A text edit is an ordinary revision.
 - **Moderated boards:** a held poll cannot be voted on until it is approved.

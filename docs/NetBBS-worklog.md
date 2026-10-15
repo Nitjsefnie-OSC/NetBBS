@@ -788,6 +788,27 @@ never unreachable. The page's `oldest_cursor`/`newest_cursor` are the feed's
 own (`feed_bounds`), so code that pages must never take a cursor from
 `posts[0]` or `entries[0]`.
 
+### Polls (issues #1299, #1332)
+
+- Poll rows (`board_polls`, `board_poll_options`, `board_poll_votes`) are keyed
+  by the root post and have no foreign key to `posts`, like `post_file_refs`.
+  Every hard delete of posts rows calls `forget_orphaned_polls_without_commit`
+  beside `forget_orphaned_post_refs_without_commit`; a new delete path must
+  call both.
+- On the node that posted a Linked poll, the local `post_id` is not the Link
+  content id: votes find their poll through `board_polls.link_root_id`, set when
+  the `board_post` is signed. That node never has its own post in
+  `LinkNode.events`, so `board_poll_vote` depends only on the board's genesis in
+  `handle_events`, not on its root post.
+- A node's own signed votes live in `board_poll_votes.event_json` (re-signed by
+  key rotation's `_OWN_SIGNED_COLUMNS`), served by `_all_board_events` and pushed
+  by `load_own_board_events`; carried votes live in `link_events` with their
+  `board_id`, and a replaced vote's row is deleted.
+- The tally is computed on read: the trust filter (`envelope_content_visible`)
+  and the per-home-node cap change with trust and arrival, so nothing counted
+  is stored. `dropped_votes` (the row cap) can count one vote twice when a peer
+  re-offers it after a restart.
+
 ### Files and transfers
 
 File contents are content-addressed filesystem blobs; SQLite stores metadata.

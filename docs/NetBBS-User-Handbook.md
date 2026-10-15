@@ -182,6 +182,7 @@ instead.
 | **While writing** | The editor shows its commands; in the fullscreen editor <kbd>Ctrl+G</kbd> shows help |
 
 In this chapter: [Read and reply](#read-and-reply) ·
+[Polls](#polls) ·
 [Point a post at files](#point-a-post-at-files) ·
 [Post to several boards](#post-to-several-boards) ·
 [The line editor](#the-line-editor) ·
@@ -215,6 +216,38 @@ what you post there goes out to them too.
 > [!NOTE]
 > In an echo, an edit or a deletion stays on this BBS, because other BBSes
 > keep the copy they already received.
+
+#### Polls
+
+A poll asks the board a question with answers to vote on.
+
+1. On a board's list press <kbd>N</kbd> **New poll**.
+2. Type the question and two to ten answers, and choose whether voters pick one
+   answer or up to a number of them, when the poll closes (seven days ahead
+   unless you change it), and whether results show after voting or only after
+   the poll closes.
+3. <kbd>N</kbd> **Next**, write the post that introduces the poll, and
+   <kbd>P</kbd> **Post** it on the review screen.
+
+Reading a poll's post shows the poll under it. <kbd>V</kbd> **Vote** ticks
+your answers; you can change your vote until the poll closes. Results show
+once you have voted, or straight away if you cannot vote there, or only when
+the poll closes if its author chose that. The poll's author and the board's
+moderators can end it early with <kbd>C</kbd> **Close poll**.
+
+- Once anyone has voted, the answers can no longer change. The closing date
+  can, with <kbd>E</kbd> **Edit**.
+- Withdrawing the post, or a moderator taking it down, closes the poll and
+  hides its results.
+
+> [!IMPORTANT]
+> **Who can see your vote.** No screen shows who voted what -- not to the poll's
+> author, a moderator or the SysOp: only totals and the number of voters. But
+> this BBS's database records each account's vote, and a SysOp with the
+> database file can read it. On a board shared with other BBSes your vote also
+> travels to every BBS that carries the board, signed with your name, and each
+> of their operators can read it the same way. Such a poll says "Your vote is
+> shared with every BBS that carries this board." before you vote.
 
 #### Point a post at files
 
