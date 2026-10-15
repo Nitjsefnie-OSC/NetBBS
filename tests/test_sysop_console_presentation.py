@@ -134,7 +134,7 @@ def test_a_line_break_a_clear_erases_is_not_counted_as_a_row():
     """`_write_counted` (issue #662) counts what is left on screen: the break
     in front of a redraw-in-place clear is erased with the old screen, and
     counting it made a screen that fits to the row drop its described menu."""
-    from netbbs.net.admin_flow import _write_counted
+    from netbbs.net.admin_banners import _write_counted
     from netbbs.rendering.ansi import clear_screen
 
     session = ScriptedSession([], width=80, height=24)

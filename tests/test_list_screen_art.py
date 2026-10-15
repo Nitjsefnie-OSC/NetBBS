@@ -17,6 +17,7 @@ from netbbs.chat.mailbox import MessageMailbox
 from netbbs.chat.presence import PresenceRegistry
 from netbbs.files import create_file_area
 from netbbs.net import admin_flow, board_flow, chat_flow, file_flow
+from netbbs.net import admin_banners
 from netbbs.net.board_list_banner import (
     board_list_banner_path,
     load_board_list_banner,
@@ -199,7 +200,7 @@ class ConsoleSession(BoardSession):
 
 def test_mode_switches_and_is_audited(db, lane, sysop):
     session = ConsoleSession()
-    asyncio.run(admin_flow._toggle_list_art_mode(session, lane, sysop, FILE_AREA))
+    asyncio.run(admin_banners._toggle_list_art_mode(session, lane, sysop, FILE_AREA))
     assert list_art_mode(db, FILE_AREA) == SLOTS_MODE
     logged = db.connection.execute(
         "SELECT detail FROM moderation_log WHERE action = 'set_file_area_art_mode'"
@@ -212,7 +213,7 @@ def test_check_reports_the_slot_and_whether_a_list_fits(db, lane, sysop):
     board_list_banner_path(db).write_bytes(ART)
     set_board_list_banner_enabled(db, True)
     session = ConsoleSession()
-    asyncio.run(admin_flow._check_list_slot_art_screen(session, lane, sysop, BOARD_LIST))
+    asyncio.run(admin_banners._check_list_slot_art_screen(session, lane, sysop, BOARD_LIST))
     text = _text(session)
     assert "{list 44x4} at row 3, column 3" in text
     assert "[M]ode changes that" in text  # still in masthead mode
@@ -224,7 +225,7 @@ def test_check_warns_when_the_gate_note_leaves_names_too_little_room(db, lane, s
     narrow = "\r\n".join(["{list 34x4}", "", "", ""]).encode("ascii")
     board_list_banner_path(db).write_bytes(narrow)
     session = ConsoleSession()
-    asyncio.run(admin_flow._check_list_slot_art_screen(session, lane, sysop, BOARD_LIST))
+    asyncio.run(admin_banners._check_list_slot_art_screen(session, lane, sysop, BOARD_LIST))
     text = _text(session)
     assert "needs verification: generated list instead" in text and "they need 12" in text
 
@@ -233,7 +234,7 @@ def test_preview_draws_your_list_into_the_art(db, lane, sysop):
     create_board(db, "General", creator=sysop)
     board_list_banner_path(db).write_bytes(ART)
     session = ConsoleSession()
-    asyncio.run(admin_flow._preview_list_slot_art(session, lane, sysop, BOARD_LIST))
+    asyncio.run(admin_banners._preview_list_slot_art(session, lane, sysop, BOARD_LIST))
     text = _art_screen(session)
     assert "Board list" in text and "01. General" in text and "1/1" in text
 
@@ -268,7 +269,7 @@ def test_preview_shows_channels_as_your_list_does(db, lane, sysop, alice):
     create_channel(db, "back-room", creator=sysop, hidden=True)
     chat_channel_picker_banner_path(db).write_bytes(ART)
     session = ConsoleSession()
-    asyncio.run(admin_flow._preview_list_slot_art(session, lane, alice, CHAT_CHANNEL_PICKER))
+    asyncio.run(admin_banners._preview_list_slot_art(session, lane, alice, CHAT_CHANNEL_PICKER))
     text = _art_screen(session)
     assert "01. lobby" in text and "back-room" not in text
 
@@ -278,7 +279,7 @@ def test_check_says_an_ascii_reader_gets_the_generated_list(db, lane, sysop):
     board_list_banner_path(db).write_bytes(ART)
     session = ConsoleSession()
     session.output_charset = "ascii"
-    asyncio.run(admin_flow._check_list_slot_art_screen(session, lane, sysop, BOARD_LIST))
+    asyncio.run(admin_banners._check_list_slot_art_screen(session, lane, sysop, BOARD_LIST))
     assert "Your list: generated list instead -- your terminal reads plain ASCII" in _text(session)
 
 
@@ -287,7 +288,7 @@ def test_preview_sends_the_art_as_art(db, lane, sysop):
     board_list_banner_path(db).write_bytes(ART.replace(b"+---", "+\u2665--".encode("utf-8"), 1))
     session = ConsoleSession()
     session.output_charset = "cp437"
-    asyncio.run(admin_flow._preview_list_slot_art(session, lane, sysop, BOARD_LIST))
+    asyncio.run(admin_banners._preview_list_slot_art(session, lane, sysop, BOARD_LIST))
     assert "\x03" in "".join(session.written)
 
 
@@ -324,7 +325,7 @@ def test_preview_fills_count_with_the_bare_number_callers_see(db, lane, sysop):
     art = ART.replace(b"{page 6} --", b"{count 3} -")
     board_list_banner_path(db).write_bytes(art)
     session = ConsoleSession()
-    asyncio.run(admin_flow._preview_list_slot_art(session, lane, sysop, BOARD_LIST))
+    asyncio.run(admin_banners._preview_list_slot_art(session, lane, sysop, BOARD_LIST))
     text = _art_screen(session)
     bottom = [row for row in text.splitlines() if row.startswith("+-----")][-1]
     # Callers see the bare count (issue #1083); the preview showed "1 total",

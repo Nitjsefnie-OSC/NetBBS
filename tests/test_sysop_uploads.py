@@ -14,6 +14,7 @@ from netbbs.auth.users import SYSOP_LEVEL, create_user, set_user_level  # noqa: 
 from netbbs.doors.registry import custom_doors_dir  # noqa: E402
 from netbbs.moderation.log import list_recent_actions  # noqa: E402
 from netbbs.net import admin_flow, zmodem  # noqa: E402
+from netbbs.net import admin_banners
 from netbbs.net import admin_ui
 from netbbs.net.file_transfer import TransferGrants  # noqa: E402
 from netbbs.net.welcome_banner import MAX_BANNER_SIZE_BYTES, banner_path, welcome_banner_status  # noqa: E402
@@ -249,7 +250,7 @@ def test_banner_upload_offers_a_link_for_exactly_that_piece(db, lane, sysop):
     session = FakeSession([])
     grants = _browser_console(session)
 
-    asyncio.run(admin_flow._upload_banner_piece(
+    asyncio.run(admin_banners._upload_banner_piece(
         session, lane, sysop, path_of=banner_path, label="the welcome banner",
         audit_action="upload_welcome_banner",
     ))
@@ -268,7 +269,7 @@ def test_banner_upload_asks_before_replacing_and_no_means_no_link(db, lane, syso
     session = FakeSession(["n"])
     grants = _browser_console(session)
 
-    asyncio.run(admin_flow._upload_banner_piece(
+    asyncio.run(admin_banners._upload_banner_piece(
         session, lane, sysop, path_of=banner_path, label="the welcome banner",
         audit_action="upload_welcome_banner",
     ))
@@ -284,7 +285,7 @@ def test_upload_without_zmodem_or_a_web_listener_says_why(db, lane, sysop):
     session.supports_zmodem = False
     admin_ui._console_transfers.pop(session, None)
 
-    asyncio.run(admin_flow._upload_banner_piece(
+    asyncio.run(admin_banners._upload_banner_piece(
         session, lane, sysop, path_of=banner_path, label="the welcome banner",
         audit_action="upload_welcome_banner",
     ))
@@ -297,7 +298,7 @@ def test_no_public_url_mints_nothing_and_promises_nothing(db, lane, sysop):
     session = FakeSession([])
     grants = _browser_console(session, base_url=None)
 
-    asyncio.run(admin_flow._upload_banner_piece(
+    asyncio.run(admin_banners._upload_banner_piece(
         session, lane, sysop, path_of=banner_path, label="the welcome banner",
         audit_action="upload_welcome_banner",
     ))
@@ -361,7 +362,7 @@ def test_banner_upload_over_zmodem_lands_audited_and_not_enabled(db, lane, sysop
     client = _ClientSession(read_pipe=server_to_client, write_pipe=client_to_server)
 
     async def scenario():
-        server_task = asyncio.create_task(admin_flow._upload_banner_piece(
+        server_task = asyncio.create_task(admin_banners._upload_banner_piece(
             server, lane, sysop, path_of=banner_path, label="the welcome banner",
             audit_action="upload_welcome_banner",
         ))
@@ -420,7 +421,7 @@ def test_door_upload_confirms_replacing_an_existing_file(db, lane, sysop):
 
 def test_menus_offer_upload(db, lane, sysop):
     session = FakeSession([])
-    asyncio.run(admin_flow._draw_welcome_banner_menu(session, lane, "off", False, False, False))
+    asyncio.run(admin_banners._draw_welcome_banner_menu(session, lane, "off", False, False, False))
     asyncio.run(admin_flow._draw_door_menu(session, "off", False, False, False))
     assert _visible(_written_text(session)).count("[U]pload") == 2
 
@@ -484,7 +485,7 @@ def test_door_from_disk_hides_dot_files(db, lane, sysop):
 def test_every_piece_uploads_to_the_same_file_its_screen_names(db):
     """The upload builds each piece's name without resolving symlinks; it
     must still be exactly the file `[E]nable` and Preview read."""
-    for path_of, name_of in admin_flow._BANNER_FILE_SUFFIX_OF.items():
+    for path_of, name_of in admin_banners._BANNER_FILE_SUFFIX_OF.items():
         assert (db.path.parent.resolve() / name_of(db.path.stem)).resolve() == path_of(db)
 
 
@@ -499,7 +500,7 @@ def test_banner_upload_refuses_a_symlinked_piece(db, lane, sysop, tmp_path):
     session = FakeSession([])
     grants = _browser_console(session)
 
-    asyncio.run(admin_flow._upload_banner_piece(
+    asyncio.run(admin_banners._upload_banner_piece(
         session, lane, sysop, path_of=banner_path, label="the welcome banner",
         audit_action="upload_welcome_banner",
     ))

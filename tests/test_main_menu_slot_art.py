@@ -190,7 +190,7 @@ def test_the_prompt_goes_below_the_art_without_a_prompt_slot(tmp_path):
 
 
 def test_the_console_masthead_preview_explains_slots_mode(tmp_path):
-    from netbbs.net.admin_flow import _preview_main_menu_banner_screen
+    from netbbs.net.admin_banners import _preview_main_menu_banner_screen
     from netbbs.storage.execution import DatabaseLane
 
     db, user = _setup(tmp_path)
