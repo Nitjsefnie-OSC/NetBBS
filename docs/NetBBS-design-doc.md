@@ -2947,6 +2947,12 @@ carried exactly as written and filtered on output
   (carried over the Link, or written by another client) still shows it through
   the filter above.
 
+Cross-posting one message to several boards (one copy per board, tied by a
+group id) and polls on boards are decided in §16, "Issue #1298 —
+cross-posting a message to several boards" and "Issue #1299 — polls on
+message boards", and not yet built. Until then a post belongs to exactly one
+board and is text only.
+
 ### 6.2 File areas
 
 Local file metadata lives in SQLite; file bytes use content-addressed filesystem
@@ -3143,6 +3149,10 @@ not an alias.
 Local chat includes bounded persistent channel scrollback, presence, away
 state, invitations/membership, `/who`, `/whois`, `/names`, `/list`, `/join`,
 `/leave`, `/topic`, completion, and online private conversation.
+
+Audible bells for private messages and mentions, with a per-caller level and
+a tone in the web client, are decided in §16, "Issue #1302 — audible chat
+bells", and not yet built. Until then only an MRC private line rings.
 
 Chat's input row -- in a channel, an MRC room and a direct chat -- scrolls a
 line wider than the terminal within the row, with `<` and `>` marking text out
@@ -10856,7 +10866,8 @@ planning pass intended:
   starting conversations while refusing replies is not offered.
 - **Delivered as a notice, never as chat.** An inbound private line for
   a caller who opted in is an `MrcNotice` of kind `private`, shown as
-  `[MRC private] bob@Other: text` with the bell, to that caller's
+  `[MRC private] bob@Other: text` with the bell (unless the caller's
+  chat bell is off, issue #1302), to that caller's
   sessions only, through the per-caller path of #298 and bounded per
   remote sender ahead of it (a flood from one nick must not evict
   chat). The sender's embedded handle is peeled exactly like a room
@@ -15131,6 +15142,240 @@ what they mean here.
   - a placement-override flag on boards, channels and file areas;
   - `communities` as a carry-decision and inventory kind;
   - the inheritance change in Decision 5.
+
+### Issue #1298 — cross-posting a message to several boards — decided
+
+A caller wants to post one message to several boards without writing it again
+on each. Today a post belongs to exactly one board, and nothing in the post
+model allows more. `posts.board_id` is a single column. `create_post` derives
+the post's content id from a payload that includes `board_id`. The read
+cursor, expiry, pinning, moderation, the file rows of #842 and the Link
+`board_post` event are all per board. The composer has one destination: the
+review screen (`board_flow._review_and_commit` over
+`composition.review_composition`) passes `recipient=None`, so its `[T]o` key
+is free on a board post. Mail met the same question for several recipients in
+#827 and answered it with one copy per recipient, linked by a group id.
+
+**Decision 1 — one copy per board, tied by a group id.** A cross-post writes
+one ordinary post on each chosen board, with a nullable
+`posts.crosspost_group` naming the group, as `mail_messages.mail_group_id`
+ties a letter's copies (#827). Each copy is a post like any other, with its
+own content id, because the board is part of it:
+- **Replies:** each copy has its own replies. A reply is not cross-posted.
+- **Moderation:** each board moderates its own copy. A copy held on a
+  moderated board waits there, while the copies on the other boards go up.
+- **Removal and pinning:** deletion, takedown, pin and keep act on one copy.
+- **Author's changes:** an edit or withdrawal changes one copy. There is no
+  "edit everywhere".
+- **All or nothing at Post.** Every copy is checked before any is written,
+  and all are written in one transaction. The checks are the ones a single
+  post meets on each board: `require_write_gate`, `posting_refusal` (#993),
+  a closed or hidden board, and the length limit, with a Linked board's
+  file lines counted (`body_with_link_text`). A board that refuses is named
+  on the review screen and nothing is posted.
+
+Rejected: one post listed by several boards. Every per-board rule above would
+have to learn about a post that lives in more than one place, and the post's
+content id, which includes the board, would no longer identify it. This is
+mail's #827 reasoning, unchanged.
+
+**Decision 2 — any mix of local, Linked and FTN boards.** Each copy leaves
+the node the way a post on its board does.
+- **Linked:** each Linked copy is its own `board_post`, with an optional
+  `"crosspost": "<group id>"` field. As with #711's `layout`, the key is
+  omitted for an ordinary post, and §7.5 lets a node that predates it keep
+  and relay the signed bytes unchanged, so there is no protocol bump. An
+  older node shows the copy as an ordinary post. A newer node that carries
+  two copies of one group ties them together locally, under the group id
+  scoped by the signer, `<id>@<home node fingerprint>`, so no other node's
+  group can share it (mail's rule).
+- **FTN:** each FTN copy is a separate echomail message with its own
+  `^AMSGID`. Its first body line is `* Crossposted in <ECHO>, <ECHO>`,
+  naming only the other echoes of the same FTN network that receive this
+  post. Local and Link board names never go to an FTN network.
+
+**Decision 3 — `[T]o boards` on the review screen.** The post review screen
+of a new post (prose or art, never a reply or an edit) gets `[T]o boards`, an
+`extra_actions` entry as `[A]ttach file` is (#842).
+- **The picker:** `pick_item`'s `on_toggle` multi-select, as the bot settings
+  use it. The current board is ticked. Boards the caller cannot post to are
+  listed muted with the reason and cannot be ticked, as the mail picker
+  shows who cannot take a letter (#920). An art post can go only to boards
+  that allow color; the others show that reason.
+- **The review screen:** a row under the subject lists the chosen boards.
+- **Nothing is saved before `[P]ost`.** The choice lives on the review
+  screen. A draft keeps its text, as a draft does now.
+
+**Decision 4 — a cap the SysOp sets.** A cross-post reaches at most a
+node-wide number of boards, the current one included: 5 by default. The SysOp
+sets it from the console, beside the other node-wide limits (§13.10a's rule
+that operating policy is tunable without a shell). The picker refuses one
+more tick with a line naming the cap.
+
+**What follows from one group.**
+- **Read state:** opening one copy marks the copies the caller can see on
+  this node read too (`activity.record_post_opened` on each sibling). The
+  new-scan totals and "replies to you" count a group once.
+- **Search:** `search_posts` lists a group once, by a copy the caller can
+  open.
+- **Byline:** a copy's byline says "also in X, Y", naming only the boards of
+  sibling copies that the reader can open.
+
+### Issue #1299 — polls on message boards — decided
+
+A caller asks a question with several answers, other callers vote, and
+everyone can see the tally. Posts are text only today. A poll needs its own
+storage, because answers and votes are not post text. #842 already set the
+pattern for a post with something attached: rows beside the post, keyed by its
+content id, and cleaned up on every hard delete by
+`forget_orphaned_post_refs_without_commit`. The board list's keys are `P A D
+M Q F R`, and the reader's are `R M G H W E T O K N P B`, so `L`, `V` and
+`C` are free on the screens that need them.
+
+**Decision 1 — a poll is a post with side tables.** A poll is an ordinary
+post plus `board_polls`, `board_poll_options` and `board_poll_votes`, keyed
+by the root post. The post's subject is the question, and its body introduces
+the poll.
+- **Creating:** `Po[l]l` on a board's list opens a poll draft editor
+  (`edit_resource_draft`): the question; 2 to 10 answers; choices, either one
+  or up to N; a closing date, 7 days ahead by default; and when results show
+  (Decision 3). Then the body editor, then the review screen, then
+  `[P]ost`.
+- **Changing:** answers and the choice mode lock at the first vote. The
+  closing date stays editable. A text edit is an ordinary revision.
+- **Moderated boards:** a held poll cannot be voted on until it is approved.
+
+**Decision 2 — who votes, and who can see a vote.**
+- **Voters:** anyone who may post on the board, the gate `[R]eply` uses
+  (`require_write_gate`, and on a Linked board `posting_refusal` for a
+  reply). `[V]ote` on the reader opens the answers as a picker, with the
+  caller's current vote ticked.
+- **Changing a vote:** a vote is stored per account, so it can be changed
+  until the poll closes.
+- **Secret ballot:** no screen shows who voted what, not to the author, not
+  to a moderator, not to the SysOp. Screens show totals and the number of
+  voters only. The node's database does hold each account's vote, and the
+  handbooks say so plainly: a SysOp with the database file can read it.
+- **Guests:** the guest account is one account, so it holds one vote in
+  total. A guest call cannot change a vote an earlier guest call cast
+  (#1075, `authored_earlier_by_shared_account`).
+
+**Decision 3 — results, and how they draw.**
+- **When:** by default a caller sees the results after voting, or at once if
+  they cannot vote (the poll is closed, or they may not post). The author may
+  choose "only after close" for a poll instead. Before results show, the
+  reader says when they will.
+- **Wide (60 columns or more):** one row per answer, with its label, a bar,
+  the count and the percentage of voters. A long label wraps under itself.
+- **Narrow:** two rows per answer, the label, then the bar with count and
+  percentage.
+- **Bars:** `█` and `░`, or `#` and `.` with Unicode style off.
+
+**Decision 4 — polls on Linked boards, with signed votes.** A poll on a
+Linked board is offered and carried. Polls are never offered on FTN boards,
+which have no way to carry one.
+- **The poll travels with the post:** the `board_post` carries an optional
+  `"poll"` field with the answers, the choice mode, the closing date and the
+  results setting. An older node shows the post without its poll. Since the
+  root event is immutable and votes may already exist on other nodes, a
+  Linked poll's answers and choice mode are fixed when it is posted. Only
+  the closing date changes, carried by the author's `board_post_edit` or a
+  moderator's `board_post_moderator_edit` (§9.5).
+- **Votes are events:** `board_poll_vote` names the board, the poll's root
+  post, the voter and the chosen answers, and is signed by the voter's home
+  node like a post. Each node keeps one vote per author identity, and the
+  latest wins. A vote dated after the poll closes is not counted.
+- **Counting:** votes are trust-filtered like posts (§12): a vote from a
+  quarantined or blocked author or node is not counted. Each node also counts
+  at most a fixed number of voters per other home node per poll (50), and
+  keeps at most 5,000 voter rows per poll.
+- **What the cap can do:** a hostile node can mint as many accounts as it
+  likes, and its votes are signed correctly. The cap limits how far it can
+  move a tally. It cannot prevent it. Each node's tally is its own view, as
+  its post list is: it can differ from another node's when a node passes the
+  cap or is trusted differently. The results say how many votes were not
+  counted.
+- **No protocol bump:** the vote event names a `board_id`, so an older node
+  that carries the board relays it opaquely (#1022, §7.5).
+- **Secrecy over Link:** a vote on a Linked board is not secret from the
+  network. A signed vote has to name its voter, so every node that carries
+  the board holds who voted what, as it holds who wrote each post. NetBBS
+  screens still show no voter list on any node, but an operator of any
+  carrying node can read the votes from their database. On a local board
+  only this node's operator could; on a Linked board every carrying node's
+  operator can. Before the first vote on a Linked poll, the poll says: "Your
+  vote is shared with every BBS that carries this board." This follows
+  §10.2's rule that Link privacy is described as it is, never more. Rejected: each node
+  signing a tally of its own callers. It would hide voters from peers, but a
+  tally cannot be trust-filtered per author, and a node could report any
+  number.
+
+**Moderation.**
+- **Delete:** deleting the post deletes its poll and votes, cleaned up as
+  #842's file rows are on every hard delete.
+- **Close:** the author and the board's moderators get `[C]lose poll`.
+- **Withdraw and takedown:** a withdrawal or a takedown closes the poll and
+  hides its totals.
+- **Expiry:** the poll goes when the post expires and is deleted
+  (`sweep_expired_posts`).
+
+### Issue #1302 — audible chat bells — decided
+
+A caller in another window should notice when chat needs them. Only one thing
+rings today: an MRC private line, which the receive loop in `chat_flow`
+prefixes with `\x07` (#305). A native `/msg` or `/private`
+(`_deliver_private_message`, delivered as a `_TimestampedNotice` through
+`ChatHub.send_to`), a Link direct message (`link_direct`), a `/dm` invitation
+and a mention of one's name are silent. `_TimestampedNotice` cannot mark a bell:
+`daybreak` broadcasts one to everyone each day. Remote text already arrives
+without BEL (`sanitize_text` strips every control character), and the PgUp
+scrollback pager strips it from replayed lines (`_REPLAY_CONTROLS`). The web
+client (`netbbs-terminal.js`, xterm.js 6.0.0) has no bell handling, so a web
+caller hears nothing.
+
+**Decision 1 — three levels, private by default.** A per-caller preference:
+`off`, `private`, or `private and mentions`.
+- **Private** rings for a native `/msg` or `/private`, a Link direct message,
+  an MRC private line and a `/dm` invitation.
+- **Mentions** also rings for a line that names the caller: their username
+  or their current alias, as a whole word, in any case, with or without `@`.
+  The caller's own lines and bot lines never ring.
+- **Where it is set:** Profile → Communication, and `/bell
+  [off|private|mentions]` in chat, beside `/timestamps`. A bare `/bell`
+  shows the current level.
+- **MRC privates:** they now follow the level too. A caller at `off` no
+  longer hears them.
+
+**Decision 2 — `/away` does not silence it.** A caller who is away is the
+one a bell is for.
+
+**Decision 3 — the web client plays a tone.**
+- **The tone:** `term.onBell` plays a short WebAudio tone. The browser's
+  autoplay rule is met by creating the `AudioContext` on the caller's first
+  key or click. Until then, no sound.
+- **The title:** while the tab is hidden, a bell prefixes the title with
+  `(!)` until the tab has focus again.
+- **No setting:** the web client has no setting of its own. The caller's
+  level decides what reaches it, and a door's own BEL sounds on the web too.
+
+**Decision 4 — BEL only.** No visual bell (a DECSCNM flash). Telnet and SSH
+pass BEL to the caller's terminal, which decides whether it beeps, flashes
+or stays silent.
+
+**How the bell is sent.**
+- **Rate:** each session has a bucket of 3 bells, refilled by 1 every 10
+  seconds. One sender rings a session at most once per 30 seconds. The table
+  that tracks senders is bounded.
+- **A separate write:** the bell is `\x07` written on its own, after the
+  line. It is never part of the line, so it is never in a transcript or a
+  replay. It never rings for the caller's own lines, and never while the
+  scrollback pager is open.
+- **An explicit flag:** the decision to ring comes from an explicit ring
+  flag on what the hub delivers, never from the notice's class.
+- **Remote text never rings:** inbound text never carries its own BEL. A
+  regression test keeps `sanitize_text` stripping it.
+- **Scope:** v1 rings on the chat screens and in direct chat. A private
+  message queued for a session outside chat does not ring.
 
 ## 17. Maintaining this document
 

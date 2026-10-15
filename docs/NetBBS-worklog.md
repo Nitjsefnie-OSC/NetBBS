@@ -375,6 +375,15 @@ lane would have read the shared account's stored values instead. The
 context is copied, so a context variable *set* inside a lane job does not
 reach the caller.
 
+**Two reads in one job are two snapshots (issue #1326).** Outside a
+transaction each SELECT sees whatever other connections have committed by
+then, so a write can land between two statements of one lane job. A cursor
+over an append-only journal must therefore read the head *first* and bound
+its scan by it (`netbbs.bots.sources.source_batch`). Scanning first and then
+jumping the cursor to `MAX(id)` stepped over an upload committed in between,
+and Baud never announced that file. The test injects a commit between the
+statements with `set_trace_callback` rather than hoping a timing window opens.
+
 ### Session-scoped preferences reach only the session's own reads (issue #1073)
 
 For a session that signed in without a credential, `run_authenticated_session`
