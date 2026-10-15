@@ -52,13 +52,20 @@ def _module_aliases(tree: ast.Module, modules: dict[str, Path]) -> dict[str, str
 def _patch_targets(tree: ast.Module, modules: dict[str, Path]) -> list[tuple[int, str, str]]:
     """(line, module, name) for every setattr/patch/patch.object aimed at an admin module."""
     aliases = _module_aliases(tree, modules)
-    # `for name in ("_a", "_b"): monkeypatch.setattr(admin_x, name, ...)`
-    looped = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.For) and isinstance(node.target, ast.Name) \
-                and isinstance(node.iter, (ast.Tuple, ast.List)) \
-                and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.iter.elts):
-            looped[node.target.id] = [e.value for e in node.iter.elts]
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def looped(name: ast.Name, call: ast.Call) -> list[str] | None:
+        """The literals of the nearest enclosing `for <name> in ("_a", "_b"):`."""
+        node = parents.get(call)
+        while node is not None:
+            if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and node.target.id == name.id:
+                if isinstance(node.iter, (ast.Tuple, ast.List)) and all(
+                        isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.iter.elts):
+                    return [e.value for e in node.iter.elts]
+                return None
+            node = parents.get(node)
+        return None
+
     targets = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -80,8 +87,9 @@ def _patch_targets(tree: ast.Module, modules: dict[str, Path]) -> list[tuple[int
             if dotted is not None and isinstance(second, ast.Constant) and isinstance(second.value, str):
                 targets.append((node.lineno, dotted, second.value))
                 continue
-            if dotted is not None and isinstance(second, ast.Name) and second.id in looped:
-                targets += [(node.lineno, dotted, name) for name in looped[second.id]]
+            names = looped(second, node) if dotted is not None and isinstance(second, ast.Name) else None
+            if names is not None:
+                targets += [(node.lineno, dotted, name) for name in names]
                 continue
         if (function.endswith("setattr") or function == "patch" or function.endswith(".patch")) and \
                 isinstance(first, ast.Constant) and isinstance(first.value, str):
@@ -123,6 +131,8 @@ def test(monkeypatch):
     admin_flow.seven = None
     for name in ("eight", "nine"):
         monkeypatch.setattr(admin_flow, name, None)
+    for name in ("not", "patched"):
+        pass
 """
     targets = _patch_targets(ast.parse(source), {"netbbs.net.admin_flow": tmp_path})
     assert sorted(name for _, _, name in targets) == [
