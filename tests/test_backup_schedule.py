@@ -663,7 +663,7 @@ def test_a_failed_scheduled_backup_leaves_no_partial_directory(db_path, identity
 
 def test_create_backup_now_rechecks_the_destination_after_confirmation(db, lane, sysop, tmp_path, monkeypatch):
     """The disk can be unmounted while the confirmation prompt is open."""
-    from netbbs.net import admin_flow
+    from netbbs.net import admin_maintenance
 
     identity = db.path.parent / "identity"
     identity.mkdir()
@@ -671,7 +671,7 @@ def test_create_backup_now_rechecks_the_destination_after_confirmation(db, lane,
     destination.mkdir()
     set_destination_setting(db, destination, db_path=db.path)
     calls = []
-    real_check = admin_flow.check_backup_destination
+    real_check = admin_maintenance.check_backup_destination
 
     def check_then_unmount(*args, **kwargs):
         calls.append(1)
@@ -679,7 +679,7 @@ def test_create_backup_now_rechecks_the_destination_after_confirmation(db, lane,
             raise BackupScheduleError("is that disk unmounted?")
         return real_check(*args, **kwargs)
 
-    monkeypatch.setattr(admin_flow, "check_backup_destination", check_then_unmount)
+    monkeypatch.setattr(admin_maintenance, "check_backup_destination", check_then_unmount)
     session = _tall(["f", "c", "y", "b", "b"])
     asyncio.run(admin_menu(session, lane, sysop, node_controls=_node_controls(backup_identity_dir=identity)))
 
