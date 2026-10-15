@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 
 from netbbs.auth.users import User, get_user_by_id
 from netbbs.boards.boards import Board, usable_max_age_days
-from netbbs.boards.posts import WITHDRAWN_PLACEHOLDER, Post
+from netbbs.boards.posts import WITHDRAWN_PLACEHOLDER, Post, crosspost_group_of
 from netbbs.age_requirement import carried_age_requirement, row_age_requirement
 from netbbs.communities import get_effective_min_age, get_effective_name_requirement
 from netbbs.file_refs import body_with_link_text, post_refs
@@ -590,6 +590,11 @@ def materialize_carried_post(
         # Issue #711: the only layout besides the default. Anything else --
         # absent, or a value this node does not know -- is prose.
         db.connection.execute("UPDATE posts SET layout = 'art' WHERE post_id = ?", (post.content_id,))
+    group = carried_crosspost_group(payload) if parent_post_id is None else None
+    if group is not None:
+        # Issue #1298: copies of one cross-post this node carries on several
+        # boards are tied together here, as the author's node ties its own.
+        db.connection.execute("UPDATE posts SET crosspost_group = ? WHERE post_id = ?", (group, post.content_id))
     reindex_post(db, board_local_id, post.content_id)
     db.connection.commit()
 
@@ -1573,6 +1578,7 @@ def queue_board_post_if_linked(
         created_at=post.created_at,
         parent_post_id=link_parent_post_id,
         layout=post.layout if post.layout != "prose" else None,
+        crosspost=_own_crosspost_group(db, post),
     )
 
     db.connection.execute(
@@ -1582,6 +1588,40 @@ def queue_board_post_if_linked(
     db.connection.commit()
 
     return board_post
+
+
+def _own_crosspost_group(db: Database, post: Post) -> str | None:
+    """The group id a copy of a cross-post written here carries over Link
+    (issue #1298), or `None`. Only a group this node made: a carried
+    copy's is `<id>@<home node fingerprint>`, and a carried copy is never
+    queued again anyway."""
+    group = crosspost_group_of(db, post)
+    if group is None or "@" in group or post.parent_post_id is not None:
+        return None
+    return group
+
+
+#: The longest `"crosspost"` group id a carried `board_post` may name, and
+#: the characters it may use (issue #1298). This node's own are 16 hex digits.
+_MAX_CROSSPOST_ID_LENGTH = 64
+_CROSSPOST_ID_CHARACTERS = frozenset("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_")
+
+
+def carried_crosspost_group(payload: dict) -> str | None:
+    """The local group a carried `board_post` belongs to (issue #1298): its
+    `"crosspost"` id scoped by its author's home node, `<id>@<fingerprint>`,
+    so two nodes' groups never meet. `None` for an ordinary post, a reply
+    (a reply is never cross-posted), and an id this node will not store."""
+    group = payload.get("crosspost")
+    if (
+        not isinstance(group, str) or not group or len(group) > _MAX_CROSSPOST_ID_LENGTH
+        or not set(group) <= _CROSSPOST_ID_CHARACTERS or payload.get("parent_post_id") is not None
+    ):
+        return None
+    home = payload.get("author", {}).get("home_node_fingerprint")
+    if not isinstance(home, str) or not home:
+        return None
+    return f"{group}@{home}"
 
 
 def carried_post_body(db: Database, revision: Post) -> str:

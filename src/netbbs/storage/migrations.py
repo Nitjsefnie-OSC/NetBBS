@@ -4526,4 +4526,14 @@ MIGRATIONS = [
         ALTER TABLE link_carry_decisions_1310 RENAME TO link_carry_decisions;
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1298: cross-posting -- posts.crosspost_group ties the copies of one post on "
+            "several boards (a carried copy's group is '<id>@<home node fingerprint>')."
+        ),
+        sql="""
+        ALTER TABLE posts ADD COLUMN crosspost_group TEXT;
+        CREATE INDEX idx_posts_crosspost_group ON posts(crosspost_group) WHERE crosspost_group IS NOT NULL;
+        """,
+    ),
 ]

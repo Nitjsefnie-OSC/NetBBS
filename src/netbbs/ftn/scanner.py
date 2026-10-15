@@ -20,6 +20,11 @@ Each exported post gets a MSGID, stored on the post so replies from
 elsewhere thread under it, and a REPLY when it answers a post that has
 one. SEEN-BY carries this node and its uplink and PATH this node (a point
 adds neither: its boss does it for it, FSC-0074).
+
+A copy of a post written to several boards at once (issue #1298, design doc
+§6.8) is its own echomail message with its own MSGID. Its first body line,
+`* Crossposted in <ECHO>, <ECHO>`, names the other echoes of the same network
+that get a copy; local and Link boards are never named to an FTN network.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ import logging
 
 from netbbs import __version__
 from netbbs.boards import Board
-from netbbs.boards.posts import Post
+from netbbs.boards.posts import Post, crosspost_copies
 from netbbs.config import get_node_display_name
 from netbbs.ftn.message import FtnMessage, build_origin, encode_message, format_msgid, format_tzutc
 from netbbs.ftn.networks import board_area, get_network
@@ -83,7 +88,7 @@ def export_post_if_ftn(db: Database, post: Post, board: Board) -> bool:
         to_name=to_name,
         from_name=post.author_label,
         subject=post.subject,
-        body=post.body,
+        body=_crossposted_line(db, post, area.network_id, area.tag) + post.body,
         area=area.tag,
         date=local_time,
         kludges=kludges,
@@ -109,6 +114,26 @@ def export_post_if_ftn(db: Database, post: Post, board: Board) -> bool:
         db.connection.execute("UPDATE posts SET ftn_msgid = ? WHERE post_id = ?", (msgid, post.post_id))
     db.connection.commit()
     return queued
+
+
+#: How a cross-posted copy's first line begins (issue #1298).
+CROSSPOSTED_PREFIX = "* Crossposted in "
+
+
+def _crossposted_line(db: Database, post: Post, network_id: int, own_tag: str) -> str:
+    """`* Crossposted in ECHO, ECHO` and a line break, naming the echoes of
+    network `network_id` other than `own_tag` that carry another copy of
+    `post`'s cross-post -- or "" for a post on one board, or one whose other
+    copies are on no echo of this network."""
+    tags: list[str] = []
+    for board, _copy in crosspost_copies(db, post):
+        area = board_area(db, board)
+        if area is None or area.network_id != network_id or area.tag == own_tag or area.tag in tags:
+            continue
+        tags.append(area.tag)
+    if not tags:
+        return ""
+    return f"{CROSSPOSTED_PREFIX}{', '.join(tags)}\n"
 
 
 def _pack(message: FtnMessage) -> bytes:

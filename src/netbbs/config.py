@@ -330,3 +330,27 @@ def set_mail_min_level(db: Database, level: int) -> None:
     if not 0 <= level <= MAX_MAIL_MIN_LEVEL:
         raise ValueError(f"mail level must be 0-{MAX_MAIL_MIN_LEVEL}, got {level!r}")
     set_config(db, MAIL_MIN_LEVEL_CONFIG_KEY, str(level))
+
+
+# Issue #1298 (design doc §6.1): the most message boards one post may be
+# cross-posted to, the board it was written on included. A post is written
+# once per board, so this bounds what one [P]ost writes. 1 turns
+# cross-posting off.
+CROSSPOST_BOARD_LIMIT_CONFIG_KEY = "crosspost_board_limit"
+_DEFAULT_CROSSPOST_BOARD_LIMIT = 5
+MAX_CROSSPOST_BOARD_LIMIT = 20
+
+
+def get_crosspost_board_limit(db: Database) -> int:
+    value = get_config(db, CROSSPOST_BOARD_LIMIT_CONFIG_KEY)
+    try:
+        limit = int(value) if value is not None else _DEFAULT_CROSSPOST_BOARD_LIMIT
+    except ValueError:
+        return _DEFAULT_CROSSPOST_BOARD_LIMIT
+    return min(max(limit, 1), MAX_CROSSPOST_BOARD_LIMIT)
+
+
+def set_crosspost_board_limit(db: Database, limit: int) -> None:
+    if not 1 <= limit <= MAX_CROSSPOST_BOARD_LIMIT:
+        raise ValueError(f"cross-post board limit must be 1-{MAX_CROSSPOST_BOARD_LIMIT}, got {limit!r}")
+    set_config(db, CROSSPOST_BOARD_LIMIT_CONFIG_KEY, str(limit))
