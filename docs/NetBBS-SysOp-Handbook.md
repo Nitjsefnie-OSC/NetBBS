@@ -2046,7 +2046,9 @@ A node with a managed name also gets a public page at
   how long Reliable Link has known it and when it was last heard;
 - which NetBBS release you run, as major.minor (7.17, never the patch level);
 - the Linked boards your guest account may read; with guest login off, no
-  boards are listed.
+  boards are listed;
+- a tagline, if you set one: one line of up to 80 characters about your
+  board, under its name.
 
 Nothing on it is more than a caller on Reliable Link can see, and never the
 address the DNS service sees.
@@ -2057,6 +2059,12 @@ Your node signs the choice into what it sends Reliable Link, so a change takes
 effect at the next contact. Giving up or releasing the name does not take the
 page down: it stays, marked as left, and **Web page** is still there to turn
 it off.
+
+<kbd>T</kbd> **Tagline** edits that line in place: <kbd>Enter</kbd> saves,
+an empty line clears it, and <kbd>Esc</kbd> keeps it. It is plain text only:
+no colour codes, no markup and no links, and a URL stays plain text. It
+reaches the page with the next contact, like the setting, and is published
+only while the page is not off.
 
 `python -m netbbs.admin export-node-map [--output FILE]` prints your own node
 map as your callers see it, as JSON: the same document Reliable Link builds the

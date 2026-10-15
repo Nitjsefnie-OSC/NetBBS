@@ -30,9 +30,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="the JSON written by `python -m netbbs.admin export-node-map --output`")
     parser.add_argument("--out", type=Path, required=True,
                         help="the directory served as /nodes/; replaced whole on every run")
+    parser.add_argument("--hide-taglines", type=Path, default=None,
+                        help="names or fingerprints, one per line, whose tagline is not shown (issue #1172)")
     args = parser.parse_args(argv)
     try:
-        count = build(args.registrations, args.node_map, args.out)
+        count = build(args.registrations, args.node_map, args.out, hidden_taglines_path=args.hide_taglines)
     except SourceError as exc:
         print_wrapped(f"Not built: {exc}", file=sys.stderr)
         return 1

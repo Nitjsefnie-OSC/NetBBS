@@ -251,6 +251,7 @@ class _OwnHelloProvider:
             node_page=self._page_facts.node_page,
             software_version=self._page_facts.software_version,
             public_boards=self._page_facts.public_boards,
+            tagline=self._page_facts.tagline,
         )
 
 

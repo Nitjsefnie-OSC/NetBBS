@@ -19,7 +19,9 @@ from datetime import datetime, timezone
 
 from netbbs.link.dial_in import advertised_dial_in
 from netbbs.link.node_map import NodeMapEntry, build_node_map
-from netbbs.link.node_page import advertised_node_page, advertised_public_boards, advertised_software_version
+from netbbs.link.node_page import (
+    advertised_node_page, advertised_public_boards, advertised_software_version, advertised_tagline,
+)
 from netbbs.storage.database import Database
 
 # Bumped when a field changes meaning or goes away; a new field does not.
@@ -44,6 +46,7 @@ def _export_entry(entry: NodeMapEntry) -> dict:
         # Issue #1171: null and [] when the descriptor says nothing.
         "software_version": advertised_software_version(entry.descriptor_payload),
         "public_boards": list(advertised_public_boards(entry.descriptor_payload)),
+        "tagline": advertised_tagline(entry.descriptor_payload),
     }
 
 

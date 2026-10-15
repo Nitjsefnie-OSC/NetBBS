@@ -50,6 +50,8 @@ MAX_DIAL_IN_BYTES = 300
 _DIAL_IN_SCHEMES = ("telnet", "ssh", "https")
 MAX_BOARDS = 24
 MAX_BOARD_NAME = 64
+# Issue #1172: the SysOp's one line of free text, as the node reads it.
+MAX_TAGLINE = 80
 _VERSION_RE = re.compile(r"^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$")
 _BOARD_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -83,6 +85,8 @@ class NodePage:
     # there may read.
     software_version: str | None = None
     boards: tuple[str, ...] = ()
+    # Issue #1172: the SysOp's tagline, unless we hid it.
+    tagline: str | None = None
 
     @property
     def member_since(self) -> datetime | None:
@@ -207,6 +211,35 @@ def _boards(values: object) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _tagline(value: object) -> str | None:
+    """The tagline to show: a string of at most 80 printable characters
+    (no control, format or bidi characters) with runs of spaces folded,
+    or nothing. The export already validated it; this is the page's own
+    guard, and it refuses rather than repairs."""
+    if not isinstance(value, str):
+        return None
+    text = re.sub(" {2,}", " ", value).strip()
+    if not text or len(text) > MAX_TAGLINE or not text.isprintable():
+        return None
+    return text
+
+
+def load_hidden_taglines(path: Path | None) -> frozenset[str]:
+    """The names and fingerprints whose tagline is not shown, one per line
+    in `path`, `#` starting a comment. This is how the project takes down
+    one node's text without touching its page. No file means none hidden;
+    a file that cannot be read stops the build, so a tagline we hid never
+    comes back because the list went missing."""
+    if path is None:
+        return frozenset()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SourceError(f"cannot read the hidden-tagline list {path}: {exc}") from exc
+    entries = (line.split("#", 1)[0].strip().lower() for line in text.splitlines())
+    return frozenset(entry for entry in entries if entry)
+
+
 def _state(status: str, last_heard: datetime | None, now: datetime) -> str:
     if status == "released" or last_heard is None:
         return LEFT
@@ -217,7 +250,10 @@ def _state(status: str, last_heard: datetime | None, now: datetime) -> str:
     return LEFT
 
 
-def select_pages(registrations: list[Registration], nodes: list[dict], now: datetime) -> list[NodePage]:
+def select_pages(
+    registrations: list[Registration], nodes: list[dict], now: datetime,
+    *, hidden_taglines: frozenset[str] = frozenset(),
+) -> list[NodePage]:
     """The pages that exist (§8.13): one per fingerprint that holds a
     matured, abandoned or released name and that Reliable Link has met,
     unless the node turned its page off. A fingerprint with several names
@@ -260,6 +296,10 @@ def select_pages(registrations: list[Registration], nodes: list[dict], now: date
             indexed=setting == INDEXED,
             software_version=_software_version(node.get("software_version")),
             boards=_boards(node.get("public_boards")),
+            tagline=(
+                None if fingerprint in hidden_taglines or any(r.name in hidden_taglines for r in held)
+                else _tagline(node.get("tagline"))
+            ),
         ))
     pages.sort(key=lambda page: (page.friendly_name.casefold(), page.name))
     return pages
@@ -293,6 +333,7 @@ main{max-width:760px;margin:0 auto;padding:2.5rem 1.25rem 3rem;}
 .head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;}
 h1{font-size:clamp(1.6rem,4vw,2.2rem);overflow-wrap:anywhere;}
 .host{color:var(--sub);margin:.4rem 0 1.5rem;overflow-wrap:anywhere;}
+.tagline{margin:-.9rem 0 1.5rem;overflow-wrap:anywhere;}
 .state{font-family:"IBM Plex Mono",monospace;font-size:.78rem;border:1px solid var(--line);border-radius:999px;
 padding:.3rem .8rem;display:inline-flex;align-items:center;gap:.5ch;white-space:nowrap;}
 .state::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--dim);}
@@ -377,6 +418,8 @@ def render_node_page(page: NodePage, now: datetime) -> str:
     version = (
         f"<dt>Runs</dt><dd>NetBBS {_E(page.software_version)}</dd>\n" if page.software_version else ""
     )
+    # Issue #1172: the node's own words, escaped, never markup or a link.
+    tagline = f"<p class=\"tagline\">{_E(page.tagline)}</p>\n" if page.tagline else ""
     boards = (
         "<h2>Linked boards open to guests</h2>\n<ul class=\"boards\">"
         + "".join(f"<li>{_E(name)}</li>" for name in page.boards)
@@ -388,6 +431,7 @@ def render_node_page(page: NodePage, now: datetime) -> str:
         f"<div class=\"head\"><h1>{_E(page.friendly_name)}</h1>"
         f"<span class=\"state state-{page.state}\">{_STATE_TEXT[page.state]}</span></div>\n"
         f"<p class=\"host mono\">{_E(page.name)}.netbbs.org</p>\n"
+        f"{tagline}"
         f"<h2>Call in</h2>\n{dial}\n"
         f"{boards}"
         "<dl class=\"facts\">\n"
@@ -521,13 +565,17 @@ def write_site(out: Path, pages: list[NodePage], now: datetime) -> None:
         shutil.rmtree(retired)
 
 
-def build(registrations_path: Path, node_map_path: Path, out: Path, *, now: datetime | None = None) -> int:
-    """Read both sources, then replace the site. Returns the number of
-    pages. Raises `SourceError`, before writing anything, when a source
-    cannot be read."""
+def build(
+    registrations_path: Path, node_map_path: Path, out: Path, *, now: datetime | None = None,
+    hidden_taglines_path: Path | None = None,
+) -> int:
+    """Read both sources (and the hidden-tagline list, if given), then
+    replace the site. Returns the number of pages. Raises `SourceError`,
+    before writing anything, when one of them cannot be read."""
     now = now or datetime.now(timezone.utc)
     registrations = load_registrations(registrations_path)
     nodes = load_node_map(node_map_path)
-    pages = select_pages(registrations, nodes, now)
+    hidden = load_hidden_taglines(hidden_taglines_path)
+    pages = select_pages(registrations, nodes, now, hidden_taglines=hidden)
     write_site(out, pages, now)
     return len(pages)

@@ -11,7 +11,7 @@ runs.
 | Source | What | How |
 | --- | --- | --- |
 | The managed-DNS service's database (`MANAGED_DNS_DB_PATH`) | which fingerprint holds which name, its status, when it was registered | opened read-only (`mode=ro`), never migrated |
-| Reliable Link's node map | the caller's view of every node: name, dial-in addresses, first contact, last heard, page setting, release (major.minor) and the Linked boards its guest may read | the JSON from `python -m netbbs.admin export-node-map --output FILE` |
+| Reliable Link's node map | the caller's view of every node: name, dial-in addresses, first contact, last heard, page setting, release (major.minor), the Linked boards its guest may read, and its tagline | the JSON from `python -m netbbs.admin export-node-map --output FILE` |
 
 Nothing else. The export carries no field a caller on Reliable Link cannot
 see, and the generator reads no column of the registrations table beyond
@@ -53,6 +53,13 @@ to the directory that contains `--out`, and nothing else may live in `--out`.
 Apache serves it as `/nodes/` and maps `/~<name>` to `<out>/<name>/index.html`
 and `/~<name>/badge.svg` to `<out>/<name>/badge.svg` itself (`AliasMatch`, so
 `mod_userdir` does not answer).
+
+A node's tagline (issue #1172) is shown escaped, under its name. To take one
+down without touching the page, list the node's name or fingerprint, one per
+line (`#` starts a comment), in a file passed as `--hide-taglines FILE`. If
+that file is given and cannot be read, the run exits 1 and leaves the site as
+it is, so a tagline hidden there never comes back because the file went
+missing.
 
 Each page directory also holds `badge.svg`: "NetBBS Link · member since
 <month> · <state>", for a SysOp to put on their own website with the snippet

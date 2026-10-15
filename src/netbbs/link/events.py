@@ -507,6 +507,7 @@ def build_endpoint_descriptor(
     node_page: str | None = None,
     software_version: str | None = None,
     public_boards: list[dict] | tuple[dict, ...] | None = None,
+    tagline: str | None = None,
 ) -> EndpointDescriptor:
     """
     Build and sign one `endpoint_descriptor` event, per design doc §12
@@ -585,6 +586,10 @@ def build_endpoint_descriptor(
         # `{"board_id", "name"}`, for its page. Both read by
         # `netbbs.link.node_page`, which validates them.
         payload["public_boards"] = [dict(board) for board in public_boards]
+    if tagline:
+        # Issue #1172: the SysOp's one line of free text for its page,
+        # validated by `netbbs.link.node_page` on both sides.
+        payload["tagline"] = tagline
 
     envelope = build_envelope(ENDPOINT_DESCRIPTOR_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))
