@@ -601,6 +601,27 @@ def test_a_sysop_placement_wins_over_every_later_list(db, origin, here, sysop):
     assert local_id != mine.id
 
 
+def test_a_local_resource_filed_in_the_copy_stays_there(db, origin, here, sysop):
+    """Review of #1336: a board created straight into a subscribed copy was
+    taken out again by the next membership list."""
+    genesis = _genesis(origin)
+    link_id = genesis.payload["community_id"]
+    _offer(db, origin, genesis)
+    local_id = subscribe_community(db, link_id, actor=sysop, caps=_caps(here))
+    created = create_board(db, "ours", creator=sysop, community_id=local_id)
+    create_channel(db, "ours-chat", creator=sysop, community_id=local_id)
+    create_file_area(db, "ours-files", creator=sysop, community_id=local_id)
+    # Even without the flag (a row from before it), a local resource is not a list's.
+    db.connection.execute("UPDATE file_areas SET community_placed_locally = 0")
+    db.connection.commit()
+
+    _receive_members(db, origin, here, _members(origin, genesis, created_at="2026-03-08T00:00:00Z"))
+
+    assert get_board_by_name(db, "ours").community_id == local_id == created.community_id
+    for table in ("channels", "file_areas"):
+        assert db.connection.execute(f"SELECT community_id FROM {table}").fetchone()[0] == local_id
+
+
 def test_a_member_the_origin_removes_moves_out_and_stays_carried(db, origin, here, sysop):
     genesis = _genesis(origin)
     link_id = genesis.payload["community_id"]

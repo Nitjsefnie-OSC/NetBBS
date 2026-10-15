@@ -213,6 +213,12 @@ def create_board(
                 community_id,
             ),
         )
+        if community_id is not None:
+            # Issue #1310: filed by whoever created it, so a Link Community's
+            # membership list never moves it.
+            db.connection.execute(
+                "UPDATE boards SET community_placed_locally = 1 WHERE board_id = ?", (board_id,)
+            )
         if allow_color:
             # Set apart from the INSERT, which stays valid on every schema
             # a board can be created on.

@@ -156,6 +156,12 @@ def create_channel(
                 community_id,
             ),
         )
+        if community_id is not None:
+            # Issue #1310: filed by whoever created it, so a Link Community's
+            # membership list never moves it.
+            db.connection.execute(
+                "UPDATE channels SET community_placed_locally = 1 WHERE channel_id = ?", (channel_id,)
+            )
         if age_requirement is not None:
             db.connection.execute(
                 "UPDATE channels SET age_requirement = ? WHERE channel_id = ?", (age_requirement, channel_id)

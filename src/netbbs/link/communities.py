@@ -711,10 +711,14 @@ def place_members(db: Database, link_id: str) -> None:
     }
     for kind, (table, column) in _LOCAL.items():
         wanted = set(listed[kind])
+        # Only a carried resource can have been placed by a list: a local one
+        # in the copy was filed there by a SysOp, flag or no flag.
         for row in db.connection.execute(
-            f"SELECT * FROM {table} WHERE community_id = ? AND community_placed_locally = 0", (copy["id"],)
+            f"SELECT * FROM {table} WHERE community_id = ? AND community_placed_locally = 0 "
+            "AND link_genesis_json IS NOT NULL",
+            (copy["id"],),
         ).fetchall():
-            if row[column] not in wanted or row["link_genesis_json"] is None or _resource_origin(kind, row) != origin:
+            if row[column] not in wanted or _resource_origin(kind, row) != origin:
                 db.connection.execute(f"UPDATE {table} SET community_id = NULL WHERE id = ?", (row["id"],))
         for resource_id in sorted(wanted):
             row = db.connection.execute(
