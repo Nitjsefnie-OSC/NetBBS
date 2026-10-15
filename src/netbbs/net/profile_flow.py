@@ -78,6 +78,7 @@ from netbbs.net.char_input import HELP_KEY, InputCancelled, reject_unhandled_key
 from netbbs.net.help_overlay import show_menu_help
 from netbbs.net.breadcrumb_preference import breadcrumb_collapsed_enabled, set_breadcrumb_collapsed_enabled
 from netbbs.net.color_depth_preference import (
+    apply_color_depth,
     color_depth_override,
     effective_truecolor,
     set_color_depth_override,
@@ -1388,7 +1389,10 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
             # What this session detected is the SysOp's terminal, not theirs.
             return "auto"
         if value == "auto":
-            detected = "truecolor" if session.supports_truecolor else "256-color"
+            if getattr(session, "detected_sixteen_colors", False):
+                detected = "16-color"
+            else:
+                detected = "truecolor" if session.supports_truecolor else "256-color"
             return f"auto (detected: {detected})"
         return f"{value} (forced)"
 
@@ -1696,14 +1700,19 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
             key="color_depth", label="Color depth",
             render=_color_depth_render,
             prompt=live_choice_field(
-                "color_depth", ["auto", "truecolor", "256"],
-                persist=_member_persist(user, actor, "color_depth", set_color_depth_override, describe=describe),
+                "color_depth", ["auto", "truecolor", "256", "16"],
+                persist=_member_persist(
+                    user, actor, "color_depth", set_color_depth_override, describe=describe,
+                    apply=lambda v: apply_color_depth(session, None if v == "auto" else v),
+                ),
             ),
             brief="Force a terminal color depth",
             help=(
                 "Overrides NetBBS's automatic terminal-capability detection. 'auto' trusts "
-                "what your client reports; force 'truecolor' or '256' only if colors render "
-                "wrong -- garbled, or not showing at all -- under auto."
+                "what your client reports; force 'truecolor', '256' or '16' only if colors "
+                "render wrong under auto. '16' sends only the sixteen classic ANSI colors, "
+                "for a classic BBS terminal that shows blinking, reversed or garbled text "
+                "where colors should be; auto already picks it for most of them."
             ),
             section="Display",
         ),

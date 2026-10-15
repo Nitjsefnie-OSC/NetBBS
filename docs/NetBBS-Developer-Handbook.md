@@ -237,7 +237,7 @@ Two kinds of registration deliberately get none of it:
 | `handle` | The caller's NetBBS handle. |
 | `user_id` | Their stable numeric id on this node, never reused for another account. |
 | `terminal_width`, `terminal_height` | Current geometry; rewritten mid-run if the caller resizes and the door opted in (see the resize section above). |
-| `color_depth` | `truecolor` or `256`. |
+| `color_depth` | `truecolor`, `256` or `16`. `16` is a classic BBS terminal that shows only the 16 ANSI colours: draw with SGR 30-37/40-47 and bold for bright. NetBBS rewrites 256-colour and truecolor codes to the nearest of the 16 for such a caller anyway, so a door that ignores the value still shows, only less finely. |
 | `unicode_style` | The caller's own NetBBS glyph preference, so a door can match what they already chose. |
 | `transport` | `telnet`, `ssh`, `web`, `local`, or `unknown`. Key decoding and latency assumptions differ, particularly for the browser terminal. |
 | `timezone` | The node's display timezone as an IANA name, for in-game clocks. Node-wide: NetBBS has no per-caller timezone. |

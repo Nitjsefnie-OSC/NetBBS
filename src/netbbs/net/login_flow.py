@@ -88,6 +88,7 @@ from netbbs.net.throttle import LoginThrottle
 # floor), and the only thing drawn this early is the pre-login notice:
 # a few sentences, which lose nothing by being narrow.
 _PRE_NEGOTIATION_WIDTH = 40
+from netbbs.net.color_depth_preference import apply_color_depth, color_depth_override
 from netbbs.net.unicode_style_preference import (
     apply_charset_preference,
     charset_preference,
@@ -792,6 +793,8 @@ async def _run_signed_in(
     # The caller's character set preference replaces what was detected at
     # connect time, from the first screen after login on (issue #929).
     apply_charset_preference(session, charset_preference(db, user))
+    # And their colour depth replaces the detected one (issue #1348).
+    apply_color_depth(session, color_depth_override(db, user))
     # Paced art plays only for a caller who keeps animations on (issue #929).
     session.animations_enabled = animations_enabled(db, user)
     # Issue #611: the self-service password change re-verifies the

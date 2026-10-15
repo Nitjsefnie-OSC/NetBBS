@@ -29,13 +29,13 @@ from netbbs.storage.database import Database
 from netbbs.user_preferences import get_user_preference, set_user_preference
 
 _PREFERENCE_KEY = "color_depth"
-_VALID_VALUES = ("auto", "truecolor", "256")
+_VALID_VALUES = ("auto", "truecolor", "256", "16")
 
 
 def color_depth_override(db: Database, user: User) -> str | None:
     """`None` means no override -- use `Session.supports_truecolor` as
-    negotiated. Otherwise `"truecolor"` or `"256"`, an explicit forced
-    choice."""
+    negotiated. Otherwise `"truecolor"`, `"256"` or `"16"` (issue #1348),
+    an explicit forced choice."""
     value = get_user_preference(db, user, _PREFERENCE_KEY, default="auto")
     return None if value == "auto" else value
 
@@ -52,3 +52,20 @@ def effective_truecolor(session: Session, db: Database, user: User) -> bool:
     negotiated logic lives here once, not duplicated per call site."""
     override = color_depth_override(db, user)
     return getattr(session, "supports_truecolor", False) if override is None else override == "truecolor"
+
+
+def sixteen_colors_for(session: Session, override: str | None) -> bool:
+    """Whether `session` gets only the 16 colours (issue #1348) under
+    `override` (`color_depth_override`'s answer): what its terminal type
+    said under auto, and otherwise the caller's own choice."""
+    if override is None:
+        return getattr(session, "detected_sixteen_colors", False)
+    return override == "16"
+
+
+def apply_color_depth(session: Session, override: str | None) -> None:
+    """Carry the caller's colour depth into `session`, from the next write
+    on: at login, and when they change it on their profile. Kept on the
+    session, so a detection that finishes later leaves it alone."""
+    session.color_depth_choice = override
+    session.sixteen_colors = sixteen_colors_for(session, override)

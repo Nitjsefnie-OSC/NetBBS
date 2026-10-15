@@ -1117,8 +1117,20 @@ SSH keys, and your password.
 If your terminal did not say which it is, NetBBS asks once after you log in
 which of two sample lines looks right.
 
-- If lines and arrows look wrong later, change this setting.
-- If colors are poor, change the color preference.
+**Profile ▸ Color depth** sets how many colors NetBBS sends:
+
+| Setting | Suits |
+| --- | --- |
+| **auto** | The default. Follows what your terminal reports when you connect. A classic BBS terminal, or one that reports nothing, gets 16 colors. |
+| **truecolor** | Terminals that show full color, such as SyncTERM and most modern terminals. |
+| **256** | Terminals that show the 256-color palette. |
+| **16** | Classic terminals that show only the sixteen ANSI colors. |
+
+- If lines and arrows look wrong later, change **Character set**.
+- If text blinks, shows reversed or looks garbled where colors should be,
+  set **Color depth** to 16.
+- If you see only a few plain colors on a modern terminal, set **Color
+  depth** to 256 or truecolor.
 - <kbd>Ctrl</kbd>+<kbd>L</kbd> redraws ordinary NetBBS screens after a display
   problem. Games may use different controls.
 

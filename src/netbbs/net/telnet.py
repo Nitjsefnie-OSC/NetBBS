@@ -59,6 +59,7 @@ from netbbs.net.terminal_detect import (
     classify_terminal_types,
     clean_terminal_type,
     describe_detection,
+    terminal_shows_sixteen_colors,
     terminal_supports_truecolor,
     terminal_wraps_immediately,
 )
@@ -279,11 +280,27 @@ class TelnetSession(Session):
         self.charset_certain = certain
         self.terminal_wraps_immediately = terminal_wraps_immediately(self.terminal_types)
         self._apply_terminal_truecolor()
+        self._apply_terminal_colors()
         outcome = self._ttype_outcome or ("answered" if self.terminal_types else "no answer")
         _logger.info(describe_detection(
             "telnet", self.peer_address, names=self.terminal_types, outcome=outcome,
-            charset=self.output_charset, certain=certain,
+            charset=self.output_charset, certain=certain, sixteen_colors=self.sixteen_colors,
         ))
+
+    def _apply_terminal_colors(self) -> None:
+        """16 colours for a classic BBS terminal, and for one that named
+        nothing NetBBS knows (issue #1348): on Telnet that is most often an
+        old terminal, which a 256-colour code garbles, while a modern one
+        that said nothing only looks plainer. An explicit COLORTERM is a
+        modern terminal speaking. Runs when detection finishes and again
+        after NEW-ENVIRON, as `_apply_terminal_truecolor` does; a caller's
+        own preference replaces it after login."""
+        sixteen = not self._colorterm and terminal_shows_sixteen_colors(self.terminal_types, unrecognised=True)
+        self.detected_sixteen_colors = sixteen
+        # A NEW-ENVIRON reply after sign-in must not undo the caller's
+        # own choice (Claude review of #1349).
+        choice = self.color_depth_choice
+        self.sixteen_colors = sixteen if choice is None else choice == "16"
 
     def _apply_terminal_truecolor(self) -> None:
         """Give truecolor to a terminal whose type says it shows it but
@@ -625,6 +642,8 @@ class TelnetSession(Session):
                 # Kept once seen: a later reply without COLORTERM must not
                 # forget it and let the terminal type decide instead.
                 self._colorterm = colorterm
+                if self._ttype_state == "done":
+                    self._apply_terminal_colors()
             if colorterm in ("truecolor", "24bit"):
                 self.supports_truecolor = True
                 self.truecolor_diagnostic = (

@@ -3057,8 +3057,12 @@ Classic terminals:
 - Plain spaces at the end of each banner row are dropped when it's shown, so
   draw background colours out to the edge if a row should reach it.
 - SyncTERM also gets full colour (truecolor), so doors and colourful presets
-  look the way they do in a modern terminal. Other classic terminals get 256
-  colours. A caller can still pick a colour depth in their Profile.
+  look the way they do in a modern terminal. Other classic terminals, and a
+  Telnet caller whose terminal reports nothing, get the 16 classic ANSI
+  colours: many of them, such as the fTelnet **Connect** button on BBS
+  directory sites, blink or garble text sent in 256 colours. Your banners
+  and presets are drawn in the nearest of the 16. A caller can still pick a
+  colour depth in their Profile.
 
 **After sign-in:**
 

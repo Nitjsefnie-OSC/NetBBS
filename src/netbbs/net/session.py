@@ -32,6 +32,7 @@ from netbbs.rendering.pipe_codes import PastedColor
 from netbbs.rendering.reflow import fills_last_column, wrap_terminal_text
 from netbbs.rendering.ansi import strip_ansi
 from netbbs.rendering.ansi_art import ice_to_bright_background
+from netbbs.rendering.basic_colors import BasicColorFilter
 from netbbs.rendering.terminal_emulator import TerminalEmulator
 from netbbs.rendering.width import display_width
 
@@ -235,6 +236,21 @@ class Session(ABC):
     #: this conservative default with their own exact negotiation path.
     truecolor_diagnostic: str = "transport did not report truecolor capability; using 256-color"
 
+    #: Whether this session's colours go out as the 16 classic ANSI colours
+    #: (issue #1348): a classic BBS terminal reads a 256-colour code's
+    #: parameters one by one, and blinks, reverses or hides text by them.
+    #: Every write is rewritten on its way out (`netbbs.rendering.
+    #: basic_colors`); what is drawn above stays 256-colour. Set from the
+    #: terminal type (`detected_sixteen_colors`) and replaced by the
+    #: caller's colour depth preference after login.
+    sixteen_colors: bool = False
+    detected_sixteen_colors: bool = False
+    #: The caller's own colour depth once applied at login or from their
+    #: profile (`"16"`, `"256"`, `"truecolor"`), `None` under auto: a
+    #: detection that finishes late changes only what auto follows.
+    color_depth_choice: str | None = None
+    _basic_colors: BasicColorFilter | None = None
+
     #: This node's own display name (`netbbs.config.get_node_display_
     #: name`), shown as the root breadcrumb segment on every post-login
     #: screen. Unlike `terminal_width`/`supports_truecolor` above, not
@@ -420,7 +436,7 @@ class Session(ABC):
         self._copy_output(_normalize_newlines(text))
         if self._output_held:
             return
-        await self._send_text(text)
+        await self._send_text(self._colors_out(text))
 
     async def write_art(self, text: str) -> None:
         """`write` for SysOp art (issue #929): the pictographs of CP437's
@@ -444,7 +460,7 @@ class Session(ABC):
         self._copy_output(_normalize_newlines(art_pictographs_to_glyphs(wire)))
         if self._output_held:
             return
-        await self._send_text(wire)
+        await self._send_text(self._colors_out(wire))
 
     async def write_raw(self, data: bytes) -> None:
         """
@@ -476,7 +492,21 @@ class Session(ABC):
             return
         if self._output_held:
             return
+        if self.binary_transfer_active:
+            if self._basic_colors is not None:
+                data = self._basic_colors.flush() + data
+        elif self.sixteen_colors:
+            data = self._color_filter().chunk(data)
         await self._send_raw(data)
+
+    def _color_filter(self) -> BasicColorFilter:
+        if self._basic_colors is None:
+            self._basic_colors = BasicColorFilter()
+        return self._basic_colors
+
+    def _colors_out(self, text: str) -> str:
+        """`text` in the colours this terminal shows (`sixteen_colors`)."""
+        return self._color_filter().text(text) if self.sixteen_colors else text
 
     async def _send_text(self, text: str) -> None:
         """The transport's own text send; see `write`."""
@@ -612,7 +642,7 @@ class Session(ABC):
         """Write past a break-in's hold, and past the screen copy: the
         chat is drawn over the caller's screen, and the copy keeps what is
         underneath, to be put back."""
-        await self._send_text(map_text(text, self.output_charset))
+        await self._send_text(self._colors_out(map_text(text, self.output_charset)))
 
     def _copy_restore_ansi(self) -> str:
         """The screen copy as text that repaints the caller's terminal. The

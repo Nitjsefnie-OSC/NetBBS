@@ -422,10 +422,54 @@ handles SGR `38;2;R;G;B` and `48;2;R;G;B` -- the semicolon form NetBBS sends --
 through an internal palette large enough for every cell of a 132x60 screen
 (CTerm manual, `src/conio/cterm.adoc` at tag `syncterm-1.9`). An explicit
 `COLORTERM` still decides when a client sends one, and `ansi-bbs` and `ansi`
-stay at 256 colours because those names also cover clients with less. Doors,
+never get truecolor because those names also cover clients with less. Doors,
 banners, presets and gradients all read the session's depth through
 `effective_truecolor`, so nothing per screen changes, and a caller's own
 **Profile** colour-depth choice still overrides it after sign-in.
+
+**Colour depth per session: 16 colours (issue #1348).** A terminal that shows
+only the 16 ANSI colours does not skip a 256-colour SGR: it reads `38;5;N`
+parameter by parameter, so `5` turns on blink and `N` lands on whatever
+attribute has that number (7 reverses, 8 conceals, 30-47 pick a colour). The
+stock fTelnet embed on BBS directory sites (`embed.ftelnet.ca`, a 2020 build
+that reports `ansi-bbs`, `ansi`, `cp437`) showed a NetBBS sign-in as blinking
+text under a garbled banner. So a session has a third depth below 256 and
+truecolor:
+
+- **Who gets it.** A terminal whose first recognised name is a classic BBS one
+  (`ansi-bbs`, `ansi`, `pcansi`, `cterm`, `cp437`;
+  `terminal_detect.terminal_shows_sixteen_colors`), and a Telnet caller that
+  names nothing known or nothing at all. `syncterm` and the modern emulators
+  keep 256 colours and truecolor, and so does a Telnet caller that sends an
+  explicit `COLORTERM`. SSH clients are modern unless they name a classic
+  terminal, and the browser terminal is never cut down. The cost is accepted:
+  Windows' built-in telnet calls itself `ansi` and shows 16 colours until its
+  caller picks 256, because a classic terminal shown 256-colour codes looks
+  broken while a 256-colour one shown 16 only looks plainer.
+- **Where.** Screens keep drawing in 256 colours. `Session` rewrites every
+  write on its way out (`netbbs.rendering.basic_colors.BasicColorFilter`),
+  including a door's raw stream, where a sequence split between chunks is
+  held until it is whole; a binary transfer is never touched. The screen copy
+  keeps the full colours, so a SysOp's snoop shows them, and a break-in
+  repaint goes through the same filter.
+- **How colours map.** A 256-colour or truecolor colour becomes the nearest of
+  the 16 in CIELAB, measured against the VGA palette classic terminals
+  actually draw (SyncTERM, fTelnet), not xterm's. A hue-first rule was tried
+  and dropped: it turned the dark purples and navies of pixel art into
+  full-strength magenta and blue, where CIELAB keeps them dark. One exception
+  keeps interface colours honest: a colour with a clear tint (chroma 20 or
+  more) never becomes a grey, so a muted blue label stays blue. A bright
+  foreground is sent as bold plus 30-37, the form ANSI.SYS and every terminal
+  since reads; aixterm's 90-97 are rewritten the same way. A background is
+  one of the eight. The filter tracks bold the stream asked for separately
+  from bold it added for brightness, so a bright colour never leaves the
+  next span bold. Bright backgrounds (100-107) pass through: art that uses
+  them already switches on CTerm's iCE modes (`prepare_art_text`).
+- **Preference and doors.** **Profile ▸ Color depth** offers 16 next to auto,
+  256 and truecolor; auto follows the terminal type, and the choice replaces
+  it from the first screen after sign-in. Doors are told `color_depth: "16"`
+  (an additive value of `door_api` 4); a door that draws 256 colours anyway
+  is caught by the same filter.
 
 **SysOp art: storage and SAUCE (issue #929).** A banner or masthead is the
 `.ans` file on disk, exactly as uploaded or saved; there is no second copy in
