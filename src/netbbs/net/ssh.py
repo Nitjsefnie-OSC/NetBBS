@@ -74,6 +74,7 @@ from netbbs.net.terminal_detect import (
     classify_terminal_types,
     clean_terminal_type,
     describe_detection,
+    terminal_shows_sixteen_colors,
     terminal_supports_truecolor,
     terminal_wraps_immediately,
 )
@@ -353,10 +354,15 @@ class SSHSession(Session):
             self.truecolor_diagnostic = (
                 f"SSH terminal type {terminal_type!r} shows truecolor (no COLORTERM sent); truecolor available"
             )
+        # 16 colours only for a terminal that names itself a classic BBS
+        # one (issue #1348): SSH clients are otherwise modern.
+        self.sixteen_colors = self.detected_sixteen_colors = not colorterm and terminal_shows_sixteen_colors(
+            self.terminal_types, unrecognised=False,
+        )
         _logger.info(describe_detection(
             "SSH", self.peer_address, names=self.terminal_types,
             outcome="PTY request" if terminal_type else "no PTY terminal type",
-            charset=self.output_charset, certain=self.charset_certain,
+            charset=self.output_charset, certain=self.charset_certain, sixteen_colors=self.sixteen_colors,
         ))
 
     async def _send_text(self, text: str) -> None:

@@ -10,7 +10,7 @@ import pytest
 from netbbs.net.session import Session
 from netbbs.net.ssh import SSHSession
 from netbbs.net.telnet import IAC, NAWS, SB, SE, TTYPE, TTYPE_IS, WILL, WONT, TelnetServer
-from netbbs.net.terminal_detect import classify_terminal_types
+from netbbs.net.terminal_detect import classify_terminal_types, terminal_shows_sixteen_colors
 from netbbs.rendering.charset import ASCII, CP437, UTF8
 from tests.test_telnet import _FULL_NEGOTIATION_LEN, _TTYPE_SEND, answer_terminal_type
 from tests.eventually import eventually
@@ -45,6 +45,7 @@ def _connect(client, *, wait=5.0):
         seen["charset"] = session.output_charset
         seen["certain"] = session.charset_certain
         seen["types"] = session.terminal_types
+        seen["sixteen"] = session.sixteen_colors
         seen["width"] = session.terminal_width
         seen["after"] = time.monotonic() - started
         await session.write_line("é╔")
@@ -330,3 +331,55 @@ def test_a_reported_type_is_cleaned_before_it_is_kept_or_logged():
     assert len(clean_terminal_type("x" * 500)) == MAX_TERMINAL_TYPE_LENGTH
     session = SSHSession(_Process("evil\x1b]0;title\x07term"))
     assert session.terminal_types == ("evil]0;titleterm",)
+
+
+# -- 16 colours (issue #1348) ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("names", "unrecognised", "expected"),
+    [
+        (["ansi-bbs", "ansi", "cp437"], False, True),  # the stock fTelnet embed
+        (["ANSI"], False, True),
+        (["pcansi"], False, True),
+        (["syncterm"], True, False),
+        (["xterm-256color"], True, False),
+        (["putty"], True, False),
+        (["dumb"], True, True),
+        (["dumb"], False, False),
+        ([], True, True),
+        (["something", "syncterm"], True, False),
+    ],
+)
+def test_which_terminals_get_sixteen_colors(names, unrecognised, expected):
+    assert terminal_shows_sixteen_colors(names, unrecognised=unrecognised) is expected
+
+
+@pytest.mark.parametrize(
+    ("names", "expected"),
+    [(("ansi-bbs",), True), (("syncterm",), False), (("xterm",), False)],
+)
+def test_a_telnet_terminal_type_decides_the_colors_from_the_first_screen(names, expected):
+    async def client(reader, writer):
+        for name in names:
+            await answer_terminal_type(reader, writer, name)
+        return await reader.readuntil(b"\r\n")
+
+    assert _connect(client)["sixteen"] is expected
+
+
+def test_a_telnet_caller_that_names_no_terminal_gets_sixteen_colors():
+    async def client(reader, writer):
+        writer.write(bytes([IAC, WONT, TTYPE]))
+        await writer.drain()
+        return await reader.readuntil(b"\r\n")
+
+    assert _connect(client)["sixteen"] is True
+
+
+@pytest.mark.parametrize(
+    ("terminal_type", "expected"),
+    [("ansi-bbs", True), ("syncterm", False), ("xterm-256color", False), ("weird", False), (None, False)],
+)
+def test_ssh_gets_sixteen_colors_only_for_a_classic_terminal(terminal_type, expected):
+    assert SSHSession(_Process(terminal_type)).sixteen_colors is expected

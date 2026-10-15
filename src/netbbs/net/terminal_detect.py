@@ -52,6 +52,7 @@ def describe_detection(
     outcome: str,
     charset: Charset,
     certain: bool,
+    sixteen_colors: bool = False,
 ) -> str:
     """One log line saying what a connecting terminal reported and the
     character set chosen from it, so a SysOp can read a client's terminal
@@ -59,9 +60,10 @@ def describe_detection(
     "answered", "refused" or "no answer"."""
     reported = ", ".join(repr(clean_terminal_type(name)) for name in names) or "none"
     certainty = "certain" if certain else "uncertain, asked after login"
+    colors = "; 16 colours" if sixteen_colors else ""
     return (
         f"{transport} caller {peer or '?'} terminal type: {reported} ({outcome}); "
-        f"character set {charset} ({certainty})"
+        f"character set {charset} ({certainty}){colors}"
     )
 
 
@@ -116,6 +118,29 @@ def terminal_supports_truecolor(names: Iterable[str]) -> bool:
         if name in CP437_TERMINALS or name in LIKELY_CP437_TERMINALS or name.startswith(UTF8_TERMINAL_PREFIXES):
             return False
     return False
+
+
+#: Terminals that show the 16 classic ANSI colours and no more, or that
+#: share a name with ones that do (issue #1348). A 256-colour code reaches
+#: such a terminal as a run of attributes -- the stock fTelnet embed on BBS
+#: directories reports `ansi-bbs`, `ansi`, `cp437` and blinks on the `5`
+#: of `38;5;N`. SyncTERM reports `syncterm` and keeps 256 colours.
+SIXTEEN_COLOR_TERMINALS = frozenset({"ansi-bbs", "ansi", "pcansi", "cterm", "cp437"})
+
+
+def terminal_shows_sixteen_colors(names: Iterable[str], *, unrecognised: bool) -> bool:
+    """Whether to send this terminal only the 16 colours. The first name
+    that means anything decides, the same rule `classify_terminal_types`
+    follows: a classic BBS name says yes, SyncTERM or a modern emulator
+    says no. `unrecognised` answers for a terminal that named nothing
+    known -- or nothing at all."""
+    for raw in names:
+        name = raw.strip().lower()
+        if name in SIXTEEN_COLOR_TERMINALS:
+            return True
+        if name in TRUECOLOR_TERMINALS or name.startswith(UTF8_TERMINAL_PREFIXES):
+            return False
+    return unrecognised
 
 
 #: Terminals that send SyncTERM's editing keys (issue #964; CTerm manual,

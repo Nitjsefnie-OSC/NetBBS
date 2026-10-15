@@ -229,16 +229,17 @@ def test_profile_toggle_switches_the_preference_on_and_off(db, lane, alice):
     assert "Fullscreen editor (all writing): off" in squeezed(text)
 
 
-def test_profile_color_depth_toggle_cycles_auto_truecolor_256(db, lane, alice):
+def test_profile_color_depth_toggle_cycles_auto_truecolor_256_16(db, lane, alice):
     from netbbs.net.color_depth_preference import color_depth_override
 
-    session = FakeSession(["1", "4", "1", "4", "1", "4", "b"])
+    session = FakeSession(["1", "4"] * 4 + ["b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
     text = _visible(session)
     assert "Color depth: truecolor (forced)" in squeezed(text)
     assert "Color depth: 256 (forced)" in squeezed(text)
+    assert "Color depth: 16 (forced)" in squeezed(text)
     assert "Color depth: auto (detected:" in squeezed(text)
-    # Three presses of a 3-state cycle return to the starting state.
+    # Four presses of a 4-state cycle return to the starting state.
     assert color_depth_override(db, alice) is None
 
 

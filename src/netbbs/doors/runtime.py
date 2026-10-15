@@ -120,7 +120,10 @@ def _write_door_info(db, workdir, session, player, war_dialer=False, session_lim
     # account's; otherwise the player's.
     info = {"handle": player.username, "user_id": player.id if user_id is None else user_id,
             "terminal_width": physical_terminal_width(session), "terminal_height": session.terminal_height,
-            "color_depth": "truecolor" if effective_truecolor(session, db, player) else "256",
+            "color_depth": (
+                "16" if getattr(session, "sixteen_colors", False)
+                else "truecolor" if effective_truecolor(session, db, player) else "256"
+            ),
             "node_name": session.node_display_name,
             "door_api": DOOR_API_VERSION,
             # The caller's own display preference, so a door can match the
