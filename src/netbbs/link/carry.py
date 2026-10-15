@@ -70,6 +70,7 @@ from netbbs.link.files import (
 )
 from netbbs.link.events import event_content_id
 from netbbs.files.areas import delete_file_area_rows, remove_staging_files
+from netbbs.boards.polls import forget_orphaned_polls_without_commit
 from netbbs.file_refs import forget_orphaned_post_refs_without_commit
 from netbbs.link.store import save_event
 from netbbs.auth.users import User
@@ -765,6 +766,7 @@ def purge_excluded(db: Database, kind: str, resource_id: str, *, actor: User | N
         if kind == "boards":
             db.connection.execute("DELETE FROM posts WHERE board_id = ?", (local_id,))
             forget_orphaned_post_refs_without_commit(db)
+            forget_orphaned_polls_without_commit(db)
         elif kind == "channels":
             db.connection.execute("DELETE FROM channel_messages WHERE channel_id = ?", (local_id,))
             db.connection.execute("DELETE FROM channel_message_search WHERE channel_id = ?", (local_id,))
