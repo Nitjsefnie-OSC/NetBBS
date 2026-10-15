@@ -74,6 +74,14 @@ from netbbs.link.boards import (
 from netbbs.ftn.networks import list_networks
 from netbbs.net.ftn_console import board_echo_action, board_echo_rows
 from netbbs.link.node_profiles import identity_for_peer, presentations_confusable
+from netbbs.link.communities import (
+    LinkCommunitiesError,
+    close_own_community,
+    community_link,
+    leave_community,
+    linked_community_ids,
+    promote_community,
+)
 from netbbs.link.carry import (
     CarryDecisionError,
     carried_from_elsewhere,
@@ -431,7 +439,9 @@ def _category_field(
 
 
 @located("Communities")
-async def _community_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
+async def _community_menu(
+    session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None
+) -> None:
     description_level = await lane.run(menu_description_level, actor)
     unicode_style = await lane.run(unicode_style_enabled, actor)
     collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
@@ -446,11 +456,11 @@ async def _community_menu(session: Session, lane: DatabaseLane, actor: User) -> 
             return
         elif choice == "c":
             await session.write_line("")
-            await _community_screen(session, lane, actor)
+            await _community_screen(session, lane, actor, link_context=link_context)
             await _draw_community_menu(session, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == "l":
             await session.write_line("")
-            await _list_communities_screen(session, lane, actor)
+            await _list_communities_screen(session, lane, actor, link_context=link_context)
             await _draw_community_menu(session, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == HELP_KEY:
             await show_menu_help(
@@ -572,7 +582,8 @@ def _community_field_specs(
 
 
 async def _community_screen(
-    session: Session, lane: DatabaseLane, actor: User, *, existing: Community | None = None
+    session: Session, lane: DatabaseLane, actor: User, *, existing: Community | None = None,
+    link_context: LinkContext | None = None,
 ) -> Community | None:
     """A Community's one screen (issue #1081, design doc §3.5), and the
     screen that creates one: its place in the callers' list above the
@@ -637,7 +648,15 @@ async def _community_screen(
         return run
 
     async def _remove(session: Session, lane: DatabaseLane) -> bool:
-        return await _delete_community_screen(session, lane, actor, current["community"])
+        return await _delete_community_screen(session, lane, actor, current["community"], link_context=link_context)
+
+    async def _link(session: Session, lane: DatabaseLane) -> bool:
+        await _link_community_screen(session, lane, actor, current["community"], link_context)
+        return False
+
+    async def _unlink(session: Session, lane: DatabaseLane) -> bool:
+        await _unlink_community_screen(session, lane, actor, current["community"], link_context)
+        return False
 
     async def refresh() -> DetailState:
         if current["community"] is None:
@@ -657,9 +676,29 @@ async def _community_screen(
         if place < len(order) - 1:
             actions.append(DetailAction("d", menu_key("D", "own"), _move(1), brief="Later in the callers' list"))
         actions.append(DetailAction("r", menu_key("R", "emove"), _remove, brief="Permanently remove it"))
-        header = colored(f"Place {place + 1} of {len(order)} in the callers' Communities list", fg_color=MUTED_COLOR)
+        header_bits = [f"Place {place + 1} of {len(order)} in the callers' Communities list"]
+        after = ""
+        own_fingerprint = link_context.node_identity.fingerprint if link_context is not None else None
+        link = await lane.run(community_link, community.id, own_fingerprint)
+        if link is not None:
+            header_bits.append(_community_link_state(link))
+        if link_context is not None:
+            after = _sections_text(
+                [Section("NetBBS Link", _community_link_rows(link, link_context))], width=session.terminal_width,
+                unicode_style=await lane.run(unicode_style_enabled, actor),
+            )
+            if link is None or (link.closed and not link.own):
+                actions.append(DetailAction(
+                    "l", menu_key("L", "ink this Community"), _link, brief="Share it via NetBBS Link",
+                ))
+            elif link.own and not link.closed:
+                actions.append(DetailAction(
+                    "l", menu_key("l", "ink", prefix="Un"), _unlink, brief="Close it on every node that carries it",
+                ))
+        header = colored(" · ".join(header_bits), fg_color=MUTED_COLOR)
         return DetailState(
             draft=_draft_of(community), header=header, actions=actions, title=sanitize_text(community.name),
+            after_fields=after,
         )
 
     redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
@@ -681,7 +720,9 @@ async def _community_screen(
     )
 
 
-async def _list_communities_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
+async def _list_communities_screen(
+    session: Session, lane: DatabaseLane, actor: User, *, link_context: LinkContext | None = None
+) -> None:
     """The Communities in the order callers see them (issue #838). Picking
     one opens its screen, to edit, move or remove it; leaving that comes
     back here, on it -- the same loop the category list has, so a SysOp
@@ -689,11 +730,13 @@ async def _list_communities_screen(session: Session, lane: DatabaseLane, actor: 
     reopen_at: int | None = None
     while True:
         communities = await lane.run(list_communities)
+        linked = await lane.run(linked_community_ids)
         selected = await pick_item(
             session, communities,
             name_of=lambda c: c.name,
             stable_id_of=lambda c: c.id,
             description_of=_community_description,
+            linked_of=lambda c: c.id in linked,
             columns=_COMMUNITY_COLUMNS,
             column_values_of=_community_columns,
             title="Communities", own=True,
@@ -708,7 +751,7 @@ async def _list_communities_screen(session: Session, lane: DatabaseLane, actor: 
         if selected is None:
             return
         reopen_at = selected.id
-        await _community_detail_screen(session, lane, actor, selected)
+        await _community_detail_screen(session, lane, actor, selected, link_context=link_context)
 
 
 def _community_description(community: Community) -> str:
@@ -730,12 +773,131 @@ def _community_description(community: Community) -> str:
     return ", ".join(bits)
 
 
-async def _community_detail_screen(session: Session, lane: DatabaseLane, actor: User, community: Community) -> None:
+async def _community_detail_screen(
+    session: Session, lane: DatabaseLane, actor: User, community: Community, *,
+    link_context: LinkContext | None = None,
+) -> None:
     """A Community's screen is its editor (issue #1081): see `_community_screen`."""
-    await _community_screen(session, lane, actor, existing=community)
+    await _community_screen(session, lane, actor, existing=community, link_context=link_context)
 
 
-async def _delete_community_screen(session: Session, lane: DatabaseLane, actor: User, community: Community) -> bool:
+_MEMBER_KIND_LABELS = (("boards", "message board"), ("channels", "chat channel"), ("file_areas", "file area"))
+
+
+def _community_link_state(link) -> str:
+    """One phrase for a Community's header: what its Link side is."""
+    if link.own:
+        return "Linked, origin here"
+    if link.closed:
+        return "closed at its origin"
+    return "left" if link.left else "Linked"
+
+
+def _community_link_rows(link, link_context: LinkContext) -> list[Field | Note]:
+    """The NetBBS Link section of a Community's screen (issue #1310)."""
+    if link is None:
+        return [
+            Field("Linked", "no"),
+            Note(
+                "Linking announces it to other nodes with its name, description and defaults, and lists "
+                "its message boards, chat channels and file areas that are already Linked from here. It "
+                "links nothing else: link each one on its own screen, and it joins the list.",
+                color=MUTED_COLOR,
+            ),
+        ]
+    rows: list[Field | Note] = [
+        Field("Linked", "no -- closed at its origin" if link.closed else "yes"),
+        Field("Origin", "this node" if link.own else _linked_node_label(link_context, link.origin_fingerprint)),
+    ]
+    counts = [
+        f"{len(link.members[kind])} {label}{'' if len(link.members[kind]) == 1 else 's'}"
+        for kind, label in _MEMBER_KIND_LABELS
+    ]
+    rows.append(Field("Listed members", ", ".join(counts)))
+    if link.closed:
+        rows.append(Note(
+            "Its origin closed it. It is a plain local Community here now; its members stay carried, "
+            "and you may keep it or remove it.",
+            color=MUTED_COLOR,
+        ))
+    elif not link.own:
+        rows.append(Note(
+            "Subscribed: members its origin lists are carried and filed here, within the carry caps. A "
+            "member you file under another Community stays where you put it. Its defaults came from its "
+            "origin; your edits to them are local. Removing it leaves the Community: nothing more is "
+            "accepted, and nothing carried is removed.",
+            color=MUTED_COLOR,
+        ))
+    else:
+        rows.append(Note(
+            "Linking, unlinking or moving one of its members sends a new list on the next sync pass. "
+            "Unlink closes it on every node that carries it; they keep its members.",
+            color=MUTED_COLOR,
+        ))
+    return rows
+
+
+async def _link_community_screen(
+    session: Session, lane: DatabaseLane, actor: User, community: Community, link_context: LinkContext,
+) -> None:
+    """`[L]ink this Community` (issue #1310): promote it. Nothing to gather
+    -- the genesis carries the Community's own fields -- so the screen is the
+    one yes/no before a network action."""
+    if not await prompt_yes_no(session, f"Link {community.name!r}, announcing it to other nodes?", default=False):
+        _announce_line(session, "Cancelled.")
+        return
+    try:
+        events = await lane.run(promote_community, community.id, node_identity=link_context.node_identity, actor=actor)
+    except LinkCommunitiesError as exc:
+        _announce_line(session, colored(f"Could not link {community.name!r}: {exc}", fg_color=ERROR_COLOR))
+        return
+    _register_community_events(link_context, events)
+    _announce_line(session, f"{community.name!r} is Linked; it is offered to peers on the next sync pass.")
+
+
+async def _unlink_community_screen(
+    session: Session, lane: DatabaseLane, actor: User, community: Community, link_context: LinkContext,
+) -> None:
+    """`Un[l]ink` (issue #1310, Decision 7): sign the Community's terminal
+    closure. Carriers keep every member; this node's copy stays, local."""
+    await session.write_line(colored(
+        "\r\nUnlinking closes it on every node that carries it, for good; they keep its members. It stays "
+        "here as a local Community.",
+        fg_color=MUTED_COLOR,
+    ))
+    if not await prompt_yes_no(session, f"Unlink {community.name!r}?", default=False):
+        _announce_line(session, "Cancelled.")
+        return
+    closure = await lane.run(close_own_community, community.id, node_identity=link_context.node_identity, actor=actor)
+    if closure is None:
+        _announce_line(session, colored(f"{community.name!r} is not Linked from here.", fg_color=ERROR_COLOR))
+        return
+    _register_community_events(link_context, [closure])
+    _announce_line(session, f"{community.name!r} unlinked; the closure reaches peers on the next sync pass.")
+
+
+def _register_community_events(link_context: LinkContext, events: list[dict]) -> None:
+    """The running node knows this node's own community events, on the
+    event loop, as a linked board's genesis is registered after `link_board`."""
+    from netbbs.link.events import CommunityClosure, CommunityGenesis, event_content_id
+
+    node = link_context.link_node
+    for raw in events:
+        content_id = event_content_id(raw["envelope"])
+        node.known_event_ids.add(content_id)
+        node.events[content_id] = raw
+        object_type = raw["envelope"]["object_type"]
+        if object_type == "community_genesis":
+            node.community_events.record_genesis(CommunityGenesis.from_dict(raw))
+        elif object_type == "community_closure":
+            closure = CommunityClosure.from_dict(raw)
+            node.community_events.closures[closure.payload["community_id"]] = closure
+
+
+async def _delete_community_screen(
+    session: Session, lane: DatabaseLane, actor: User, community: Community, *,
+    link_context: LinkContext | None = None,
+) -> bool:
     """Shows the blast radius before committing (design doc §16's exact
     confirmation wording): how many boards/channels/areas
     will be left without a Community, and how many Community-blanket
@@ -750,11 +912,31 @@ async def _delete_community_screen(session: Session, lane: DatabaseLane, actor: 
         return board_count, channel_count, area_count, door_count, grant_count
 
     board_count, channel_count, area_count, door_count, grant_count = await lane.run(_counts)
+    own_fingerprint = link_context.node_identity.fingerprint if link_context is not None else None
+    link = await lane.run(community_link, community.id, own_fingerprint)
+    linked_here = link is not None and link.own and not link.closed
+    subscribed = link is not None and not link.own and not link.closed
+    if linked_here and link_context is None:
+        # Its closure has to be signed, which needs the running node.
+        _announce_line(session, colored(
+            f"{community.name!r} is Linked from here; remove it from the running node's console, which "
+            "closes it on every node that carries it.",
+            fg_color=ERROR_COLOR,
+        ))
+        return False
+    link_note = ""
+    if linked_here:
+        link_note = " It is Linked: removing it also closes it on every node that carries it; they keep its members."
+    elif subscribed:
+        link_note = (
+            " It is another node's Link Community: removing it leaves it, so nothing more is accepted from it and "
+            "it is not offered again until you restore it under Link status. What is carried stays."
+        )
     await session.write_line(
         colored(
             f"\r\nThis Community has {board_count} message board(s), {channel_count} chat channel(s), "
             f"{area_count} file area(s), {door_count} door(s), and {grant_count} moderator grant(s). Removing it leaves "
-            "those resources without a Community and revokes those grants. This cannot be undone.",
+            "those resources without a Community and revokes those grants. This cannot be undone." + link_note,
             fg_color=MUTED_COLOR,
         )
     )
@@ -766,7 +948,19 @@ async def _delete_community_screen(session: Session, lane: DatabaseLane, actor: 
     if confirmation != community.name:
         _confirmation_refused(session, confirmation, community.name)
         return False
-    await lane.run(delete_community, community, deleted_by=actor)
+    if linked_here:
+        closure = await lane.run(
+            close_own_community, community.id, node_identity=link_context.node_identity, actor=actor,
+        )
+        if closure is not None:
+            _register_community_events(link_context, [closure])
+    if subscribed:
+        def _leave(db: Database) -> None:
+            leave_community(db, community.id, actor=actor, delete=lambda: delete_community(db, community, deleted_by=actor))
+
+        await lane.run(_leave)
+    else:
+        await lane.run(delete_community, community, deleted_by=actor)
     _announce_line(session, f"{community.name!r} deleted.")
     return True
 

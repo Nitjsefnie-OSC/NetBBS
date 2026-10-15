@@ -48,6 +48,7 @@ from netbbs.link.relay_mailbox import (
     RELAY_MAILBOX_RETENTION_DAYS,
     mailbox_holdings,
 )
+from netbbs.link.communities import CarryCaps, LinkCommunitiesError, subscribe_community
 from netbbs.link.carry import (
     EXCLUDED,
     KIND_LABELS,
@@ -772,6 +773,7 @@ _CARRY_REASONS = {
     "sysop": "declined by a SysOp",
     "purged": "deleted here while it was carried, and purged",
     "migrated": "held without a local copy before carry decisions were recorded",
+    "community": "a Community: subscribing to one is always your decision",
 }
 
 
@@ -790,6 +792,8 @@ def _carry_decision_sections(decision: CarryDecision, *, origin_label: str, deci
     if decision.description:
         rows.append(Field("Description", decision.description))
     rows.append(Field("Origin", origin_label))
+    if decision.member_count is not None:
+        rows.append(Field("Listed members", str(decision.member_count)))
     rows.append(Field("Why", _CARRY_REASONS.get(decision.reason, decision.reason)))
     rows.append(Field("Since", decided))
     if decision.state == EXCLUDED and decision.hidden:
@@ -797,9 +801,17 @@ def _carry_decision_sections(decision: CarryDecision, *, origin_label: str, deci
             "Hidden: everything this node had is kept, invisible to callers. Restore brings it back "
             "exactly as it was; Purge deletes it for good."
         ))
+    elif decision.state == EXCLUDED and decision.kind == "communities":
+        rows.append(Note("Left. Restore subscribes to it again; what it lists is carried within the caps."))
     elif decision.state == EXCLUDED:
         rows.append(Note("Nothing is kept here. Restore takes it on again from its origin."))
-    if decision.state == OFFERED:
+    if decision.state == OFFERED and decision.kind == "communities":
+        rows.append(Note(
+            "Accepting subscribes: a local copy of the Community is created now, and the message boards, "
+            "chat channels and file areas it lists -- now and later -- are carried and filed in it, within "
+            "the carry caps. One past a cap waits here. Excluding a member keeps it out."
+        ))
+    elif decision.state == OFFERED:
         rows.append(Note(
             "Accepting carries it here: a local copy is created now and its content arrives with "
             "the next sync passes. The carry cap limits only what arrives on its own, not what "
@@ -843,7 +855,10 @@ async def _carry_decisions_screen(
                 session, decisions,
                 name_of=lambda d: d.name,
                 stable_id_of=lambda d: d.ref,
-                description_of=lambda d: f"{KIND_LABELS[d.kind]} from {_origin_label(d.origin_fingerprint)}",
+                description_of=lambda d: (
+                f"{KIND_LABELS[d.kind]} from {_origin_label(d.origin_fingerprint)}"
+                + (f", {d.member_count} member{'' if d.member_count == 1 else 's'}" if d.member_count is not None else "")
+            ),
                 title=title if total <= len(decisions) else f"{title} (newest {len(decisions)} of {total})", own=True,
                 empty_message="Nothing here.",
                 redraw_in_place=chrome.redraw_in_place,
@@ -877,12 +892,35 @@ async def _carry_decisions_screen(
                 redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
                 help_title="Carry help",
                 help_about=(
-                    "A board, file area or channel another node offers to share with this one. Accepting starts "
-                    "carrying it here; excluding turns the offer away."
+                    "A board, file area, channel or Community another node offers to share with this one. "
+                    "Accepting starts carrying it here -- for a Community, subscribing to what it lists; "
+                    "excluding turns the offer away."
                 ),
             )
             message = None
-            if choice == "a":
+            if choice in ("a", "r") and selected.kind == "communities":
+                # Issue #1310: accepting -- or restoring -- a Community is
+                # subscribing to it, bounded by this node's carry caps.
+                config = link_context.link_config
+                caps = CarryCaps(
+                    boards=config.max_carried_boards if config is not None else None,
+                    channels=config.max_carried_channels if config is not None else None,
+                    file_areas=config.max_carried_file_areas if config is not None else None,
+                    own_fingerprint=link_context.node_identity.fingerprint,
+                    max_remote_files_per_area=config.max_remote_files_per_area if config is not None else None,
+                )
+                try:
+                    await lane.run(subscribe_community, selected.resource_id, actor=actor, caps=caps)
+                except LinkCommunitiesError as exc:
+                    _announce_line(session, colored(f"Could not subscribe to {selected.name!r}: {exc}", fg_color=ERROR_COLOR))
+                else:
+                    _announce_line(
+                        session,
+                        f"Subscribed to {selected.name!r}; its members are filed under it as they are carried.",
+                    )
+                    if not await lane.run(list_carry_decisions, state):
+                        return
+            elif choice == "a":
                 try:
                     await lane.run(
                         accept_offer, selected.kind, selected.resource_id, actor=actor,

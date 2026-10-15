@@ -1654,7 +1654,7 @@ async def _content_menu(
             await _draw_content_menu(session, stats=stats)
         elif choice == "t":
             await session.write_line("")
-            await _community_menu(session, lane, actor)
+            await _community_menu(session, lane, actor, link_context=link_context)
             stats = await lane.run(_load_stats)
             await _draw_content_menu(session, stats=stats)
         elif choice == "g":
