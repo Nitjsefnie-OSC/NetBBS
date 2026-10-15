@@ -16,12 +16,8 @@ from netbbs.auth.users import SYSOP_LEVEL, create_user
 from netbbs.chat.channels import create_channel
 from netbbs.communities import create_community
 from netbbs.files.areas import create_file_area
-from netbbs.net.admin_flow import (
-    _AREA_COLUMNS,
-    _CHANNEL_COLUMNS,
-    _area_description,
-    _channel_description,
-)
+from netbbs.net.admin_chat import _CHANNEL_COLUMNS, _channel_description
+from netbbs.net.admin_files import _AREA_COLUMNS, _area_description
 from netbbs.net.admin_boards import (
     _BOARD_COLUMNS,
     _COMMUNITY_COLUMNS,

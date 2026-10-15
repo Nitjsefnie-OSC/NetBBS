@@ -3078,7 +3078,7 @@ def test_create_file_area_screen_fits_a_real_80x24_terminal(db, lane, sysop):
     # terminal above -- _area_field_specs is "identical shape" to
     # _board_field_specs (that module's own docstring), so it hit the
     # exact same overflow.
-    from netbbs.net.admin_flow import _area_screen
+    from netbbs.net.admin_files import _area_screen
 
     session = FakeSession(["b"])
     asyncio.run(_area_screen(session, lane, sysop, existing=None))
@@ -3092,7 +3092,7 @@ def test_create_file_area_screen_fits_a_real_80x24_terminal(db, lane, sysop):
 def test_create_channel_screen_fits_a_real_80x24_terminal(db, lane, sysop):
     # Same regression as test_create_board_screen_fits_a_real_80x24_
     # terminal above, for the third dense sectioned screen.
-    from netbbs.net.admin_flow import _channel_screen
+    from netbbs.net.admin_chat import _channel_screen
 
     session = FakeSession(["b"])
     asyncio.run(_channel_screen(session, lane, sysop, existing=None))
@@ -3111,7 +3111,8 @@ def test_area_and_channel_screens_fit_80x24_and_the_board_screen_80x25(db, lane,
     # that path, not the newer pagination one, now that both exist.
     # Only a screen the *un*paginated fit-check actually rejects should
     # ever show the "Section N of M" hint.
-    from netbbs.net.admin_flow import _area_screen, _channel_screen
+    from netbbs.net.admin_chat import _channel_screen
+    from netbbs.net.admin_files import _area_screen
     from netbbs.net.admin_boards import _board_screen
 
     # The board screen gained "Color in posts" (issue #711), one row past

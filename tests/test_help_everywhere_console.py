@@ -23,6 +23,7 @@ from netbbs.link.trust import (
     register_subject,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_files
 from netbbs.net import admin_boards
 from netbbs.net import admin_system
 from netbbs.net import admin_moderation
@@ -154,7 +155,7 @@ def test_the_pending_file_screen_has_help(db, lane, sysop):
 def test_the_expired_file_screen_has_help(db, lane, sysop):
     entry, area = _pending_file(db, sysop)
     session = FakeSession([H, " ", "b"])
-    asyncio.run(admin_flow._expired_file_screen(session, lane, sysop, entry, area))
+    asyncio.run(admin_files._expired_file_screen(session, lane, sysop, entry, area))
     text = _visible(_written_text(session))
     _assert_help_then_redraw(text, "Expired file help", "expired", "Return to the expired list")
 
