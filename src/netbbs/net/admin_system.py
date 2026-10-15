@@ -64,6 +64,9 @@ from netbbs.config import (
     get_mail_min_level,
     MAIL_MIN_LEVEL_CONFIG_KEY,
     MAX_MAIL_MIN_LEVEL,
+    CROSSPOST_BOARD_LIMIT_CONFIG_KEY,
+    MAX_CROSSPOST_BOARD_LIMIT,
+    get_crosspost_board_limit,
     is_node_display_name_placeholder,
     set_config_without_commit,
     set_node_display_name,
@@ -1663,6 +1666,7 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
             "scrollback": get_scrollback_limit(db),
             "map_level": get_node_map_min_level(db),
             "mail_level": get_mail_min_level(db),
+            "crosspost_boards": get_crosspost_board_limit(db),
         }
 
     current = await lane.run(_load)
@@ -1767,6 +1771,18 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
                 "every guest shares its mailbox."
             ),
         ),
+        FieldSpec(
+            key="crosspost_boards",
+            label="Cross-post boards",
+            render=lambda d: "off" if d["crosspost_boards"] == 1 else f"up to {d['crosspost_boards']} boards",
+            prompt=_int_field("crosspost_boards", "Boards"),
+            brief="Most boards one post may go to", section="Message boards",
+            help=(
+                "The most message boards a caller may send one new post to with [T]o boards on its review "
+                f"screen, the board it was written on included (1-{MAX_CROSSPOST_BOARD_LIMIT}; 1 turns "
+                "cross-posting off). Each board gets its own copy, so this bounds what one post writes."
+            ),
+        ),
     ]
 
     async def save(draft: dict) -> list[str]:
@@ -1778,6 +1794,7 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
             "scrollback": draft["scrollback"],
             "map_level": draft["map_level"],
             "mail_level": draft["mail_level"],
+            "crosspost_boards": draft["crosspost_boards"],
         }
         # Checked here, before anything is written, so one bad value
         # cannot leave the others half saved; the setters check again.
@@ -1793,6 +1810,8 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
             raise _LimitsError(f"Node map level must be 0-{MAX_NODE_MAP_MIN_LEVEL}.")
         if not 0 <= values["mail_level"] <= MAX_MAIL_MIN_LEVEL:
             raise _LimitsError(f"Mail level must be 0-{MAX_MAIL_MIN_LEVEL}.")
+        if not 1 <= values["crosspost_boards"] <= MAX_CROSSPOST_BOARD_LIMIT:
+            raise _LimitsError(f"Cross-post boards must be 1-{MAX_CROSSPOST_BOARD_LIMIT}.")
         changed = [key for key in values if values[key] != current[key]]
 
         config_keys = {
@@ -1802,6 +1821,7 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
             "scrollback": SCROLLBACK_LIMIT_CONFIG_KEY,
             "map_level": NODE_MAP_MIN_LEVEL_CONFIG_KEY,
             "mail_level": MAIL_MIN_LEVEL_CONFIG_KEY,
+            "crosspost_boards": CROSSPOST_BOARD_LIMIT_CONFIG_KEY,
         }
 
         def _persist(db: Database) -> None:

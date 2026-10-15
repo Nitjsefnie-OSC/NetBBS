@@ -4528,6 +4528,16 @@ MIGRATIONS = [
     ),
     Migration(
         description=(
+            "Issue #1298: cross-posting -- posts.crosspost_group ties the copies of one post on "
+            "several boards (a carried copy's group is '<id>@<home node fingerprint>')."
+        ),
+        sql="""
+        ALTER TABLE posts ADD COLUMN crosspost_group TEXT;
+        CREATE INDEX idx_posts_crosspost_group ON posts(crosspost_group) WHERE crosspost_group IS NOT NULL;
+        """,
+    ),
+    Migration(
+        description=(
             "Issue #1299/#1332: board polls -- a post with side tables, keyed by its root post "
             "(`posts.root_post_id`), as #842's `post_file_refs` are keyed by a revision. "
             "`board_polls` holds the choice mode (`max_choices`, 1 for one answer), the closing "

@@ -9,6 +9,7 @@ class Terminal {
   write(data) { this.output += data; }
   resize(cols, rows) { this.cols = cols; this.rows = rows; }
   onData(callback) { this.input = callback; }
+  onBell() {}
 }
 class WebSocket {
   static OPEN = 1;
@@ -20,8 +21,9 @@ vm.runInNewContext(fs.readFileSync(process.argv[2], 'utf8'), {
   Terminal, WebSocket, TextDecoder, Uint8Array,
   atob: value => Buffer.from(value, 'base64').toString('binary'),
   FitAddon: {FitAddon: class {fit() {fits++; term.resize(120, 40);}}},
-  document: {getElementById() {return {}; }},
-  window: {location: {protocol: 'https:', host: 'example.test'}, addEventListener(_, fn) {resize = fn;}}
+  document: {getElementById() {return {}; }, addEventListener() {}},
+  window: {location: {protocol: 'https:', host: 'example.test'},
+           addEventListener(name, fn) { if (name === 'resize') resize = fn; }}
 });
 const receive = value => socket.onmessage({data: JSON.stringify(value)});
 receive({type:'door_mode', active:true, stream:1, cols:80, rows:25, encoding:'cp437'});

@@ -14,7 +14,7 @@ result formatting helpers that exist only to serve them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from netbbs.activity import (
     board_read_cursor,
@@ -24,6 +24,7 @@ from netbbs.activity import (
     unfollow,
     mark_board_read,
     unread_channel_count,
+    unread_crosspost_groups,
     unread_file_count,
     unread_post_count,
     unread_replies_to,
@@ -234,6 +235,16 @@ async def _new_scan_screen(
         # Followed items first; a stable sort preserves each source
         # list's own order (the SysOp's, issue #839) within both groups.
         items.sort(key=lambda item: not item.followed)
+        # A cross-post (issue #1298) is one message on several boards: its
+        # unread copies count once, on the first board listed that has one.
+        counted_groups: set[str] = set()
+        for index, item in enumerate(items):
+            if item.board is None or not item.unread:
+                continue
+            groups = unread_crosspost_groups(db, user, item.board)
+            if groups & counted_groups:
+                items[index] = replace(item, unread=item.unread - len(groups & counted_groups))
+            counted_groups |= groups
         # Only replies on boards this caller may still read: [R]eplies opens
         # the board, and a board whose gate was raised since would refuse
         # them there (review on #869).

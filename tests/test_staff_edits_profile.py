@@ -36,12 +36,12 @@ from netbbs.storage.execution import DatabaseLane
 from tests.test_directory_ui import FakeSession, squeezed
 
 # Profile's fields are numbered straight through its four sections.
-_DESCRIPTIONS = ["1", "4"]
-_ANIMATIONS = ["1", "6"]
-_CHARSET = ["1", "7"]
+_DESCRIPTIONS = ["1", "5"]
+_ANIMATIONS = ["1", "7"]
+_CHARSET = ["1", "8"]
 _BIO = ["0", "1"]
 _BLOCKED = ["0", "7"]
-_SSH_KEYS = ["2", "3"]
+_SSH_KEYS = ["2", "4"]
 
 
 @pytest.fixture
@@ -209,8 +209,8 @@ def test_a_members_character_set_never_reaches_the_sysops_session(db, lane, syso
 # -- the guest defaults -----------------------------------------------------------
 
 # On the guest defaults, Name & details and read receipts are left out, so
-# Menu descriptions is the twelfth field.
-_GUEST_DESCRIPTIONS = ["1", "2"]
+# Menu descriptions is the thirteenth field.
+_GUEST_DESCRIPTIONS = ["1", "3"]
 
 
 def test_the_guest_defaults_leave_out_what_a_shared_account_has_no_use_for(db, lane, sysop, alice):

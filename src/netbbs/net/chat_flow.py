@@ -150,6 +150,18 @@ from netbbs.chat import (
     unmute_user,
 )
 from netbbs.chat.categories import Category, get_category_by_id, list_subcategories, list_top_level_categories
+from netbbs.chat.bell import (
+    BEL,
+    BELL_LEVEL_LABELS,
+    BELL_LEVELS,
+    DEFAULT_BELL_LEVEL,
+    bell_level,
+    mentions_any,
+    rings_for_mentions,
+    rings_for_private,
+    session_bell_limiter,
+    set_bell_level,
+)
 from netbbs.age_requirement import age_verification_refusal, name_verification_refusal
 from netbbs.communities import (
     get_community,
@@ -246,6 +258,7 @@ from netbbs.rendering import (
     screen_title,
     set_scroll_region,
     status_badge,
+    strip_ansi,
     truncate,
     visible_width,
     wrap_to_width,
@@ -1699,6 +1712,34 @@ def _colored_around(prefix: str, middle: str, suffix: str, *, fg_color: int, bol
     )
 
 
+def _mention_bell_sender(db: Database, channel: Channel, viewer: User, message: ChannelMessage) -> str | None:
+    """Who a mention bell for `message` is charged to, or `None` when the
+    line does not ring for `viewer` (issue #1302): a person's line or
+    action that names the viewer -- username or current alias, a whole
+    word, any case, `@` or not -- for a viewer whose bell takes mentions.
+    The viewer's own lines, bots' and doors' lines never ring."""
+    if message.kind not in ("message", "action") or not message.body:
+        return None
+    if message.author_kind == "bot" or bot_origin(db, message) is not None:
+        return None
+    if not bot_message_visible(db, channel, message) or _is_door_line(db, message):
+        return None
+    link_author = _link_author(db, message)
+    if (
+        link_author is None and message.external_source is None
+        and message.author_label.casefold() == viewer.username.casefold()
+    ):
+        return None  # the viewer's own line, from another of their sessions
+    body = strip_pipe_codes(message.body) if message.external_source == "mrc" else message.body
+    if not mentions_any(sanitize_text(body), (viewer.username, get_nick(db, viewer))):
+        return None
+    if not rings_for_mentions(bell_level(db, viewer)):
+        return None
+    if link_author is not None:
+        return f"link:{link_author[0]}@{link_author[1]}"
+    return f"{message.external_source or 'local'}:{message.author_label}"
+
+
 def _render_channel_message(
     db: Database, channel: Channel, viewer: User, message: ChannelMessage, *, self_message: bool = False
 ) -> str:
@@ -2413,7 +2454,9 @@ async def _deliver_private_message(ctx: ChatCommandContext, target: User, body: 
     live = await ctx.lane.run(_find_live_participants, ctx.hub, target.username)
     live_session_keys = {pid.session_key for _channel_name, pid in live}
     for channel_name, pid in live:
-        await ctx.hub.send_to(channel_name, pid, _TimestampedNotice(notice, created_at))
+        await ctx.hub.send_to(
+            channel_name, pid, _TimestampedNotice(notice, created_at, ring=f"local:{ctx.user.username}"),
+        )
 
     if ctx.session_registry is not None:
         for target_session in ctx.session_registry.sessions_for_username(target.username):
@@ -2973,10 +3016,16 @@ class _TimestampedNotice:
     events outside this scope (e.g. `/topic`/`/nick` notices): a shared
     string can't reflect a
     per-recipient decision.
+
+    `ring` is the explicit bell flag (issue #1302): the sender a private
+    message is from, for the receiving session's bell limiter, or `None`
+    for a notice that never rings. `daybreak` broadcasts this same class
+    to everyone, so the class alone must never decide a bell.
     """
 
     text: str
     created_at: str
+    ring: str | None = None
 
 
 def _humanize_duration(duration: datetime.timedelta) -> str:
@@ -3541,6 +3590,29 @@ async def _handle_timestamps(ctx: ChatCommandContext, args: str) -> None:
     await ctx.lane.run(set_timestamps_enabled, ctx.user, new_state)
     state = "on" if new_state else "off"
     await ctx.session.write_line(colored(f"Chat timestamps are now {state}.", fg_color=MUTED_COLOR))
+
+
+async def _handle_bell(ctx: ChatCommandContext, args: str) -> None:
+    """`/bell [off|private|mentions]` (issue #1302): the caller's chat bell
+    level, the same setting as Profile > Communication. Unlike `/timestamps`
+    a bare `/bell` only shows the level: there are three, and nothing on
+    screen says which one is set."""
+    choice = args.strip().lower()
+    if not choice:
+        level = await ctx.lane.run(bell_level, ctx.user)
+        await ctx.session.write_line(colored(
+            f"Chat bell: {level} ({BELL_LEVEL_LABELS[level]}). /bell off, /bell private or "
+            "/bell mentions changes it.",
+            fg_color=MUTED_COLOR,
+        ))
+        return
+    if choice not in BELL_LEVELS:
+        await _show_usage(ctx.session, "bell")
+        return
+    await ctx.lane.run(set_bell_level, ctx.user, choice)
+    await ctx.session.write_line(
+        colored(f"Chat bell is now {choice} ({BELL_LEVEL_LABELS[choice]}).", fg_color=MUTED_COLOR)
+    )
 
 
 # -- discovery (design doc) ------------------
@@ -4641,6 +4713,11 @@ _COMMAND_INFO: dict[str, tuple[str, str]] = {
     "clear": ("/clear", "Clear your own screen (alias: /cls). Cosmetic only, nothing else changes."),
     "away": ("/away [message]", "Mark yourself away, or clear away status."),
     "timestamps": ("/timestamps [on|off]", "Toggle chat timestamps, or set them on/off explicitly."),
+    "bell": (
+        "/bell [off|private|mentions]",
+        "Show when chat rings your terminal's bell, or set it: never, for private messages "
+        "(the default), or also when someone names you.",
+    ),
     "mute": ("/mute <user> [duration] [reason]", "Silence a user's messages in this chat channel."),
     "unmute": ("/unmute <user>", "Lift a mute."),
     "ban": ("/ban <user> [duration] [reason]", "Bar a user from this chat channel."),
@@ -4689,6 +4766,7 @@ _COMMANDS: dict[str, CommandHandler] = {
                             # documented name for the same command.
     "away": _handle_away,
     "timestamps": _handle_timestamps,
+    "bell": _handle_bell,
     "mute": _handle_mute,
     "unmute": _handle_unmute,
     "ban": _handle_ban,
@@ -6000,14 +6078,18 @@ async def _chat_loop(
                 accent_color=accent_color, unicode_style=unicode_style,
             )
 
-        async def deliver(text: str, *, repaint_status: bool = False) -> None:
+        async def deliver(text: str, *, repaint_status: bool = False, ring: str | None = None) -> None:
             """
             Routes through the pinned-row-aware print-and-redraw path
-            when the pinned UI is active.
+            when the pinned UI is active. `ring` is the sender of a line
+            that rings this caller's bell (issue #1302), already checked
+            against their level.
             """
-            await deliver_many((text,), repaint_status=repaint_status)
+            await deliver_many((text,), repaint_status=repaint_status, ring=ring)
 
-        async def deliver_many(texts: Sequence[str], *, repaint_status: bool = False) -> None:
+        async def deliver_many(
+            texts: Sequence[str], *, repaint_status: bool = False, ring: str | None = None,
+        ) -> None:
             """`deliver` for several lines that belong together (a page of
             the hub's answer): one lock acquisition, so nothing lands
             between them."""
@@ -6017,6 +6099,8 @@ async def _chat_loop(
                     view.offset = 0
                     for text in texts:
                         await session.write_line(text)
+                    if ring is not None:
+                        await _ring_bell(session, ring)
                     return
                 if view.offset and (height, session.terminal_width) != (view.height, view.width):
                     await view_live(height)  # a resize ends the scrolled view
@@ -6038,8 +6122,22 @@ async def _chat_loop(
                         unicode_style=pinned_ui.unicode_style, truecolor=pinned_ui.truecolor,
                         mrc_bridge=mrc_bridge,
                     )
+                if ring is not None and not view.offset:
+                    # Never while the scrollback pager is open: the caller
+                    # is reading, and the line waits there, counted.
+                    await _ring_bell(session, ring)
+
+        async def ring_private(sender: str) -> None:
+            """A notice that came through `pinned_notice_hook` and rings at
+            the private level (a `/dm` invitation, issue #1302)."""
+            if not rings_for_private(await lane.run(bell_level, user)):
+                return
+            async with lock:
+                if not view.offset:
+                    await _ring_bell(session, sender)
 
         session.pinned_notice_hook = deliver
+        session.chat_bell_hook = ring_private
         hub_reply = _HubReplyBlock(asyncio.get_running_loop().time)
         view = _ScrollView()
 
@@ -6192,7 +6290,8 @@ async def _chat_loop(
                     rendered = await lane.run(_render_channel_message, channel, user, message, self_message=False)
                     if not rendered:
                         continue
-                    await deliver(rendered, repaint_status=True)
+                    ring = await lane.run(_mention_bell_sender, channel, user, message)
+                    await deliver(rendered, repaint_status=True, ring=ring)
                     continue
                 if isinstance(message, _TimestampedNotice):
                     # The one remaining use of this wrapper now that
@@ -6204,7 +6303,10 @@ async def _chat_loop(
                     # message can arrive while the status line is showing
                     # something now-stale (e.g. an away reminder).
                     rendered = await lane.run(format_with_preference, user, message.text, message.created_at)
-                    await deliver(rendered, repaint_status=True)
+                    ring = message.ring
+                    if ring is not None and not rings_for_private(await lane.run(bell_level, user)):
+                        ring = None
+                    await deliver(rendered, repaint_status=True, ring=ring)
                     continue
                 if isinstance(message, MrcNotice):
                     # Issue #298: hub chatter, broadcasts and command replies
@@ -6213,16 +6315,20 @@ async def _chat_loop(
                     # shared pre-colored string.
                     rendered = await lane.run(_render_mrc_notice, user, message)
                     if message.kind == "private":
-                        # Issue #305: a private line rings the bell, like every
-                        # reference client, and the first one in a session
+                        # Issue #305: the first private line in a session
                         # comes with what "private" means on that network.
-                        rendered = "\x07" + rendered
                         if mrc_session_state is not None and not mrc_session_state.get("private_noted"):
                             mrc_session_state["private_noted"] = True
                             await deliver(colored(_MRC_PRIVATE_NOTE, fg_color=MUTED_COLOR))
+                    # A private line rings, like every reference client,
+                    # but by its own flag and the caller's level (issue
+                    # #1302), not a BEL inside the line.
+                    ring = message.ring
+                    if ring is not None and not rings_for_private(await lane.run(bell_level, user)):
+                        ring = None
                     # Multi-line command replies do not change occupancy;
                     # the clock loop refreshes cached MRC counts separately.
-                    await deliver(rendered, repaint_status=message.kind != "reply")
+                    await deliver(rendered, repaint_status=message.kind != "reply", ring=ring)
                     continue
                 if isinstance(message, QueueOverflowNotice):
                     # GitHub issue #31: this session's own queue overflowed
@@ -6877,6 +6983,7 @@ async def _chat_loop(
         # notice call back into closures capturing this session's own
         # now-defunct `lock`/`live_buffer`/`channel`/`user`.
         session.pinned_notice_hook = None
+        session.chat_bell_hook = None
         session.line_transcript = None
         # `pinned_ui.active` (GitHub issue #46), not the entry-time
         # `pinned_ui_enabled` local -- a resize during the session may
@@ -7021,6 +7128,29 @@ def _render_direct_chat_status_line(
     return groups
 
 
+async def _ring_bell(session: Session, sender: str) -> None:
+    """Ring `session`'s bell for a line from `sender` that has already been
+    written, if its limiter allows (issue #1302). A separate write, never
+    part of the line, so it is in no transcript and no replay. Callers
+    have checked the level and that the scrollback pager is shut."""
+    if session_bell_limiter(session).allow(sender):
+        await session.write(BEL)
+
+
+def _direct_chat_mention(
+    message: object, other_user: User, user: User, nick: str | None, level: str,
+) -> str | None:
+    """The sender a direct-chat line rings for, at the mentions level, when
+    the other side's line names the caller (issue #1302). The line is
+    already rendered as `label: body`; only the body is searched."""
+    if not isinstance(message, str) or not rings_for_mentions(level):
+        return None
+    _label, _sep, body = strip_ansi(message).partition(": ")
+    if not mentions_any(body, (user.username, nick)):
+        return None
+    return f"local:{other_user.username}"
+
+
 def _render_direct_chat_message(label: str, body: str, *, self_message: bool, accent: int = ACCENT_COLOR) -> str:
     """Render a direct-chat line as independently sanitized/styled
     identity and body spans.
@@ -7134,10 +7264,17 @@ async def run_direct_chat_loop(
     accent_color: int = ACCENT_COLOR,
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
     truecolor: bool | None = None,
+    bell: str = DEFAULT_BELL_LEVEL,
+    nick: str | None = None,
 ) -> None:
     """
     Real-time 1:1 direct chat, until either side types `/close`, the
     connection drops, or the other side leaves first.
+
+    `bell` is the caller's chat bell level and `nick` their alias, read by
+    whoever opened it (issue #1302): a `/dm` invitation from someone else
+    rings at the private level, and the other side's line naming the
+    caller at the mentions level.
     """
     effective_tc = getattr(session, "supports_truecolor", False) if truecolor is None else truecolor
     room = f"{_DM_CHANNEL_PREFIX}{room_token}"
@@ -7189,20 +7326,28 @@ async def run_direct_chat_loop(
                 unicode_style=unicode_style,
             )
 
-        async def deliver(text: str) -> None:
+        async def deliver(text: str, *, ring: str | None = None) -> None:
             """Same shape as `_chat_loop`'s own `deliver` closure."""
             async with lock:
                 height = await pinned_ui.sync(session, user, other_user, presence, live_buffer)
                 if height is None:
                     await session.write_line(text)
-                    return
-                await _print_and_redraw_input(
-                    session, text, live_buffer, height,
-                    accent_color=pinned_ui.accent_color,
-                    unicode_style=pinned_ui.unicode_style,
-                )
+                else:
+                    await _print_and_redraw_input(
+                        session, text, live_buffer, height,
+                        accent_color=pinned_ui.accent_color,
+                        unicode_style=pinned_ui.unicode_style,
+                    )
+                if ring is not None:
+                    await _ring_bell(session, ring)
+
+        async def ring_private(sender: str) -> None:
+            if rings_for_private(bell):
+                async with lock:
+                    await _ring_bell(session, sender)
 
         session.pinned_notice_hook = deliver
+        session.chat_bell_hook = ring_private
 
         async def receive_loop() -> None:
             while True:
@@ -7230,7 +7375,7 @@ async def run_direct_chat_loop(
                 # the way _chat_loop's ChannelMessage handling needs one
                 # (no scrollback replay to stay consistent with -- see
                 # this function's own docstring).
-                await deliver(message)
+                await deliver(message, ring=_direct_chat_mention(message, other_user, user, nick, bell))
 
         async def send_loop() -> None:
             while True:
@@ -7299,6 +7444,7 @@ async def run_direct_chat_loop(
                 pass
     finally:
         session.pinned_notice_hook = None
+        session.chat_bell_hook = None
         session.line_transcript = None
         if pinned_ui is not None and pinned_ui.active:
             try:
@@ -7396,6 +7542,7 @@ async def run_direct_chat_invite_flow(
                 "Go back to the main menu within a minute to answer. ***",
                 fg_color=ALERT_COLOR, bold=True,
             ),
+            ring=f"local:{user.username}",
         )
 
     future_to_session = {invite.outcome: target_session for target_session, invite in invites.items()}
@@ -7499,6 +7646,8 @@ async def run_direct_chat_invite_flow(
             collapsed=await lane.run(breadcrumb_collapsed_enabled, user),
             accent_color=await lane.run(effective_accent_color_256),
             header_color=await lane.run(effective_header_color_256),
+            bell=await lane.run(bell_level, user),
+            nick=await lane.run(get_nick, user),
         )
         return True
     elif outcome == "declined":

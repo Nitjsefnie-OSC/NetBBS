@@ -2947,11 +2947,25 @@ carried exactly as written and filtered on output
   (carried over the Link, or written by another client) still shows it through
   the filter above.
 
-Cross-posting one message to several boards (one copy per board, tied by a
-group id) and polls on boards are decided in §16, "Issue #1298 —
-cross-posting a message to several boards" and "Issue #1299 — polls on
-message boards", and not yet built. Until then a post belongs to exactly one
-board and is text only.
+- **Cross-posting** (issue #1298, decided in §16): a new post, prose or art,
+  can go to several boards at once from `[T]o boards` on its review screen. It
+  is written as one ordinary copy per board, each with its own content id,
+  replies, moderation, pinning, removal, edits and withdrawal, tied by the
+  nullable `posts.crosspost_group` on each root (a bare id here, `<id>@<home
+  node fingerprint>` for carried copies). The picker lists the boards the
+  caller may read, the current one ticked and fixed; a board they cannot post
+  on -- level, verified name, age, closed, the Link posting setting, or no
+  color for an art post -- is muted with the reason and cannot be ticked. A
+  node-wide cap, 5 by default and set in the console's Limits & retention,
+  counts the current board; the picker refuses a tick past it with a line
+  naming it. At `[P]ost` every board is checked before any copy is written
+  (`require_write_gate`, `posting_refusal`, closed or hidden, the length
+  limits with a Linked board's file lines counted), and the copies are
+  written in one transaction; a refusal names the board on the review screen
+  and posts nothing. A reply or an edit is never cross-posted.
+
+Polls on boards are decided in §16, "Issue #1299 — polls on message boards",
+and not yet built. Until then a post is text only.
 
 ### 6.2 File areas
 
@@ -3150,9 +3164,13 @@ Local chat includes bounded persistent channel scrollback, presence, away
 state, invitations/membership, `/who`, `/whois`, `/names`, `/list`, `/join`,
 `/leave`, `/topic`, completion, and online private conversation.
 
-Audible bells for private messages and mentions, with a per-caller level and
-a tone in the web client, are decided in §16, "Issue #1302 — audible chat
-bells", and not yet built. Until then only an MRC private line rings.
+Chat rings the caller's bell for private messages and, if they choose, for
+lines naming them: a per-caller level (`off`, `private`, the default, or
+`mentions`) set in Profile → Communication or with `/bell`, a per-session
+rate limit, and a tone in the web client. §16, "Issue #1302 — audible chat
+bells", is the normative answer (issue #1333 built it). The bell is decided
+by an explicit flag on what the hub delivers and written as its own `\x07`
+after the line, so no line, transcript or replay carries it.
 
 Chat's input row -- in a channel, an MRC room and a direct chat -- scrolls a
 line wider than the terminal within the row, with `<` and `>` marking text out
@@ -4491,6 +4509,16 @@ narrow it. Within new scan, a dedicated "replies to you" pass (described
 above) runs across every board regardless of follow state, since a reply is
 always worth surfacing.
 
+A cross-post (issue #1298) is one message on several boards. Opening one copy
+marks the copies the caller can see on this node read too
+(`record_post_opened` on each), on boards the caller has visited: a board
+never visited keeps having no baseline, rather than having its backlog
+counted read by a visit elsewhere. New scan counts a group's unread copies once,
+on the first board in its list that has one. A reply is never cross-posted,
+so "replies to you" already lists each reply once. `search_posts` lists it once, by the first copy the caller can
+open. A copy's byline says "also in X, Y", naming only the boards of the
+other copies the reader can open.
+
 Selecting an item from new scan jumps directly into that resource
 pre-positioned at the first unread item — mechanically, calling the
 resource's own existing keyset-pagination entry point with `after=` set to
@@ -4795,6 +4823,12 @@ per board. Nothing is mapped by default.
     `^AREPLY`, `^APID`, `^ATZUTC` and `^ACHRS`;
   - a tear line and an Origin line;
   - SEEN-BY and `^APATH` as FTS-0004 sets them.
+
+  A copy of a cross-post (issue #1298) is its own message with its own
+  `^AMSGID`, and its first body line is `* Crossposted in <ECHO>, <ECHO>`,
+  naming the other echoes of the same network that get a copy. It names no
+  local board, Linked board or other network's echo, and is left out when
+  there is no other echo on the network.
 
   A post that arrived from FTN is never exported again. SEEN-BY and PATH on
   tossed messages are kept intact, so loop detection works.
@@ -6415,6 +6449,15 @@ A post drawn in the ANSI art editor carries an optional `"layout": "art"` in its
 `board_post` payload. The key is omitted for prose, and an absent or unknown
 value is prose. Edits carry no layout: a revision follows its root (§16, issue
 #711).
+
+Each Linked copy of a cross-post (issue #1298) is its own `board_post` with an
+optional `"crosspost": "<group id>"`, omitted for an ordinary post and never
+on a reply. A node that predates it keeps and relays the signed bytes and
+shows the copy as an ordinary post, so there is no protocol bump. A node that
+carries two copies of one group ties them locally under `<id>@<home node
+fingerprint>`, the author's home node scoping the id so no other node's
+group can share it; an id longer than 64 characters or outside
+`[A-Za-z0-9_-]` is not stored.
 
 Self-authored edits become chained `board_post_edit` events. The original post
 remains immutable. Moderator edits and tombstones require separate authorized
@@ -15405,17 +15448,17 @@ which have no way to carry one.
 
 ### Issue #1302 — audible chat bells — decided
 
-A caller in another window should notice when chat needs them. Only one thing
-rings today: an MRC private line, which the receive loop in `chat_flow`
-prefixes with `\x07` (#305). A native `/msg` or `/private`
+A caller in another window should notice when chat needs them. Before this
+(built in #1333), only one thing rang: an MRC private line, which the receive
+loop in `chat_flow` prefixed with `\x07` (#305). A native `/msg` or `/private`
 (`_deliver_private_message`, delivered as a `_TimestampedNotice` through
 `ChatHub.send_to`), a Link direct message (`link_direct`), a `/dm` invitation
-and a mention of one's name are silent. `_TimestampedNotice` cannot mark a bell:
+and a mention of one's name were silent. `_TimestampedNotice` cannot mark a bell:
 `daybreak` broadcasts one to everyone each day. Remote text already arrives
 without BEL (`sanitize_text` strips every control character), and the PgUp
 scrollback pager strips it from replayed lines (`_REPLAY_CONTROLS`). The web
-client (`netbbs-terminal.js`, xterm.js 6.0.0) has no bell handling, so a web
-caller hears nothing.
+client (`netbbs-terminal.js`, xterm.js 6.0.0) had no bell handling, so a web
+caller heard nothing.
 
 **Decision 1 — three levels, private by default.** A per-caller preference:
 `off`, `private`, or `private and mentions`.

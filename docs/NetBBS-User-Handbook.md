@@ -183,6 +183,7 @@ instead.
 
 In this chapter: [Read and reply](#read-and-reply) ·
 [Point a post at files](#point-a-post-at-files) ·
+[Post to several boards](#post-to-several-boards) ·
 [The line editor](#the-line-editor) ·
 [The fullscreen editor](#the-fullscreen-editor) ·
 [Drafts](#drafts-come-back-where-you-started) ·
@@ -240,6 +241,37 @@ by Zmodem, or with a browser link where your terminal has no Zmodem.
   file, its size, its file area and this BBS at the end of the post, not a
   download.
 - A draft keeps the text, not the files.
+
+#### Post to several boards
+
+A new post can go to more than one board at once -- a question that belongs
+in two places, say. Replies and edits always stay on one board.
+
+1. On the review screen press <kbd>T</kbd> **To boards**.
+2. Tick each board the post should go to, and press <kbd>B</kbd> **Back**.
+
+The board you wrote it on is always ticked. A row under the subject lists the
+boards, and nothing is posted until you press <kbd>P</kbd> **Post**.
+
+- **How many:** the SysOp sets how many boards one post may go to, five
+  unless they changed it, counting the board you wrote it on. The list tells
+  you when you reach it.
+- **Boards you can't use:** the list shows them dimmed, with `-` instead of a
+  number and the reason beside the name -- a level you don't have yet, say,
+  or a board without color for an art post.
+- **All or nothing:** if one of the boards refuses the post when you press
+  **Post**, nothing is posted anywhere; the review screen names the board and
+  why, and **To boards** lets you take it off.
+- **One copy on each board:** each board gets its own copy, with its own
+  replies. A moderated board may hold its copy for approval while the others
+  appear at once. Editing or withdrawing a copy changes only that one.
+- **Read once:** opening one copy marks the others read for you too, and new
+  scan and search count the post once. A copy's byline names the other boards
+  it is on, as in "also in Showcase", when you can open them.
+- **Shared and FTN boards:** a copy on a board shared with other BBSes goes
+  out like any post there. In an echo, the copy starts with a line such as
+  `* Crossposted in FSX_BBS` naming the other echoes of that network it went
+  to.
 
 #### The line editor
 
@@ -410,6 +442,7 @@ Choose a chat channel to join the conversation. Type a line and press
 | `/away text` | Set an away message |
 | `/nick name` | Set a chat alias; a bare `/nick` clears it |
 | `/dm user` | Invite someone online to a private direct chat |
+| `/bell` | Show when chat rings your bell; `/bell off`, `/bell private` or `/bell mentions` sets it |
 
 > [!TIP]
 > <kbd>PgUp</kbd> scrolls back through the conversation, a page at a time, and
@@ -450,6 +483,29 @@ message for later.
 > [!NOTE]
 > If live contact fails, send mail explicitly: chat does not silently turn
 > it into mail.
+
+#### The chat bell
+
+Chat rings your terminal's bell when it needs you, so you notice from another
+window. Choose when in **Profile ▸ Chat bell**, or with `/bell` in chat:
+
+- **Private** (the default): a `/msg` or `/private` message, a message from
+  someone on a linked BBS or on MRC, and a `/dm` invitation.
+- **Mentions**: those, and a line in a channel that names you, by your
+  username or your alias, with or without `@`. Your own lines and bots' lines
+  never ring.
+- **Off**: never.
+
+Being away doesn't silence it: the bell is for when you are away from the
+screen. It rings at most a few times in a row, and once every 30 seconds for
+any one person, and never while you are scrolled back with <kbd>PgUp</kbd>.
+It rings on the chat screens and in a direct chat; a message that waits for
+you elsewhere on the board does not ring.
+
+Your terminal decides whether a bell beeps, flashes or stays quiet. In the
+web client it plays a short tone once you have pressed a key or clicked in
+the page, and while the tab is in the background its title starts with `(!)`
+until you come back.
 
 ### Mail
 

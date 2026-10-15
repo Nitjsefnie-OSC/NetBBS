@@ -168,6 +168,7 @@ def search_posts(db: Database, user: User, query: str, *, limit: int = 20) -> li
 
     boards_by_id = {board.id: board for board in list_boards(db)}
     hits: list[PostSearchHit] = []
+    groups: set[str] = set()
     for row in rows:
         board = boards_by_id.get(row["board_id"])
         if board is None:
@@ -179,6 +180,16 @@ def search_posts(db: Database, user: User, query: str, *, limit: int = 20) -> li
             continue
         if not link_content_visible(db, row["root_post_id"]):
             continue
+        # A cross-post (issue #1298) is listed once, by the first copy this
+        # caller can open.
+        group_row = db.connection.execute(
+            "SELECT crosspost_group FROM posts WHERE post_id = ?", (row["root_post_id"],)
+        ).fetchone()
+        group = group_row["crosspost_group"] if group_row is not None else None
+        if group is not None:
+            if group in groups:
+                continue
+            groups.add(group)
         hits.append(
             PostSearchHit(board=board, root_post_id=row["root_post_id"], subject=row["subject"], body=row["body"])
         )
