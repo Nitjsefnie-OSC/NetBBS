@@ -979,6 +979,8 @@ screen and the console's attention panel count it.
 
 You can also rename an account yourself with <kbd>C</kbd> **Change username**
 on its screen: for a name chosen to offend, or a request that came by mail.
+Type the new name; the next screen says what the rename does, and
+<kbd>A</kbd> **Apply** makes it.
 Your own renames are not limited; a caller's request is, to one approved
 change every 30 days. Only you, not staff, rename accounts.
 
