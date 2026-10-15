@@ -23,6 +23,7 @@ from netbbs.link.trust import (
     register_subject,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_doors
 from netbbs.net import admin_files
 from netbbs.net import admin_boards
 from netbbs.net import admin_system
@@ -166,7 +167,7 @@ def test_the_door_outbound_screen_has_help(db, lane, sysop):
 
     door = create_door(db, "mydoor", "/usr/bin/python3", creator=sysop)
     session = FakeSession([H, " ", "t", "b"])
-    asyncio.run(admin_flow._door_outbound_screen(session, lane, sysop, door))
+    asyncio.run(admin_doors._door_outbound_screen(session, lane, sysop, door))
     text = _visible(_written_text(session))
     _assert_help_then_redraw(text, "Outbound help", "never read the BBS", "outbound")
     assert outbound_config(db, door.id) is not None

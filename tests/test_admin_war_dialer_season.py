@@ -27,6 +27,7 @@ from tests.test_admin_flow import (  # noqa: F401 -- fixtures
     lane,
     sysop,
 )
+from netbbs.net import admin_doors
 
 
 @pytest.fixture
@@ -209,7 +210,7 @@ def test_a_second_concurrent_change_is_refused(db, lane, sysop, identity_dir):
     set_maintenance(db.path, path, True)
 
     session = FakeSession(_war_dialer_world_keys("n", "rollover", path.name))
-    with admin_flow._WAR_DIALER_COMPETITION_LOCK:
+    with admin_doors._WAR_DIALER_COMPETITION_LOCK:
         _live(session, lane, sysop, identity_dir)
 
     assert "another SysOp is changing a War Dialer competition" in _normalized_visible(_written_text(session))
@@ -225,7 +226,7 @@ def test_a_dropped_session_still_records_the_change_it_made(db, lane, sysop, ide
     door = _war_dialer_door(db, sysop)
     path = _war_dialer_world(db)
     set_maintenance(db.path, path, True)
-    real = admin_flow._war_dialer_change_competition
+    real = admin_doors._war_dialer_change_competition
 
     # The change begins, then holds until the session has been dropped: no
     # window of time the test has to hit, loaded machine or not.
@@ -237,12 +238,12 @@ def test_a_dropped_session_still_records_the_change_it_made(db, lane, sysop, ide
         dropped.wait(30.0)
         return real(**kwargs)
 
-    monkeypatch.setattr(admin_flow, "_war_dialer_change_competition", _slow)
+    monkeypatch.setattr(admin_doors, "_war_dialer_change_competition", _slow)
     status = world_status(db.path, path)
 
     async def scenario():
         session = FakeSession(["rollover", path.name])
-        task = asyncio.create_task(admin_flow._war_dialer_competition_flow(
+        task = asyncio.create_task(admin_doors._war_dialer_competition_flow(
             session, lane, sysop, door, path, status, reset=False, identity_dir=identity_dir, db_path=db.path))
         # The session drops while the change runs -- once it has begun, not
         # after a fixed time, which a loaded machine may not have reached.
@@ -294,7 +295,7 @@ def test_maintenance_cannot_be_switched_while_a_competition_change_runs(db, lane
     set_maintenance(db.path, path, True)
 
     session = FakeSession(_war_dialer_world_keys("m"))
-    with admin_flow._WAR_DIALER_COMPETITION_LOCK:
+    with admin_doors._WAR_DIALER_COMPETITION_LOCK:
         asyncio.run(admin_menu(session, lane, sysop))
 
     assert "competition change is running" in _normalized_visible(_written_text(session))
@@ -312,7 +313,7 @@ def test_a_session_dropped_while_the_audit_is_written_still_records_it(db, lane,
     door = _war_dialer_door(db, sysop)
     path = _war_dialer_world(db)
     set_maintenance(db.path, path, True)
-    real = admin_flow.record_action
+    real = admin_doors.record_action
     writing = threading.Event()
 
     def _slow_record(*args, **kwargs):
@@ -320,12 +321,12 @@ def test_a_session_dropped_while_the_audit_is_written_still_records_it(db, lane,
         time.sleep(0.4)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(admin_flow, "record_action", _slow_record)
+    monkeypatch.setattr(admin_doors, "record_action", _slow_record)
     status = world_status(db.path, path)
 
     async def scenario():
         session = FakeSession(["rollover", path.name])
-        task = asyncio.create_task(admin_flow._war_dialer_competition_flow(
+        task = asyncio.create_task(admin_doors._war_dialer_competition_flow(
             session, lane, sysop, door, path, status, reset=False, identity_dir=identity_dir, db_path=db.path))
         while not writing.is_set():
             await asyncio.sleep(0.01)
@@ -390,13 +391,13 @@ def test_the_worker_rechecks_the_destination_right_before_the_backup(db, lane, s
     elsewhere = tmp_path / "usb"
     elsewhere.mkdir()
     set_destination_setting(db, elsewhere, db_path=db.path, identity_dir=identity_dir)
-    real = admin_flow._war_dialer_change_competition
+    real = admin_doors._war_dialer_change_competition
 
     def _unmount_first(**kwargs):
         elsewhere.rmdir()
         return real(**kwargs)
 
-    monkeypatch.setattr(admin_flow, "_war_dialer_change_competition", _unmount_first)
+    monkeypatch.setattr(admin_doors, "_war_dialer_change_competition", _unmount_first)
     session = FakeSession(_war_dialer_world_keys("n", "rollover", path.name))
     _live(session, lane, sysop, identity_dir)
 
@@ -419,7 +420,7 @@ def test_a_failed_node_audit_still_reports_the_change_as_done(db, lane, sysop, i
     def _disk_full(*args, **kwargs):
         raise sqlite3.OperationalError("database or disk is full")
 
-    monkeypatch.setattr(admin_flow, "record_action", _disk_full)
+    monkeypatch.setattr(admin_doors, "record_action", _disk_full)
     session = FakeSession(_war_dialer_world_keys("n", "rollover", path.name))
     _live(session, lane, sysop, identity_dir)
     text = _normalized_visible(_written_text(session))

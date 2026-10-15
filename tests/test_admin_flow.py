@@ -61,6 +61,7 @@ from tests.test_shutdown import _hold_registered
 from netbbs.net import admin_ui
 from netbbs.net import admin_maintenance
 from netbbs.net import admin_trust
+from netbbs.net import admin_doors
 
 # Sentinel strings in FakeSession's single scripted-input queue that
 # read_editor_key maps to
@@ -5761,7 +5762,7 @@ def test_door_gallery_selecting_and_saving_registers_it(db, lane, sysop, catalog
 
 
 def test_door_gallery_reports_no_bundled_doors_when_none_are_found_on_disk(db, lane, sysop, monkeypatch):
-    monkeypatch.setattr("netbbs.net.admin_flow.available_bundled_doors", lambda: [])
+    monkeypatch.setattr("netbbs.net.admin_doors.available_bundled_doors", lambda: [])
     session = FakeSession(["c", "d", "g", "b", "b", "b"])
     _run(session, lane, sysop)
     assert "No bundled doors found" in _written_text(session)
@@ -7771,7 +7772,7 @@ def test_live_backup_screen_surfaces_a_backup_failure(db, lane, sysop, monkeypat
     from netbbs.net import admin_flow
 
     def fail_backup(**kwargs):
-        raise admin_flow.BackupError("disk is full")
+        raise admin_doors.BackupError("disk is full")
 
     monkeypatch.setattr(admin_maintenance, "create_backup", fail_backup)
     identity_dir = db.path.parent / "identity"
