@@ -12,7 +12,7 @@ from netbbs.files.areas import create_file_area
 from netbbs.link.channels import link_channel
 from netbbs.link.node_identity import bootstrap_node_identity
 from netbbs.net import bot_flow
-from netbbs.net.admin_flow import _load_chrome
+from netbbs.net.admin_ui import _load_chrome
 from netbbs.net.breadcrumb_preference import set_breadcrumb_collapsed_enabled
 from netbbs.net.char_input import EditorKey, EditorKeyKind
 from netbbs.net.menu_description_preference import set_menu_description_level

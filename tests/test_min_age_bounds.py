@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
-from netbbs.net.admin_flow import MIN_AGE_CEILING, MIN_AGE_FLOOR, _prompt_min_age
+from netbbs.net.admin_fields import MIN_AGE_CEILING, MIN_AGE_FLOOR, _prompt_min_age
 from netbbs.net.char_input import InputCancelled
 
 
@@ -149,7 +149,7 @@ def test_the_prompt_states_the_convention_it_uses():
 
 
 def _ask_check(answer: str, *, current: int | None = None, requirement: str | None = None):
-    from netbbs.net.admin_flow import _prompt_min_age_check
+    from netbbs.net.admin_fields import _prompt_min_age_check
 
     session = FakeSession(answer)
     return asyncio.run(_prompt_min_age_check(session, current=current, current_requirement=requirement))
@@ -175,7 +175,7 @@ def test_a_bad_entry_keeps_what_was_set():
 
 
 def test_escape_keeps_both():
-    from netbbs.net.admin_flow import _prompt_min_age_check
+    from netbbs.net.admin_fields import _prompt_min_age_check
 
     session = CancellingSession("")
     assert asyncio.run(_prompt_min_age_check(session, current=21, current_requirement="verified")) == (
@@ -184,7 +184,7 @@ def test_escape_keeps_both():
 
 
 def test_the_field_shows_how_the_age_is_checked():
-    from netbbs.net.admin_flow import _min_age_label
+    from netbbs.net.admin_fields import _min_age_label
 
     assert _min_age_label(18, "verified") == "18, verified only"
     assert _min_age_label(18, None) == "18"

@@ -21,7 +21,7 @@ MONEY = MONEY_KEYS
 
 
 async def model_editor(session, lane, actor, chrome):
-    from netbbs.net.admin_flow import _int_field
+    from netbbs.net.admin_fields import _int_field
 
     await lane.run(require_sysop, actor)
     original = await lane.run(settings)
@@ -146,7 +146,7 @@ def _usage_sections(value):
 
 
 async def model_usage(session, lane, actor):
-    from netbbs.net.admin_flow import _show_report
+    from netbbs.net.admin_ui import _show_report
 
     await lane.run(require_sysop, actor)
     value = await lane.run(usage_summary)

@@ -29,6 +29,7 @@ from netbbs.link.events import build_channel_genesis
 from netbbs.link.node_identity import bootstrap_node_identity
 from netbbs.mrc.settings import OpenRoomSettings, materialize_open_room, save_open_room_settings
 from netbbs.net import admin_flow, chat_flow
+from netbbs.net import admin_ui
 from netbbs.net.char_input import InputHistory
 from netbbs.net.notices import pending_notices
 from netbbs.rendering import strip_ansi
@@ -347,7 +348,7 @@ def test_deleting_a_channel_moves_its_callers_out(db, lane, hub, sysop):
     assert asyncio.run(admin_flow._delete_channel_screen(session, lane, sysop, channel, chat_hub=hub)) is True
 
     assert isinstance(queue.get_nowait(), ChannelClosed)
-    notices = strip_ansi("".join(admin_flow._take_notices(session)))
+    notices = strip_ansi("".join(admin_ui._take_notices(session)))
     assert "'lobby' deleted." in notices
     assert "1 caller session in it moved back to the channel list." in notices
 
@@ -362,7 +363,7 @@ def test_deleting_a_carried_channel_hides_it_and_moves_its_callers_out(db, lane,
     )) is True
 
     assert isinstance(queue.get_nowait(), ChannelClosed)
-    assert "moved back to the channel list" in strip_ansi("".join(admin_flow._take_notices(session)))
+    assert "moved back to the channel list" in strip_ansi("".join(admin_ui._take_notices(session)))
 
 
 def test_a_cancelled_delete_moves_nobody(db, lane, hub, sysop):

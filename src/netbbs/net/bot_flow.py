@@ -58,7 +58,7 @@ def _yes_no(value):
 async def bot_menu(session, lane, actor):
     await lane.run(require_sysop, actor)
     # Same chrome and description preferences as the rest of the console.
-    from netbbs.net.admin_flow import _load_chrome
+    from netbbs.net.admin_ui import _load_chrome
     chrome = await _load_chrome(lane, actor)
     description_level = await lane.run(menu_description_level, actor)
     statuses = {}

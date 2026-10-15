@@ -22,6 +22,7 @@ from netbbs.moderation.log import list_recent_actions
 from netbbs.mrc.bridge import MrcBridge, MrcState
 from netbbs.mrc.settings import MrcSettings, get_mrc_mapping, load_mrc_settings, save_mrc_settings, set_mrc_room
 from netbbs.net import admin_flow
+from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu
 from netbbs.net.maintenance import MaintenanceMode
 from netbbs.net.session_registry import ActiveSessionRegistry
@@ -324,7 +325,7 @@ def test_deleting_a_mapped_channel_refreshes_the_running_bridge(db, lane, sysop,
             await _open_channel_detail(session, lane, sysop, lobby, mrc_bridge=bridge)
             # The screen was entered directly and has returned: its outcome is
             # queued for the menu that would be drawn next, not written here.
-            assert "'lobby' deleted." in _visible("".join(admin_flow._take_notices(session)))
+            assert "'lobby' deleted." in _visible("".join(admin_ui._take_notices(session)))
             assert bridge.mapping_for(lobby) is None
             await fake.wait_for(lambda p: p.body == "LOGOFF")
             assert bridge.state is MrcState.CONNECTED

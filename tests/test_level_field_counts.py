@@ -15,12 +15,12 @@ from netbbs.auth.users import SYSOP_LEVEL, create_user, set_user_disabled
 from netbbs.boards.boards import create_board
 from netbbs.communities import create_community
 from netbbs.files.areas import create_file_area
-from netbbs.net.admin_flow import (
+from netbbs.net.admin_flow import admin_menu
+from netbbs.net.admin_fields import (
     _community_default_label,
     _plain_level_label,
     _resource_level_label,
     _setting_level_label,
-    admin_menu,
 )
 from netbbs.net.redraw_preference import set_redraw_in_place_enabled
 from netbbs.storage.database import Database

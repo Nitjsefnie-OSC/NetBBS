@@ -49,7 +49,7 @@ from netbbs.config import RegistrationMode, get_node_display_name, get_registrat
 from netbbs.link.boards import LinkContext
 from netbbs.moderation import is_blocked
 from netbbs.mrc.bridge import MrcBridge
-from netbbs.net.admin_flow import _TrailingOutput
+from netbbs.net.admin_ui import _TrailingOutput
 from netbbs.net.char_input import InputHistory
 from netbbs.net.confirm import prompt_yes_no
 from netbbs.net.logoff_banner import load_logoff_banner

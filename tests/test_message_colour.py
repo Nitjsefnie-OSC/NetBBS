@@ -13,7 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from netbbs.net import notices
-from netbbs.net.admin_flow import _announce_line, _announce_saved, _banner_status_section, _fits_line
+from netbbs.net.admin_flow import _announce_saved, _banner_status_section, _fits_line
+from netbbs.net.admin_ui import _announce_line
 from netbbs.rendering import (
     AUTHOR_COLOR,
     EMPHASIS_COLOR,

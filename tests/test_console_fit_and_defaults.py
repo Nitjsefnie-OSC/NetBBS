@@ -16,7 +16,8 @@ import re
 import pytest
 
 from netbbs.auth.users import SYSOP_LEVEL, create_user, get_user_by_username
-from netbbs.net.admin_flow import _degrade_description_level, admin_menu
+from netbbs.net.admin_flow import admin_menu
+from netbbs.net.admin_ui import _degrade_description_level
 from netbbs.net.menu_description_preference import set_menu_description_level
 from netbbs.net.redraw_preference import redraw_in_place_enabled, redraw_in_place_ever_set
 from netbbs.rendering import MenuEntry, menu_key
