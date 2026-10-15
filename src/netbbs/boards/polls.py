@@ -318,22 +318,45 @@ def tally(db: Database, poll: Poll) -> PollTally:
       home node, in the order they arrived;
     - one the per-poll row cap turned away (`dropped_votes`).
 
-    Each node's tally is its own view, as its post list is."""
+    A carried voter is one person across the renames their home node
+    announced (`netbbs.link.user_renames`, issue #1306): votes under an old
+    and a new name count once, the latest, at the place the first of them
+    arrived. Each node's tally is its own view, as its post list is."""
     from netbbs.link.enforcement import envelope_content_visible
+    from netbbs.link.user_renames import current_user_name
 
     counts = [0] * len(poll.options)
     voters = 0
     not_counted = poll.dropped_votes
     closes = _moment(closing_moment(poll))
-    rows = db.connection.execute(
+    stored = db.connection.execute(
         """
-        SELECT v.choices, v.voted_at, v.home_node_fingerprint, e.envelope_json
+        SELECT v.id, v.choices, v.voted_at, v.home_node_fingerprint, v.remote_user_id, v.event_id, e.envelope_json
         FROM board_poll_votes v
         LEFT JOIN link_events e ON e.content_id = v.event_id AND v.home_node_fingerprint IS NOT NULL
         WHERE v.root_post_id = ? ORDER BY v.id
         """,
         (poll.root_post_id,),
     ).fetchall()
+    # One carried voter, one vote: rows stored under names the voter's home
+    # node has since renamed are the same person's (issue #1306).
+    kept: dict = {}
+    names: dict = {}
+    for row in stored:
+        home = row["home_node_fingerprint"]
+        if home is None:
+            kept[("local", row["id"])] = (row["id"], row)
+            continue
+        if (home, row["remote_user_id"]) not in names:
+            names[(home, row["remote_user_id"])] = current_user_name(db, home, row["remote_user_id"])
+        key = (home, names[(home, row["remote_user_id"])])
+        if key not in kept:
+            kept[key] = (row["id"], row)
+            continue
+        first, held = kept[key]
+        if _vote_order(row) > _vote_order(held):
+            kept[key] = (first, row)
+    rows = [row for _first, row in sorted(kept.values(), key=lambda item: item[0])]
     per_node: dict[str, int] = {}
     authors: dict = {}
     for row in rows:
@@ -360,6 +383,16 @@ def tally(db: Database, poll: Poll) -> PollTally:
         for choice in choices:
             counts[choice] += 1
     return PollTally(tuple(counts), voters, not_counted)
+
+
+def _vote_order(row) -> tuple:
+    """Which of two votes by one voter is the later: by date, the signed
+    event's id breaking a tie, as `netbbs.link.polls` decides on receipt."""
+    try:
+        moment = _moment(row["voted_at"])
+    except ValueError:
+        moment = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    return moment, row["event_id"] or ""
 
 
 def _require_may_vote(db: Database, user: User, board: Board) -> None:
