@@ -32,12 +32,13 @@ validate is skipped, and so is the rest of a list that is not a list.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from netbbs.identity.addressing import is_valid_user_part
 from netbbs.storage.database import Database
-from netbbs.timeutil import utc_now_iso
+from netbbs.timeutil import utc_iso, utc_now_iso
 
 _logger = logging.getLogger(__name__)
 
@@ -73,7 +74,19 @@ def _parse(value: object) -> datetime | None:
 
 
 def _stamp(moment: datetime) -> str:
-    return moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return utc_iso(moment)
+
+
+def _alias_rows(db: Database, sql: str, params: tuple) -> list[sqlite3.Row]:
+    """Rows of `link_user_aliases`, or none on a schema from before it (a
+    migration test, or code reached before the upgrade): every reader below
+    then answers as if nothing had been renamed."""
+    try:
+        return db.connection.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        if _aliases_table_exists(db):
+            raise
+        return []
 
 
 def descriptor_user_renames(payload: object, *, now: datetime | None = None) -> list[UserRename]:
@@ -115,10 +128,11 @@ def current_user_name(db: Database, node_fingerprint: str, user: str) -> str:
     seen = {user}
     current = user
     for _ in range(_MAX_CHAIN):
-        row = db.connection.execute(
-            "SELECT new_user_id FROM link_user_aliases WHERE node_fingerprint = ? AND old_user_id = ?",
+        rows = _alias_rows(
+            db, "SELECT new_user_id FROM link_user_aliases WHERE node_fingerprint = ? AND old_user_id = ?",
             (node_fingerprint, current),
-        ).fetchone()
+        )
+        row = rows[0] if rows else None
         if row is None or row["new_user_id"] in seen:
             return current
         current = row["new_user_id"]
@@ -128,11 +142,11 @@ def current_user_name(db: Database, node_fingerprint: str, user: str) -> str:
 
 def renamed_at(db: Database, node_fingerprint: str, user: str) -> str | None:
     """When `user@node` was renamed away from, or `None` if it was not."""
-    row = db.connection.execute(
-        "SELECT renamed_at FROM link_user_aliases WHERE node_fingerprint = ? AND old_user_id = ?",
+    rows = _alias_rows(
+        db, "SELECT renamed_at FROM link_user_aliases WHERE node_fingerprint = ? AND old_user_id = ?",
         (node_fingerprint, user),
-    ).fetchone()
-    return None if row is None else row["renamed_at"]
+    )
+    return rows[0]["renamed_at"] if rows else None
 
 
 def former_user_names(db: Database, node_fingerprint: str, user: str) -> list[str]:
@@ -142,11 +156,12 @@ def former_user_names(db: Database, node_fingerprint: str, user: str) -> list[st
     seen = {user}
     while frontier and len(found) < _MAX_CHAIN:
         name = frontier.pop(0)
-        for row in db.connection.execute(
+        for row in _alias_rows(
+            db,
             """SELECT old_user_id FROM link_user_aliases WHERE node_fingerprint = ? AND new_user_id = ?
                ORDER BY renamed_at DESC""",
             (node_fingerprint, name),
-        ).fetchall():
+        ):
             if row["old_user_id"] not in seen:
                 seen.add(row["old_user_id"])
                 found.append(row["old_user_id"])

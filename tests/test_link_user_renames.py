@@ -296,6 +296,13 @@ def test_content_newly_signed_as_the_old_name_is_refused_and_older_content_is_no
     assert early.reason_code != REASON_RETIRED_IDENTITY
 
 
+def test_the_readers_answer_nothing_renamed_on_a_schema_from_before_the_table(db):
+    db.connection.execute("DROP TABLE link_user_aliases")
+    assert current_user_name(db, HOME, "alice") == "alice"
+    assert former_user_names(db, HOME, "alice") == []
+    assert announce(db, entry("alice", "nib", NOW - timedelta(days=1))) == []
+
+
 def test_a_bad_descriptor_never_breaks_learning(db):
     assert learn_user_renames(db, HOME, {"user_renames": [{"from": None, "to": [], "at": {}}]}) == []
     assert learn_user_renames(db, HOME, "not a payload") == []
