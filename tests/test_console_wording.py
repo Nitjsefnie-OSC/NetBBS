@@ -138,8 +138,13 @@ def test_key_list_puts_the_fingerprint_on_its_own_line(db, lane):
 
 # -- F129 / F024: no developer references on screen ---------------------------
 
+# Every SysOp console module: admin_flow.py and the admin_*.py modules split
+# out of it (issue #1311).
 _SCREEN_MODULES = (
-    "netbbs/net/admin_flow.py",
+    *sorted(
+        f"netbbs/net/{path.name}"
+        for path in (pathlib.Path(__file__).resolve().parents[1] / "src" / "netbbs" / "net").glob("admin*.py")
+    ),
     "netbbs/net/nodeconfig.py",
     "netbbs/attestation.py",
     "netbbs/auth/users.py",
