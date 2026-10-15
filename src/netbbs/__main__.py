@@ -160,8 +160,8 @@ def _build_link_throttle(link_config: LinkConfig) -> LinkRequestThrottle:
 def _load_own_identity_claims(
     db: Database,
     advertised_host: str | None,
-    previous_claims: tuple[str, str | None, tuple[str, ...], NodePageFacts] | None,
-) -> tuple[str, str | None, tuple[str, ...], NodePageFacts]:
+    previous_claims: tuple[str, str | None, tuple[str, ...], NodePageFacts, tuple[dict, ...]] | None,
+) -> tuple[str, str | None, tuple[str, ...], NodePageFacts, tuple[dict, ...]]:
     """Load and, when changed, persist the local human-facing identity.
 
     The third element is the `dial_in` list the next descriptor carries
@@ -169,7 +169,9 @@ def _load_own_identity_claims(
     `[web] public_url` fallback. The fourth is what it says for this
     node's page on www.netbbs.org (issues #1165 and #1171, §8.13). Neither
     is part of the remembered identity-claim history, which is about
-    names."""
+    names. The fifth is the `user_renames` the descriptor announces (issue
+    #1306)."""
+    from netbbs.auth.renames import announced_renames
     from netbbs.config import get_node_display_name
     from netbbs.link.dial_in import published_dial_in
     from netbbs.link.node_page import own_node_page_facts
@@ -180,6 +182,7 @@ def _load_own_identity_claims(
         own_canonical_dns_name(db, advertised_host),
         published_dial_in(db),
         own_node_page_facts(db),
+        tuple(announced_renames(db)),
     )
     if previous_claims is None or claims[:2] != previous_claims[:2]:
         remember_own_identity_claims(db, canonical_dns_name=claims[1])
@@ -193,21 +196,25 @@ class _OwnHelloProvider:
         self,
         link_node: LinkNode,
         link_config: LinkConfig,
-        claims: tuple[str, str | None, tuple[str, ...], NodePageFacts],
+        claims: tuple[str, str | None, tuple[str, ...], NodePageFacts, tuple[dict, ...]],
         live_relays_provider=None,
     ) -> None:
         self._link_node = link_node
         self._link_config = link_config
-        self._friendly_name, self._canonical_dns_name, self._dial_in, self._page_facts = claims
+        (
+            self._friendly_name, self._canonical_dns_name, self._dial_in, self._page_facts, self._user_renames,
+        ) = claims
         self._live_relays_provider = live_relays_provider
 
     async def refresh(self, lane: DatabaseLane) -> None:
         claims = await lane.run(
             _load_own_identity_claims,
             self._link_config.advertised_host,
-            (self._friendly_name, self._canonical_dns_name, self._dial_in, self._page_facts),
+            (self._friendly_name, self._canonical_dns_name, self._dial_in, self._page_facts, self._user_renames),
         )
-        self._friendly_name, self._canonical_dns_name, self._dial_in, self._page_facts = claims
+        (
+            self._friendly_name, self._canonical_dns_name, self._dial_in, self._page_facts, self._user_renames,
+        ) = claims
 
     def __call__(self) -> HelloMessage:
         addresses = None
@@ -252,6 +259,7 @@ class _OwnHelloProvider:
             software_version=self._page_facts.software_version,
             public_boards=self._page_facts.public_boards,
             tagline=self._page_facts.tagline,
+            user_renames=self._user_renames,
         )
 
 

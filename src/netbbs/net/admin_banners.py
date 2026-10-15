@@ -8,6 +8,8 @@ out of `netbbs.net.admin_flow` (issue #1311).
 from __future__ import annotations
 
 import asyncio
+import functools
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -29,7 +31,7 @@ from netbbs.sysop_uploads import (
     destination_problem,
 )
 from netbbs.net.help_overlay import show_help, show_menu_help
-from netbbs.net.location import crumbs, located
+from netbbs.net.location import crumbs, entered, located
 from netbbs.net.resource_editor import (
     inline_field,
     write_field_prompt,
@@ -421,82 +423,6 @@ async def _draw_banners_and_mastheads_menu(
     await _choice_prompt(session)
 
 
-@located("Welcome banner")
-async def _welcome_banner_menu(
-    session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None = None
-) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-    while True:
-        choice = (await session.read_key()).lower()
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "p":
-            await session.write_line("")
-            await _preview_welcome_banner_screen(session, lane, actor, node_controls=node_controls)
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "s":
-            await session.write_line("")
-            await _cycle_art_speed(lane, actor, WELCOME_ART)
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "t":
-            await session.write_line("")
-            await _cycle_art_time_limit(lane, actor, WELCOME_ART)
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "e":
-            await session.write_line("")
-            await _enable_welcome_banner_screen(session, lane, actor)
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "d":
-            await session.write_line("")
-            await _disable_welcome_banner_screen(session, lane, actor)
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "o":
-            await session.write_line("")
-            await _edit_welcome_banner_screen(session, lane, actor)
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "g":
-            await session.write_line("")
-            await _welcome_banner_gallery_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "f":
-            await session.write_line("")
-            await _welcome_banner_filesystem_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "u":
-            await session.write_line("")
-            await _upload_banner_piece(session, lane, actor, path_of=banner_path, label="the welcome banner", audit_action="upload_welcome_banner")
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "r":
-            await session.write_line("")
-            await _remove_banner_file(
-                session, lane, actor, status_of=welcome_banner_status, set_enabled=set_welcome_banner_enabled,
-                label="the welcome banner", audit_action="remove_welcome_banner",
-            )
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "c":
-            await session.write_line("")
-            shown = await lane.run(_toggle_welcome_banner_credit, actor)
-            _announce(session, "Callers now see the art's credit under your banner." if shown
-                      else "The art's credit is no longer shown under your banner.")
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == HELP_KEY:
-            await session.write_line("")
-            header_color = await lane.run(effective_header_color_256)
-            await _banner_help_screen(
-                session, path=await lane.run(banner_path), has_gallery=True,
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_welcome_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        else:
-            await session.write(reject_unhandled_key(choice))
-
-
 def _art_speed_brief(speed: int) -> str:
     """The `[S]peed` entry's description (issue #929): the speed now set."""
     return f"Plays at {speed} bps" if speed else "Drawn at once"
@@ -535,49 +461,6 @@ async def _cycle_art_time_limit(lane: DatabaseLane, actor: User, kind: str) -> N
         record_action(db, actor=actor, action="set_art_time_limit", detail=f"{kind}={following}")
 
     await lane.run(apply)
-
-
-async def _draw_welcome_banner_menu(
-    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
-    unicode_style: bool,
-    collapsed: bool,
-) -> None:
-    status = await lane.run(welcome_banner_status)
-    rows = await _write_counted(session, "\r\n" + screen_title("Welcome banner",
-            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
-            header_color=await lane.run(effective_header_color_256), node_name_gradient=session.node_name_gradient))
-    credit_line = await lane.run(is_welcome_banner_credit_enabled)
-    speed = await lane.run(art_speed, WELCOME_ART)
-    time_limit = await lane.run(art_time_limit, WELCOME_ART)
-    rows += await _write_sections(
-        session,
-        [_banner_status_section(
-            status, unicode_style=unicode_style, sauce=await asyncio.to_thread(_banner_sauce, status),
-            credit_line=credit_line, too_wide="the default banner", speed=speed,
-        )],
-        unicode_style=unicode_style,
-    )
-    await _write_banner_menu(
-        session,
-        [
-            MenuEntry(label=menu_key("P", "review"), brief="Show the banner as callers see it"),
-            MenuEntry(label=menu_key("S", "peed"), brief=_art_speed_brief(speed)),
-            _art_time_limit_entry(time_limit),
-            MenuEntry(label=menu_key("E", "nable"), brief="Turn the banner on"),
-            MenuEntry(label=menu_key("D", "isable"), brief="Turn the banner off"),
-            MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the banner text"),
-            MenuEntry(label=menu_key("C", "redit line"), brief="Credit the art under the banner"),
-            MenuEntry(label=menu_key("G", "allery"), brief="Apply a bundled sample banner"),
-            MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
-            MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
-            *_remove_file_entry(status),
-            MenuEntry(label=menu_key("B", "ack"), brief="Return to Session banners"),
-        ],
-        description_level,
-        used_rows=rows,
-        help_text="(Ctrl-H for where to place your own .ans files)",
-    )
-    await _choice_prompt(session)
 
 
 # Every banner and masthead file has the same 256 KiB limit.
@@ -693,67 +576,6 @@ async def _write_banner_slot_notes(session: Session, banner_text: str) -> None:
         await session.write_line(colored(f"Note: {note}.", fg_color=WARNING_COLOR))
 
 
-async def _enable_welcome_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    status = await lane.run(welcome_banner_status)
-    if not status.exists:
-        _announce(session, f"No banner file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
-        return
-    if (status.size_bytes or 0) > MAX_BANNER_SIZE_BYTES:
-        _announce_line(session,
-            colored(
-                f"Banner file at {status.path} is {status.size_bytes} bytes, over the "
-                f"{MAX_BANNER_SIZE_BYTES} byte limit -- not enabling.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return
-
-    def _apply(db: Database) -> None:
-        set_welcome_banner_enabled(db, True)
-        record_action(db, actor=actor, action="enable_welcome_banner", detail=str(status.path))
-
-    await lane.run(_apply)
-    _announce_line(session, "Welcome banner enabled. Use [P]review to verify it looks right.")
-
-
-async def _disable_welcome_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    def _apply(db: Database):
-        status = welcome_banner_status(db)
-        set_welcome_banner_enabled(db, False)
-        record_action(db, actor=actor, action="disable_welcome_banner", detail=str(status.path))
-        return status
-
-    status = await lane.run(_apply)
-    _announce_line(session,
-        f"Reverted to the default banner. Your file at {status.path} was left in place."
-    )
-
-
-async def _edit_welcome_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    """Opens the WYSIWYG ANSI art editor (design doc) against the
-    current banner file, if any. `edit_ansi_art`
-    itself knows nothing about "welcome banner" -- this screen is
-    responsible for loading the existing file, computing the draft
-    path, and writing a real save back to `banner_path(db)`."""
-    path = await lane.run(banner_path)
-    initial_bytes = path.read_bytes() if path.exists() else None
-    draft_path = path.parent / f"{path.name}.draft"
-
-    result = await edit_ansi_art(
-        session, initial_bytes=initial_bytes, draft_path=draft_path,
-        redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
-        unicode_style=await lane.run(unicode_style_enabled, actor),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
-    )
-    if result is None:
-        _announce_line(session, colored("\r\nNo changes saved.", fg_color=MUTED_COLOR))
-        return
-
-    path.write_bytes(result)
-    await lane.run(record_action, actor=actor, action="edit_welcome_banner", detail=str(path))
-    _announce_saved(session, "Saved ", path, ". Use [P]review to verify it looks right.")
-
-
 async def _preview_apply_choice(session: Session, label: str) -> bool:
     """After a gallery/filesystem preview (issue #282): `[A]pply` or
     `[B]ack` to the list, instead of a yes/no whose "no" then also needed
@@ -788,77 +610,6 @@ async def _preview_apply_choice(session: Session, label: str) -> bool:
             await session.write_line("")
             return choice == "a"
         await session.write(reject_unhandled_key(choice))
-
-
-async def _welcome_banner_gallery_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Issue #169: apply one of NetBBS's own bundled sample banners with
-    zero filesystem access to the node -- the samples are real installed
-    package data (`netbbs.net.banner_presets`), not files a SysOp has to
-    `cp` into place first (the gap this closes: a wheel install has no
-    `examples/` directory to copy from at all).
-
-    Dogfood follow-up: declining the apply prompt loops back into this
-    same gallery picker instead of exiting to the welcome-banner menu --
-    browsing several samples in a row used to mean re-entering
-    `[G]allery` after every single one just to look at the next.
-
-    Second dogfood follow-up: that loop-back used to always reopen the
-    picker at page 1 with nothing highlighted, discarding exactly the
-    browsing position a decline is supposed to return you to -- `pick_
-    item`'s `start_stable_id` now re-highlights whichever sample was
-    just declined."""
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(WELCOME_BANNER_PRESETS, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            description_of=lambda pair: f"{pair[1].depth} -- {pair[1].description}",
-            title="Welcome banner gallery",
-            empty_message="No bundled welcome-banner samples.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        preset = selection[1]
-        data = load_welcome_banner_preset(preset)
-        await session.write_line(colored(f"\r\nPreviewing {preset.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Apply {preset.name!r} as the welcome banner"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            path = banner_path(db)
-            path.write_bytes(data)
-            set_welcome_banner_enabled(db, True)
-            record_action(db, actor=actor, action="apply_welcome_banner_preset", detail=f"{preset.key} -> {path}")
-            return path
-
-        path = await lane.run(_apply)
-        _announce_saved(session, "Applied and enabled. Saved to ", path, ". Use [P]review to verify it looks right.")
-        return
-
-
-_BANNER_FILE_SUFFIX_OF: dict[Callable[[Database], Path], Callable[[str], str]] = {
-    banner_path: lambda stem: f"{stem}_welcome_banner.ans",
-    main_menu_banner_path: lambda stem: f"{stem}_main_menu_banner.ans",
-    logoff_banner_path: lambda stem: f"{stem}_logoff_banner.ans",
-    new_account_banner_before_path: lambda stem: f"{stem}_new_account_banner_before.ans",
-    new_account_banner_after_path: lambda stem: f"{stem}_new_account_banner_after.ans",
-    board_list_banner_path: lambda stem: f"{stem}_board_list_banner.ans",
-    file_area_banner_path: lambda stem: f"{stem}_file_area_banner.ans",
-    chat_channel_picker_banner_path: lambda stem: f"{stem}_chat_channel_picker_banner.ans",
-}
 
 
 async def _remove_banner_file(
@@ -954,8 +705,7 @@ def _browsable_ans_files(directory: Path, *, exclude: Path) -> list[Path]:
 
 
 async def _banner_help_screen(
-    session: Session, *, path: Path, has_gallery: bool,
-    header_color: int | tuple[int, int, int], unicode_style: bool,
+    session: Session, *, path: Path, header_color: int | tuple[int, int, int], unicode_style: bool,
 ) -> None:
     """Ctrl-H's own content for every banner/masthead customization menu
     in this section (dogfood feature request) -- one shared listing
@@ -976,15 +726,12 @@ async def _banner_help_screen(
         f"  {path}",
         "  Or save it under any other name in that same directory and pick it up "
         "with [F]rom disk instead of overwriting this one directly.",
+        "",
+        colored("Gallery vs. From disk", fg_color=header_color, bold=True),
+        "  [G]allery applies one of NetBBS's own bundled sample designs -- no "
+        "filesystem access to this node needed. [F]rom disk loads a file you've "
+        "already placed here yourself.",
     ]
-    if has_gallery:
-        lines += [
-            "",
-            colored("Gallery vs. From disk", fg_color=header_color, bold=True),
-            "  [G]allery applies one of NetBBS's own bundled sample designs -- no "
-            "filesystem access to this node needed. [F]rom disk loads a file you've "
-            "already placed here yourself.",
-        ]
     await show_help(session, "Banner/masthead help", lines, header_color=header_color, unicode_style=unicode_style)
 
 
@@ -1005,265 +752,6 @@ async def _banner_router_help_screen(
         f"  pick one, then press {help_key_label(session)} on that screen to see where it goes.",
     ]
     await show_help(session, "Banner/masthead help", lines, header_color=header_color, unicode_style=unicode_style)
-
-
-async def _welcome_banner_filesystem_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Issue #170: load a SysOp's own externally-authored `.ans` file --
-    drawn in a dedicated tool, or downloaded from elsewhere -- instead
-    of having to shell in and place it at `banner_path(db)` by hand.
-    Different problem from the bundled gallery just above (issue #169,
-    sibling): nothing here was ever going to ship *with* NetBBS, so this
-    enumerates real files on disk instead of a fixed preset tuple.
-
-    **Browsable root** (locked design, see the issue's own comments):
-    the node's own state directory only -- exactly `banner_path(db)`'s
-    own parent, the same directory NetBBS already reads/writes banner
-    state in. No new `node_config` setting, no new attack surface
-    beyond what already exists.
-
-    **Load semantics**: copy, not reference-in-place. The selected
-    file's bytes are written to the existing well-known `banner_path
-    (db)`, exactly as if the SysOp had `cp`'d it there by hand --
-    `load_welcome_banner`/`welcome_banner_status`/backup-restore/the
-    WYSIWYG editor all keep their existing one-file-one-path assumption
-    completely untouched.
-
-    **Validation timing**: the same size cap `[E]nable` already enforces
-    runs *before* the copy, against the source file -- rejecting a pick
-    immediately with a clear reason, not a weaker path into the same
-    target than manual placement already has."""
-
-    def _list(db: Database) -> tuple[list[Path], Path]:
-        directory = banner_path(db).parent
-        return _browsable_ans_files(directory, exclude=banner_path(db)), directory
-
-    files, directory = await lane.run(_list)
-    if not files:
-        # Announced, not held behind a keypress: it is on the menu this returns to.
-        _announce(
-            session,
-            f"No other .ans files found in {directory}. Place one there "
-            f"(e.g. via SFTP/SCP), or send one with [U]pload, then browse again.",
-            color=MUTED_COLOR,
-        )
-        return
-
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(files, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            title="Welcome banner -- load from disk",
-            empty_message="No other .ans files found.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        path = selection[1]
-
-        size = path.stat().st_size
-        if size > MAX_BANNER_SIZE_BYTES:
-            await session.write_line(colored(
-                f"{path.name} is {size} bytes, over the {MAX_BANNER_SIZE_BYTES} byte "
-                f"limit -- not loading.", fg_color=MUTED_COLOR,
-            ))
-            # Same present-then-wait fix as the empty-list message above --
-            # otherwise `pick_item`'s own next redraw clears this before
-            # it can be read.
-            await session.write_line(continue_prompt())
-            await session.read_any_key()
-            continue
-
-        data = path.read_bytes()
-        await session.write_line(colored(f"\r\nPreviewing {path.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Load {path.name!r} as the welcome banner"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            target = banner_path(db)
-            target.write_bytes(data)
-            set_welcome_banner_enabled(db, True)
-            record_action(db, actor=actor, action="load_welcome_banner_from_file", detail=f"{path} -> {target}")
-            return target
-
-        target = await lane.run(_apply)
-        _announce_saved(session, "Loaded and enabled. Saved to ", target, ". Use [P]review to verify it looks right.")
-        return
-
-
-@located("Main-menu masthead")
-async def _main_menu_banner_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-    while True:
-        choice = (await session.read_key()).lower()
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "p":
-            await session.write_line("")
-            await _preview_main_menu_banner_screen(session, lane, actor)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "s":
-            await session.write_line("")
-            await _cycle_art_speed(lane, actor, MAIN_MENU_ART)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "t":
-            await session.write_line("")
-            await _cycle_art_time_limit(lane, actor, MAIN_MENU_ART)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "e":
-            await session.write_line("")
-            await _enable_main_menu_banner_screen(session, lane, actor)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "d":
-            await session.write_line("")
-            await _disable_main_menu_banner_screen(session, lane, actor)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "o":
-            await session.write_line("")
-            await _edit_main_menu_banner_screen(session, lane, actor)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "g":
-            await session.write_line("")
-            await _main_menu_banner_gallery_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "f":
-            await session.write_line("")
-            await _main_menu_banner_filesystem_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "u":
-            await session.write_line("")
-            await _upload_banner_piece(session, lane, actor, path_of=main_menu_banner_path, label="the main-menu masthead", audit_action="upload_main_menu_banner")
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "r":
-            await session.write_line("")
-            await _remove_banner_file(
-                session, lane, actor, status_of=main_menu_banner_status, set_enabled=set_main_menu_banner_enabled,
-                label="the main-menu masthead", audit_action="remove_main_menu_banner",
-            )
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "m":
-            await session.write_line("")
-            await _toggle_main_menu_art_mode(session, lane, actor)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == "c":
-            await session.write_line("")
-            await _check_main_menu_slot_art_screen(session, lane, actor)
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        elif choice == HELP_KEY:
-            await session.write_line("")
-            header_color = await lane.run(effective_header_color_256)
-            await _banner_help_screen(
-                session, path=await lane.run(main_menu_banner_path), has_gallery=True,
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_main_menu_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed)
-        else:
-            await session.write(reject_unhandled_key(choice))
-
-
-async def _draw_main_menu_banner_menu(
-    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
-    unicode_style: bool,
-    collapsed: bool,
-) -> None:
-    status = await lane.run(main_menu_banner_status)
-    mode = await lane.run(main_menu_art_mode)
-    rows = await _write_counted(session, "\r\n" + screen_title("Main-menu masthead",
-            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed,
-            header_color=await lane.run(effective_header_color_256), node_name_gradient=session.node_name_gradient))
-    sauce = await asyncio.to_thread(_banner_sauce, status)
-    speed = await lane.run(art_speed, MAIN_MENU_ART)
-    time_limit = await lane.run(art_time_limit, MAIN_MENU_ART)
-    rows += await _write_sections(session, [_banner_status_section(status, unicode_style=unicode_style, sauce=sauce, speed=speed)], unicode_style=unicode_style)
-    await session.write_line("")
-    rows += 1
-    rows += await _write_wrapped_subtitle(
-        session,
-        # One row each, so the screen with its [S]peed entry fits 80x24.
-        "Mode: above the menu. The art is shown above the live main menu."
-        if mode == MASTHEAD_MODE else
-        "Mode: the menu itself. Callers' items and live values fill its slots.",
-    )
-    await _write_banner_menu(
-        session,
-        [
-            MenuEntry(label=menu_key("P", "review"), brief="Show it as callers see it"),
-            MenuEntry(label=menu_key("S", "peed"), brief=_art_speed_brief(speed)),
-            _art_time_limit_entry(time_limit),
-            MenuEntry(
-                label=menu_key("M", "ode"),
-                brief="Make the art the menu itself" if mode == MASTHEAD_MODE else "Show the art above the menu",
-            ),
-            MenuEntry(label=menu_key("C", "heck"), brief="Slots, problems and menu fit"),
-            MenuEntry(label=menu_key("E", "nable"), brief="Turn the masthead on"),
-            MenuEntry(label=menu_key("D", "isable"), brief="Turn the masthead off"),
-            MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the masthead art"),
-            MenuEntry(label=menu_key("G", "allery"), brief="Apply a bundled sample masthead"),
-            MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
-            MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
-            *_remove_file_entry(status),
-            MenuEntry(label=menu_key("B", "ack"), brief="Return to Mastheads"),
-        ],
-        description_level,
-        used_rows=rows,
-        help_text="(Ctrl-H for where to place your own .ans files)",
-    )
-    await _choice_prompt(session)
-
-
-async def _preview_main_menu_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    """Renders the exact masthead `netbbs.net.main_menu._draw_main_menu`
-    would prepend above the main menu right now -- the same
-    `load_main_menu_banner` call, a smoke test of the loading path
-    itself. Unlike the welcome-banner preview, this never calls into
-    `netbbs.net.login_flow` to reproduce the real menu underneath it --
-    that module already imports `admin_menu` from this one, so the
-    reverse import would be circular, and the masthead itself carries no
-    truecolor-dependent content to showcase (shown exactly as authored,
-    the same "trusted, already-composed art" tier as the welcome
-    banner's own custom-file path)."""
-
-    if await lane.run(main_menu_art_mode) == SLOTS_MODE:
-        await _preview_main_menu_slot_art(session, lane, actor)
-        return
-
-    def _load(db: Database) -> tuple:
-        return main_menu_banner_status(db), load_main_menu_banner(db)
-
-    status, masthead = await lane.run(_load)
-    await session.write_line(colored("\r\nPreviewing the masthead as shown above the main menu:", fg_color=MUTED_COLOR))
-    if not masthead:
-        await _write_banner_not_live(session, status, callers_see="no masthead")
-    else:
-        await write_preview_art(
-            session, masthead, speed=await lane.run(art_speed, MAIN_MENU_ART), limit=await lane.run(art_time_limit, MAIN_MENU_ART),
-        )
-        await session.write_line(
-            colored("(the main menu itself renders live, unchanged, immediately below this)", fg_color=MUTED_COLOR)
-        )
-    # See _preview_welcome_banner_screen's identical fix for why this
-    # wait exists -- without it, redraw_in_place clears this preview
-    # before it can actually be read.
-    await session.write_line(continue_prompt())
-    await session.read_any_key()
 
 
 async def _toggle_main_menu_art_mode(session: Session, lane: DatabaseLane, actor: User) -> None:
@@ -1416,191 +904,6 @@ async def _preview_main_menu_slot_art(session: Session, lane: DatabaseLane, acto
         await session.read_any_key()
 
 
-async def _enable_main_menu_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    status = await lane.run(main_menu_banner_status)
-    if not status.exists:
-        _announce(session, f"No masthead file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
-        return
-    if (status.size_bytes or 0) > MAX_MASTHEAD_SIZE_BYTES:
-        _announce_line(session,
-            colored(
-                f"Masthead file at {status.path} is {status.size_bytes} bytes, over the "
-                f"{MAX_MASTHEAD_SIZE_BYTES} byte limit -- not enabling.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return
-
-    def _apply(db: Database) -> None:
-        set_main_menu_banner_enabled(db, True)
-        record_action(db, actor=actor, action="enable_main_menu_banner", detail=str(status.path))
-
-    await lane.run(_apply)
-    _announce_line(session, "Main-menu masthead enabled. Use [P]review to verify it looks right.")
-
-
-async def _disable_main_menu_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    def _apply(db: Database):
-        status = main_menu_banner_status(db)
-        set_main_menu_banner_enabled(db, False)
-        record_action(db, actor=actor, action="disable_main_menu_banner", detail=str(status.path))
-        return status
-
-    status = await lane.run(_apply)
-    _announce_line(session,
-        f"Masthead disabled -- the main menu reverts to showing no banner above it. "
-        f"Your file at {status.path} was left in place."
-    )
-
-
-async def _edit_main_menu_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    """Same WYSIWYG ANSI art editor as `_edit_welcome_banner_screen`,
-    against `main_menu_banner_path` instead."""
-    path = await lane.run(main_menu_banner_path)
-    initial_bytes = path.read_bytes() if path.exists() else None
-    draft_path = path.parent / f"{path.name}.draft"
-
-    result = await edit_ansi_art(
-        session, initial_bytes=initial_bytes, draft_path=draft_path,
-        redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
-        unicode_style=await lane.run(unicode_style_enabled, actor),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
-    )
-    if result is None:
-        _announce_line(session, colored("\r\nNo changes saved.", fg_color=MUTED_COLOR))
-        return
-
-    path.write_bytes(result)
-    await lane.run(record_action, actor=actor, action="edit_main_menu_banner", detail=str(path))
-    _announce_saved(session, "Saved ", path, ". Use [P]review to verify it looks right.")
-
-
-async def _main_menu_banner_gallery_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Same bundled-sample gallery as `_welcome_banner_gallery_screen`
-    (issue #169), against `main_menu_banner_path` instead -- including
-    its identical "decline loops back into the gallery, re-highlighted"
-    dogfood fixes."""
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(MAIN_MENU_BANNER_PRESETS, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            description_of=lambda pair: f"{pair[1].depth} -- {pair[1].description}",
-            title="Masthead gallery",
-            empty_message="No bundled masthead samples.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        preset = selection[1]
-        data = load_main_menu_banner_preset(preset)
-        await session.write_line(colored(f"\r\nPreviewing {preset.name!r}:", fg_color=MUTED_COLOR))
-        if preset.mode == SLOTS_MODE:
-            art = parse_slot_art(decode_banner_bytes(data))
-            await _write_slot_art_preview(session, lane, actor, art, level=None)
-        else:
-            await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        what = "as the main menu" if preset.mode == SLOTS_MODE else "as the masthead"
-        if not await _preview_apply_choice(session, f"Apply {preset.name!r} {what}"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            path = main_menu_banner_path(db)
-            path.write_bytes(data)
-            set_main_menu_banner_enabled(db, True)
-            set_main_menu_art_mode(db, preset.mode)
-            record_action(db, actor=actor, action="apply_main_menu_banner_preset", detail=f"{preset.key} -> {path}")
-            return path
-
-        path = await lane.run(_apply)
-        _announce_saved(session, "Applied and enabled. Saved to ", path, ". Use [P]review to verify it looks right.")
-        return
-
-
-async def _main_menu_banner_filesystem_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Same load-from-disk screen as `_welcome_banner_filesystem_screen`
-    (issue #170), against `main_menu_banner_path` instead -- see that
-    function's own docstring for the locked design (browsable root,
-    copy-not-reference load semantics, validate-before-copy)."""
-
-    def _list(db: Database) -> tuple[list[Path], Path]:
-        directory = main_menu_banner_path(db).parent
-        return _browsable_ans_files(directory, exclude=main_menu_banner_path(db)), directory
-
-    files, directory = await lane.run(_list)
-    if not files:
-        # Announced, not held behind a keypress: it is on the menu this returns to.
-        _announce(
-            session,
-            f"No other .ans files found in {directory}. Place one there "
-            f"(e.g. via SFTP/SCP), or send one with [U]pload, then browse again.",
-            color=MUTED_COLOR,
-        )
-        return
-
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(files, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            title="Masthead -- load from disk",
-            empty_message="No other .ans files found.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        path = selection[1]
-
-        size = path.stat().st_size
-        if size > MAX_MASTHEAD_SIZE_BYTES:
-            await session.write_line(colored(
-                f"{path.name} is {size} bytes, over the {MAX_MASTHEAD_SIZE_BYTES} byte "
-                f"limit -- not loading.", fg_color=MUTED_COLOR,
-            ))
-            await session.write_line(continue_prompt())
-            await session.read_any_key()
-            continue
-
-        data = path.read_bytes()
-        await session.write_line(colored(f"\r\nPreviewing {path.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Load {path.name!r} as the masthead"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            target = main_menu_banner_path(db)
-            target.write_bytes(data)
-            set_main_menu_banner_enabled(db, True)
-            record_action(db, actor=actor, action="load_main_menu_banner_from_file", detail=f"{path} -> {target}")
-            return target
-
-        target = await lane.run(_apply)
-        _announce_saved(session, "Loaded and enabled. Saved to ", target, ". Use [P]review to verify it looks right.")
-        return
-
-
 @located("Session banners")
 async def _banners_menu(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None = None
@@ -1619,19 +922,19 @@ async def _banners_menu(
             return
         elif choice == "w":
             await session.write_line("")
-            await _welcome_banner_menu(session, lane, actor, node_controls=node_controls)
+            await _slot_menu(session, lane, actor, _WELCOME, node_controls=node_controls)
             await _draw_banners_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == "l":
             await session.write_line("")
-            await _logoff_banner_menu(session, lane, actor, node_controls=node_controls)
+            await _slot_menu(session, lane, actor, _LOGOFF, node_controls=node_controls)
             await _draw_banners_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == "p":
             await session.write_line("")
-            await _new_account_banner_before_menu(session, lane, actor)
+            await _slot_menu(session, lane, actor, _NEW_ACCOUNT_BEFORE)
             await _draw_banners_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == "a":
             await session.write_line("")
-            await _new_account_banner_after_menu(session, lane, actor)
+            await _slot_menu(session, lane, actor, _NEW_ACCOUNT_AFTER)
             await _draw_banners_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == HELP_KEY:
             await session.write_line("")
@@ -1672,104 +975,6 @@ async def _draw_banners_menu(
     await _choice_prompt(session)
 
 
-@located("Logoff banner")
-async def _logoff_banner_menu(
-    session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None = None
-) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    header_color = await lane.run(effective_header_color_256)
-    await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-    while True:
-        choice = (await session.read_key()).lower()
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "p":
-            await session.write_line("")
-            await _preview_logoff_banner_screen(session, lane, actor, node_controls=node_controls)
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "e":
-            await session.write_line("")
-            await _enable_logoff_banner_screen(session, lane, actor)
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "d":
-            await session.write_line("")
-            await _disable_logoff_banner_screen(session, lane, actor)
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "o":
-            await session.write_line("")
-            await _edit_logoff_banner_screen(session, lane, actor)
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "g":
-            await session.write_line("")
-            await _logoff_banner_gallery_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "f":
-            await session.write_line("")
-            await _logoff_banner_filesystem_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "u":
-            await session.write_line("")
-            await _upload_banner_piece(session, lane, actor, path_of=logoff_banner_path, label="the log-off banner", audit_action="upload_logoff_banner")
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "r":
-            await session.write_line("")
-            await _remove_banner_file(
-                session, lane, actor, status_of=logoff_banner_status, set_enabled=set_logoff_banner_enabled,
-                label="the log-off banner", audit_action="remove_logoff_banner",
-            )
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == HELP_KEY:
-            await session.write_line("")
-            await _banner_help_screen(
-                session, path=await lane.run(logoff_banner_path), has_gallery=True,
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_logoff_banner_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        else:
-            await session.write(reject_unhandled_key(choice))
-
-
-async def _draw_logoff_banner_menu(
-    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
-    unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
-) -> None:
-    status = await lane.run(logoff_banner_status)
-    rows = await _write_counted(session, "\r\n" + screen_title("Logoff banner",
-            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
-            clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
-            node_name_gradient=session.node_name_gradient))
-    rows += await _write_wrapped_subtitle(
-        session,
-        "Shown above the ordinary Goodbye message on an intentional Log off only -- never on an idle "
-        "timeout, kick, or account revocation.",
-    )
-    sauce = await asyncio.to_thread(_banner_sauce, status)
-    rows += await _write_sections(session, [_banner_status_section(status, unicode_style=unicode_style, sauce=sauce)], unicode_style=unicode_style)
-    await _write_banner_menu(
-        session,
-        [
-            MenuEntry(label=menu_key("P", "review"), brief="Show the banner as callers see it"),
-            MenuEntry(label=menu_key("E", "nable"), brief="Turn the banner on"),
-            MenuEntry(label=menu_key("D", "isable"), brief="Turn the banner off"),
-            MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the banner text"),
-            MenuEntry(label=menu_key("G", "allery"), brief="Apply a bundled sample banner"),
-            MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
-            MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
-            *_remove_file_entry(status),
-            MenuEntry(label=menu_key("B", "ack"), brief="Return to Session banners"),
-        ],
-        description_level,
-        used_rows=rows,
-        help_text="(Ctrl-H for where to place your own .ans files)",
-    )
-    await _choice_prompt(session)
-
-
 async def _preview_logoff_banner_screen(
     session: Session, lane: DatabaseLane, actor: User | None = None, *, node_controls: NodeControls | None = None
 ) -> None:
@@ -1792,743 +997,6 @@ async def _preview_logoff_banner_screen(
     await session.read_any_key()
 
 
-async def _enable_logoff_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    status = await lane.run(logoff_banner_status)
-    if not status.exists:
-        _announce(session, f"No banner file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
-        return
-    if (status.size_bytes or 0) > MAX_LOGOFF_BANNER_SIZE_BYTES:
-        _announce_line(session,
-            colored(
-                f"Banner file at {status.path} is {status.size_bytes} bytes, over the "
-                f"{MAX_LOGOFF_BANNER_SIZE_BYTES} byte limit -- not enabling.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return
-
-    def _apply(db: Database) -> None:
-        set_logoff_banner_enabled(db, True)
-        record_action(db, actor=actor, action="enable_logoff_banner", detail=str(status.path))
-
-    await lane.run(_apply)
-    _announce_line(session, "Logoff banner enabled. Use [P]review to verify it looks right.")
-
-
-async def _disable_logoff_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    def _apply(db: Database):
-        status = logoff_banner_status(db)
-        set_logoff_banner_enabled(db, False)
-        record_action(db, actor=actor, action="disable_logoff_banner", detail=str(status.path))
-        return status
-
-    status = await lane.run(_apply)
-    _announce_line(session, f"Logoff banner disabled. Your file at {status.path} was left in place.")
-
-
-async def _edit_logoff_banner_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    path = await lane.run(logoff_banner_path)
-    initial_bytes = path.read_bytes() if path.exists() else None
-    draft_path = path.parent / f"{path.name}.draft"
-
-    result = await edit_ansi_art(
-        session, initial_bytes=initial_bytes, draft_path=draft_path,
-        redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
-        unicode_style=await lane.run(unicode_style_enabled, actor),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
-    )
-    if result is None:
-        _announce_line(session, colored("\r\nNo changes saved.", fg_color=MUTED_COLOR))
-        return
-
-    path.write_bytes(result)
-    await lane.run(record_action, actor=actor, action="edit_logoff_banner", detail=str(path))
-    _announce_saved(session, "Saved ", path, ". Use [P]review to verify it looks right.")
-
-
-async def _logoff_banner_gallery_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Preview and apply a farewell-specific bundled banner."""
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(LOGOFF_BANNER_PRESETS, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            description_of=lambda pair: f"{pair[1].depth} -- {pair[1].description}",
-            title="Logoff banner gallery",
-            empty_message="No bundled banner samples.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        preset = selection[1]
-        data = load_logoff_banner_preset(preset)
-        await session.write_line(colored(f"\r\nPreviewing {preset.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Apply {preset.name!r} as the logoff banner"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            path = logoff_banner_path(db)
-            path.write_bytes(data)
-            set_logoff_banner_enabled(db, True)
-            record_action(db, actor=actor, action="apply_logoff_banner_preset", detail=f"{preset.key} -> {path}")
-            return path
-
-        path = await lane.run(_apply)
-        _announce_saved(session, "Applied and enabled. Saved to ", path, ". Use [P]review to verify it looks right.")
-        return
-
-
-async def _logoff_banner_filesystem_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Same load-from-disk screen as `_main_menu_banner_filesystem_screen`
-    (issue #170), against `logoff_banner_path` instead."""
-
-    def _list(db: Database) -> tuple[list[Path], Path]:
-        directory = logoff_banner_path(db).parent
-        return _browsable_ans_files(directory, exclude=logoff_banner_path(db)), directory
-
-    files, directory = await lane.run(_list)
-    if not files:
-        # Announced, not held behind a keypress: it is on the menu this returns to.
-        _announce(
-            session,
-            f"No other .ans files found in {directory}. Place one there "
-            f"(e.g. via SFTP/SCP), or send one with [U]pload, then browse again.",
-            color=MUTED_COLOR,
-        )
-        return
-
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(files, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            title="Logoff banner -- load from disk",
-            empty_message="No other .ans files found.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        path = selection[1]
-
-        size = path.stat().st_size
-        if size > MAX_LOGOFF_BANNER_SIZE_BYTES:
-            await session.write_line(colored(
-                f"{path.name} is {size} bytes, over the {MAX_LOGOFF_BANNER_SIZE_BYTES} byte "
-                f"limit -- not loading.", fg_color=MUTED_COLOR,
-            ))
-            await session.write_line(continue_prompt())
-            await session.read_any_key()
-            continue
-
-        data = path.read_bytes()
-        await session.write_line(colored(f"\r\nPreviewing {path.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Load {path.name!r} as the logoff banner"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            target = logoff_banner_path(db)
-            target.write_bytes(data)
-            set_logoff_banner_enabled(db, True)
-            record_action(db, actor=actor, action="load_logoff_banner_from_file", detail=f"{path} -> {target}")
-            return target
-
-        target = await lane.run(_apply)
-        _announce_saved(session, "Loaded and enabled. Saved to ", target, ". Use [P]review to verify it looks right.")
-        return
-
-
-@located("New account banner (before)")
-async def _new_account_banner_before_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    header_color = await lane.run(effective_header_color_256)
-    await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-    while True:
-        choice = (await session.read_key()).lower()
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "p":
-            await session.write_line("")
-            await _preview_new_account_banner_before_screen(session, lane)
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "e":
-            await session.write_line("")
-            await _enable_new_account_banner_before_screen(session, lane, actor)
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "d":
-            await session.write_line("")
-            await _disable_new_account_banner_before_screen(session, lane, actor)
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "o":
-            await session.write_line("")
-            await _edit_new_account_banner_before_screen(session, lane, actor)
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "g":
-            await session.write_line("")
-            await _new_account_banner_before_gallery_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "f":
-            await session.write_line("")
-            await _new_account_banner_before_filesystem_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "u":
-            await session.write_line("")
-            await _upload_banner_piece(session, lane, actor, path_of=new_account_banner_before_path, label="the before-signup banner", audit_action="upload_new_account_banner_before")
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "r":
-            await session.write_line("")
-            await _remove_banner_file(
-                session, lane, actor, status_of=new_account_banner_before_status, set_enabled=set_new_account_banner_before_enabled,
-                label="the before-signup banner", audit_action="remove_new_account_banner_before",
-            )
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == HELP_KEY:
-            await session.write_line("")
-            await _banner_help_screen(
-                session, path=await lane.run(new_account_banner_before_path), has_gallery=True,
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_new_account_banner_before_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        else:
-            await session.write(reject_unhandled_key(choice))
-
-
-async def _draw_new_account_banner_before_menu(
-    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
-    unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
-) -> None:
-    status = await lane.run(new_account_banner_before_status)
-    rows = await _write_counted(session, "\r\n" + screen_title("New account banner (before)",
-            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
-            clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
-            node_name_gradient=session.node_name_gradient))
-    rows += await _write_wrapped_subtitle(
-        session,
-        "Shown once, right when a caller starts self-service signup -- before the Create "
-        "account prompts, never repeated on a fixable retry.",
-    )
-    sauce = await asyncio.to_thread(_banner_sauce, status)
-    rows += await _write_sections(session, [_banner_status_section(status, unicode_style=unicode_style, sauce=sauce)], unicode_style=unicode_style)
-    await _write_banner_menu(
-        session,
-        [
-            MenuEntry(label=menu_key("P", "review"), brief="Show the banner as callers see it"),
-            MenuEntry(label=menu_key("E", "nable"), brief="Turn the banner on"),
-            MenuEntry(label=menu_key("D", "isable"), brief="Turn the banner off"),
-            MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the banner text"),
-            MenuEntry(label=menu_key("G", "allery"), brief="Apply a bundled sample banner"),
-            MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
-            MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
-            *_remove_file_entry(status),
-            MenuEntry(label=menu_key("B", "ack"), brief="Return to Session banners"),
-        ],
-        description_level,
-        used_rows=rows,
-        help_text="(Ctrl-H for where to place your own .ans files)",
-    )
-    await _choice_prompt(session)
-
-
-async def _preview_new_account_banner_before_screen(session: Session, lane: DatabaseLane) -> None:
-    status, banner_text = await lane.run(
-        lambda db: (new_account_banner_before_status(db), load_new_account_banner_before(db))
-    )
-    await session.write_line(
-        colored("\r\nPreviewing new-account (before) banner as shown at signup:", fg_color=MUTED_COLOR)
-    )
-    if banner_text:
-        await write_preformatted_line(session, banner_text)
-    else:
-        await _write_banner_not_live(session, status, callers_see="no banner")
-    await session.write_line(continue_prompt())
-    await session.read_any_key()
-
-
-async def _enable_new_account_banner_before_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    status = await lane.run(new_account_banner_before_status)
-    if not status.exists:
-        _announce(session, f"No banner file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
-        return
-    if (status.size_bytes or 0) > MAX_NEW_ACCOUNT_BANNER_BEFORE_SIZE_BYTES:
-        _announce_line(session,
-            colored(
-                f"Banner file at {status.path} is {status.size_bytes} bytes, over the "
-                f"{MAX_NEW_ACCOUNT_BANNER_BEFORE_SIZE_BYTES} byte limit -- not enabling.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return
-
-    def _apply(db: Database) -> None:
-        set_new_account_banner_before_enabled(db, True)
-        record_action(db, actor=actor, action="enable_new_account_banner_before", detail=str(status.path))
-
-    await lane.run(_apply)
-    _announce_line(session, "New-account (before) banner enabled. Use [P]review to verify it looks right.")
-
-
-async def _disable_new_account_banner_before_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    def _apply(db: Database):
-        status = new_account_banner_before_status(db)
-        set_new_account_banner_before_enabled(db, False)
-        record_action(db, actor=actor, action="disable_new_account_banner_before", detail=str(status.path))
-        return status
-
-    status = await lane.run(_apply)
-    _announce_line(session, f"New-account (before) banner disabled. Your file at {status.path} was left in place.")
-
-
-async def _edit_new_account_banner_before_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    path = await lane.run(new_account_banner_before_path)
-    initial_bytes = path.read_bytes() if path.exists() else None
-    draft_path = path.parent / f"{path.name}.draft"
-
-    result = await edit_ansi_art(
-        session, initial_bytes=initial_bytes, draft_path=draft_path,
-        redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
-        unicode_style=await lane.run(unicode_style_enabled, actor),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
-    )
-    if result is None:
-        _announce_line(session, colored("\r\nNo changes saved.", fg_color=MUTED_COLOR))
-        return
-
-    path.write_bytes(result)
-    await lane.run(record_action, actor=actor, action="edit_new_account_banner_before", detail=str(path))
-    _announce_saved(session, "Saved ", path, ". Use [P]review to verify it looks right.")
-
-
-async def _new_account_banner_before_gallery_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Preview and apply a pre-registration bundled banner."""
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(NEW_ACCOUNT_BANNER_BEFORE_PRESETS, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            description_of=lambda pair: f"{pair[1].depth} -- {pair[1].description}",
-            title="New-account (before) banner gallery",
-            empty_message="No bundled banner samples.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        preset = selection[1]
-        data = load_new_account_banner_before_preset(preset)
-        await session.write_line(colored(f"\r\nPreviewing {preset.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Apply {preset.name!r} as the new-account (before) banner"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            path = new_account_banner_before_path(db)
-            path.write_bytes(data)
-            set_new_account_banner_before_enabled(db, True)
-            record_action(
-                db, actor=actor, action="apply_new_account_banner_before_preset", detail=f"{preset.key} -> {path}"
-            )
-            return path
-
-        path = await lane.run(_apply)
-        _announce_saved(session, "Applied and enabled. Saved to ", path, ". Use [P]review to verify it looks right.")
-        return
-
-
-async def _new_account_banner_before_filesystem_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Same load-from-disk screen as `_main_menu_banner_filesystem_screen`
-    (issue #170), against `new_account_banner_before_path` instead."""
-
-    def _list(db: Database) -> tuple[list[Path], Path]:
-        directory = new_account_banner_before_path(db).parent
-        return _browsable_ans_files(directory, exclude=new_account_banner_before_path(db)), directory
-
-    files, directory = await lane.run(_list)
-    if not files:
-        # Announced, not held behind a keypress: it is on the menu this returns to.
-        _announce(
-            session,
-            f"No other .ans files found in {directory}. Place one there "
-            f"(e.g. via SFTP/SCP), or send one with [U]pload, then browse again.",
-            color=MUTED_COLOR,
-        )
-        return
-
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(files, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            title="New-account (before) banner -- load from disk",
-            empty_message="No other .ans files found.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        path = selection[1]
-
-        size = path.stat().st_size
-        if size > MAX_NEW_ACCOUNT_BANNER_BEFORE_SIZE_BYTES:
-            await session.write_line(colored(
-                f"{path.name} is {size} bytes, over the {MAX_NEW_ACCOUNT_BANNER_BEFORE_SIZE_BYTES} byte "
-                f"limit -- not loading.", fg_color=MUTED_COLOR,
-            ))
-            await session.write_line(continue_prompt())
-            await session.read_any_key()
-            continue
-
-        data = path.read_bytes()
-        await session.write_line(colored(f"\r\nPreviewing {path.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Load {path.name!r} as the new-account (before) banner"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            target = new_account_banner_before_path(db)
-            target.write_bytes(data)
-            set_new_account_banner_before_enabled(db, True)
-            record_action(
-                db, actor=actor, action="load_new_account_banner_before_from_file", detail=f"{path} -> {target}"
-            )
-            return target
-
-        target = await lane.run(_apply)
-        _announce_saved(session, "Loaded and enabled. Saved to ", target, ". Use [P]review to verify it looks right.")
-        return
-
-
-@located("New account banner (after)")
-async def _new_account_banner_after_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    header_color = await lane.run(effective_header_color_256)
-    await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-    while True:
-        choice = (await session.read_key()).lower()
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "p":
-            await session.write_line("")
-            await _preview_new_account_banner_after_screen(session, lane)
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "e":
-            await session.write_line("")
-            await _enable_new_account_banner_after_screen(session, lane, actor)
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "d":
-            await session.write_line("")
-            await _disable_new_account_banner_after_screen(session, lane, actor)
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "o":
-            await session.write_line("")
-            await _edit_new_account_banner_after_screen(session, lane, actor)
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "g":
-            await session.write_line("")
-            await _new_account_banner_after_gallery_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "f":
-            await session.write_line("")
-            await _new_account_banner_after_filesystem_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "u":
-            await session.write_line("")
-            await _upload_banner_piece(session, lane, actor, path_of=new_account_banner_after_path, label="the after-signup banner", audit_action="upload_new_account_banner_after")
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "r":
-            await session.write_line("")
-            await _remove_banner_file(
-                session, lane, actor, status_of=new_account_banner_after_status, set_enabled=set_new_account_banner_after_enabled,
-                label="the after-signup banner", audit_action="remove_new_account_banner_after",
-            )
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == HELP_KEY:
-            await session.write_line("")
-            await _banner_help_screen(
-                session, path=await lane.run(new_account_banner_after_path), has_gallery=True,
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_new_account_banner_after_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        else:
-            await session.write(reject_unhandled_key(choice))
-
-
-async def _draw_new_account_banner_after_menu(
-    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
-    unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
-) -> None:
-    status = await lane.run(new_account_banner_after_status)
-    rows = await _write_counted(session, "\r\n" + screen_title("New account banner (after)",
-            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
-            clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
-            node_name_gradient=session.node_name_gradient))
-    rows += await _write_wrapped_subtitle(
-        session,
-        "Shown once self-service signup succeeds -- covers both an immediate login and a "
-        "pending-approval account, alongside the existing message either way.",
-    )
-    sauce = await asyncio.to_thread(_banner_sauce, status)
-    rows += await _write_sections(session, [_banner_status_section(status, unicode_style=unicode_style, sauce=sauce)], unicode_style=unicode_style)
-    await _write_banner_menu(
-        session,
-        [
-            MenuEntry(label=menu_key("P", "review"), brief="Show the banner as callers see it"),
-            MenuEntry(label=menu_key("E", "nable"), brief="Turn the banner on"),
-            MenuEntry(label=menu_key("D", "isable"), brief="Turn the banner off"),
-            MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the banner text"),
-            MenuEntry(label=menu_key("G", "allery"), brief="Apply a bundled sample banner"),
-            MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
-            MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
-            *_remove_file_entry(status),
-            MenuEntry(label=menu_key("B", "ack"), brief="Return to Session banners"),
-        ],
-        description_level,
-        used_rows=rows,
-        help_text="(Ctrl-H for where to place your own .ans files)",
-    )
-    await _choice_prompt(session)
-
-
-async def _preview_new_account_banner_after_screen(session: Session, lane: DatabaseLane) -> None:
-    status, banner_text = await lane.run(
-        lambda db: (new_account_banner_after_status(db), load_new_account_banner_after(db))
-    )
-    await session.write_line(
-        colored("\r\nPreviewing new-account (after) banner as shown once signup succeeds:", fg_color=MUTED_COLOR)
-    )
-    if banner_text:
-        await write_preformatted_line(session, banner_text)
-    else:
-        await _write_banner_not_live(session, status, callers_see="no banner")
-    await session.write_line(continue_prompt())
-    await session.read_any_key()
-
-
-async def _enable_new_account_banner_after_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    status = await lane.run(new_account_banner_after_status)
-    if not status.exists:
-        _announce(session, f"No banner file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
-        return
-    if (status.size_bytes or 0) > MAX_NEW_ACCOUNT_BANNER_AFTER_SIZE_BYTES:
-        _announce_line(session,
-            colored(
-                f"Banner file at {status.path} is {status.size_bytes} bytes, over the "
-                f"{MAX_NEW_ACCOUNT_BANNER_AFTER_SIZE_BYTES} byte limit -- not enabling.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return
-
-    def _apply(db: Database) -> None:
-        set_new_account_banner_after_enabled(db, True)
-        record_action(db, actor=actor, action="enable_new_account_banner_after", detail=str(status.path))
-
-    await lane.run(_apply)
-    _announce_line(session, "New-account (after) banner enabled. Use [P]review to verify it looks right.")
-
-
-async def _disable_new_account_banner_after_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    def _apply(db: Database):
-        status = new_account_banner_after_status(db)
-        set_new_account_banner_after_enabled(db, False)
-        record_action(db, actor=actor, action="disable_new_account_banner_after", detail=str(status.path))
-        return status
-
-    status = await lane.run(_apply)
-    _announce_line(session, f"New-account (after) banner disabled. Your file at {status.path} was left in place.")
-
-
-async def _edit_new_account_banner_after_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    path = await lane.run(new_account_banner_after_path)
-    initial_bytes = path.read_bytes() if path.exists() else None
-    draft_path = path.parent / f"{path.name}.draft"
-
-    result = await edit_ansi_art(
-        session, initial_bytes=initial_bytes, draft_path=draft_path,
-        redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
-        unicode_style=await lane.run(unicode_style_enabled, actor),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
-    )
-    if result is None:
-        _announce_line(session, colored("\r\nNo changes saved.", fg_color=MUTED_COLOR))
-        return
-
-    path.write_bytes(result)
-    await lane.run(record_action, actor=actor, action="edit_new_account_banner_after", detail=str(path))
-    _announce_saved(session, "Saved ", path, ". Use [P]review to verify it looks right.")
-
-
-async def _new_account_banner_after_gallery_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Preview and apply a post-registration bundled banner."""
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(NEW_ACCOUNT_BANNER_AFTER_PRESETS, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            description_of=lambda pair: f"{pair[1].depth} -- {pair[1].description}",
-            title="New-account (after) banner gallery",
-            empty_message="No bundled banner samples.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        preset = selection[1]
-        data = load_new_account_banner_after_preset(preset)
-        await session.write_line(colored(f"\r\nPreviewing {preset.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Apply {preset.name!r} as the new-account (after) banner"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            path = new_account_banner_after_path(db)
-            path.write_bytes(data)
-            set_new_account_banner_after_enabled(db, True)
-            record_action(
-                db, actor=actor, action="apply_new_account_banner_after_preset", detail=f"{preset.key} -> {path}"
-            )
-            return path
-
-        path = await lane.run(_apply)
-        _announce_saved(session, "Applied and enabled. Saved to ", path, ". Use [P]review to verify it looks right.")
-        return
-
-
-async def _new_account_banner_after_filesystem_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Same load-from-disk screen as `_main_menu_banner_filesystem_screen`
-    (issue #170), against `new_account_banner_after_path` instead."""
-
-    def _list(db: Database) -> tuple[list[Path], Path]:
-        directory = new_account_banner_after_path(db).parent
-        return _browsable_ans_files(directory, exclude=new_account_banner_after_path(db)), directory
-
-    files, directory = await lane.run(_list)
-    if not files:
-        # Announced, not held behind a keypress: it is on the menu this returns to.
-        _announce(
-            session,
-            f"No other .ans files found in {directory}. Place one there "
-            f"(e.g. via SFTP/SCP), or send one with [U]pload, then browse again.",
-            color=MUTED_COLOR,
-        )
-        return
-
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(files, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            title="New-account (after) banner -- load from disk",
-            empty_message="No other .ans files found.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        path = selection[1]
-
-        size = path.stat().st_size
-        if size > MAX_NEW_ACCOUNT_BANNER_AFTER_SIZE_BYTES:
-            await session.write_line(colored(
-                f"{path.name} is {size} bytes, over the {MAX_NEW_ACCOUNT_BANNER_AFTER_SIZE_BYTES} byte "
-                f"limit -- not loading.", fg_color=MUTED_COLOR,
-            ))
-            await session.write_line(continue_prompt())
-            await session.read_any_key()
-            continue
-
-        data = path.read_bytes()
-        await session.write_line(colored(f"\r\nPreviewing {path.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Load {path.name!r} as the new-account (after) banner"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            target = new_account_banner_after_path(db)
-            target.write_bytes(data)
-            set_new_account_banner_after_enabled(db, True)
-            record_action(
-                db, actor=actor, action="load_new_account_banner_after_from_file", detail=f"{path} -> {target}"
-            )
-            return target
-
-        target = await lane.run(_apply)
-        _announce_saved(session, "Loaded and enabled. Saved to ", target, ". Use [P]review to verify it looks right.")
-        return
-
-
 @located("Mastheads")
 async def _mastheads_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
     description_level = await lane.run(menu_description_level, actor)
@@ -2545,19 +1013,19 @@ async def _mastheads_menu(session: Session, lane: DatabaseLane, actor: User) -> 
             return
         elif choice == "m":
             await session.write_line("")
-            await _main_menu_banner_menu(session, lane, actor)
+            await _slot_menu(session, lane, actor, _MAIN_MENU)
             await _draw_mastheads_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == "d":
             await session.write_line("")
-            await _board_list_masthead_menu(session, lane, actor)
+            await _slot_menu(session, lane, actor, _BOARD_LIST)
             await _draw_mastheads_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == "f":
             await session.write_line("")
-            await _file_area_masthead_menu(session, lane, actor)
+            await _slot_menu(session, lane, actor, _FILE_AREA)
             await _draw_mastheads_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == "c":
             await session.write_line("")
-            await _chat_channel_picker_masthead_menu(session, lane, actor)
+            await _slot_menu(session, lane, actor, _CHAT_CHANNEL_PICKER)
             await _draw_mastheads_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == HELP_KEY:
             await session.write_line("")
@@ -2779,183 +1247,280 @@ async def _preview_list_slot_art(session: Session, lane: DatabaseLane, actor: Us
     await session.read_any_key()
 
 
-@located("Board list masthead")
-async def _board_list_masthead_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    header_color = await lane.run(effective_header_color_256)
-    await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-    while True:
-        choice = (await session.read_key()).lower()
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "p":
-            await session.write_line("")
-            if await lane.run(list_art_mode, BOARD_LIST) == LIST_SLOTS_MODE:
-                await _preview_list_slot_art(session, lane, actor, BOARD_LIST)
-            else:
-                await _preview_board_list_masthead_screen(session, lane)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "e":
-            await session.write_line("")
-            await _enable_board_list_masthead_screen(session, lane, actor)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "d":
-            await session.write_line("")
-            await _disable_board_list_masthead_screen(session, lane, actor)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "o":
-            await session.write_line("")
-            await _edit_board_list_masthead_screen(session, lane, actor)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "g":
-            await session.write_line("")
-            await _board_list_masthead_gallery_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "f":
-            await session.write_line("")
-            await _board_list_masthead_filesystem_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "u":
-            await session.write_line("")
-            await _upload_banner_piece(session, lane, actor, path_of=board_list_banner_path, label="the message-board masthead", audit_action="upload_board_list_banner")
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "r":
-            await session.write_line("")
-            await _remove_banner_file(
-                session, lane, actor, status_of=board_list_banner_status, set_enabled=set_board_list_banner_enabled,
-                label="the message-board masthead", audit_action="remove_board_list_banner",
-            )
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "m":
-            await session.write_line("")
-            await _toggle_list_art_mode(session, lane, actor, BOARD_LIST)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "s":
-            await session.write_line("")
-            await _cycle_art_speed(lane, actor, BOARD_LIST)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "t":
-            await session.write_line("")
-            await _cycle_art_time_limit(lane, actor, BOARD_LIST)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "c":
-            await session.write_line("")
-            await _check_list_slot_art_screen(session, lane, actor, BOARD_LIST)
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == HELP_KEY:
-            await session.write_line("")
-            await _banner_help_screen(
-                session, path=await lane.run(board_list_banner_path), has_gallery=True,
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_board_list_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        else:
-            await session.write(reject_unhandled_key(choice))
+# -- one set of screens for every banner and masthead (issue #1327) ---------
+#
+# The welcome, main-menu, logoff and new-account banners and the three list
+# mastheads each have the same screen: status, [P]review, [E]nable,
+# [D]isable, [O]pen editor, [G]allery, [F]rom disk, [U]pload and [R]emove
+# file. A `_BannerSlot` says what differs between them; `_slot_menu` and the
+# screens below draw every one of them from it.
 
 
-async def _draw_board_list_masthead_menu(
-    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
-    unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
+@dataclass(frozen=True)
+class _ArtMode:
+    """A slot whose art can be shown above its screen or be the screen
+    itself, with live slots (issue #929): the main menu, and the three lists
+    (`_LIST_ART_SCREENS`). Adds [M]ode and [C]heck to the slot's screen."""
+
+    read: Callable[[Database], str]
+    slots: str  # the value of `read` in slots mode
+    line: Callable[[str], str]  # the mode, as the row under the status
+    entry_brief: Callable[[str], str]  # [M]ode's description
+    check_brief: str
+    toggle: Callable[[Session, DatabaseLane, User], Awaitable[None]]
+    check: Callable[[Session, DatabaseLane, User], Awaitable[None]]
+    preview: Callable[[Session, DatabaseLane, User], Awaitable[None]]  # [P]review in slots mode
+    apply_preset: Callable[[Database, object], None]  # a gallery sample's own mode
+
+
+@dataclass(frozen=True)
+class _BannerSlot:
+    """One banner or masthead: its file, its switch, its samples, and the
+    words its screens use for it."""
+
+    key: str  # the file's suffix (`<db>_<key>.ans`) and the audit actions' stem
+    title: str  # the screen's title and its breadcrumb
+    noun: str  # "banner" or "masthead"
+    piece: str  # how [U]pload and [R]emove name it
+    back_to: str  # the screen [B]ack returns to
+    path_of: Callable[[Database], Path]
+    status_of: Callable[[Database], object]
+    set_enabled: Callable[[Database, bool], None]
+    max_bytes: int
+    presets: tuple
+    load_preset: Callable[[object], bytes]
+    load: Callable[[Database], str | None] | None = None  # the art callers get, for the plain preview
+    preview_heading: str = ""
+    preview_note: str = ""  # a muted line under a shown preview
+    preview: Callable[..., Awaitable[None]] | None = None  # a preview of the slot's own
+    name: str = ""  # the outcome lines' name for it; the title when empty
+    picker_name: str = ""  # the gallery and from-disk pickers' name for it; `name` when empty
+    disabled_lead: str = ""  # what [D]isable says first; "<name> disabled." when empty
+    gallery_empty: str = ""  # "No bundled <noun> samples." when empty
+    subtitle: str = ""  # the line under the title
+    art_kind: str | None = None  # `netbbs.net.art_pacing` kind: adds [S]peed and [T]ime limit
+    mode: _ArtMode | None = None
+    credit: bool = False  # the welcome banner's [C]redit line
+    too_wide: str = "no art"  # what a terminal narrower than the art gets
+    preview_preset: Callable[..., Awaitable[None]] | None = None  # a gallery sample's preview, when not as drawn
+    preset_as: Callable[[object], str] | None = None  # "as the ..." for a gallery sample, when it varies
+
+    @property
+    def shown_name(self) -> str:
+        return self.name or self.title
+
+    @property
+    def listed_name(self) -> str:
+        return self.picker_name or self.shown_name
+
+    @property
+    def as_what(self) -> str:
+        return f"the {self.listed_name.lower()}"
+
+
+async def _slot_menu(
+    session: Session, lane: DatabaseLane, actor: User, slot: _BannerSlot, *,
+    node_controls: NodeControls | None = None,
 ) -> None:
-    status = await lane.run(board_list_banner_status)
-    mode = await lane.run(list_art_mode, BOARD_LIST)
-    rows = await _write_counted(session, "\r\n" + screen_title("Board list masthead",
-            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
-            clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
-            node_name_gradient=session.node_name_gradient))
-    rows += await _write_wrapped_subtitle(
-        session,
-        "Shown above every board-browsing view -- the top level, a category, or a "
-        "Community.",
-    )
-    sauce = await asyncio.to_thread(_banner_sauce, status)
-    speed = await lane.run(art_speed, BOARD_LIST)
-    time_limit = await lane.run(art_time_limit, BOARD_LIST)
-    rows += await _write_sections(session, [_banner_status_section(status, unicode_style=unicode_style, sauce=sauce, speed=speed)], unicode_style=unicode_style)
-    await session.write_line("")
-    rows += 1
-    rows += await _write_wrapped_subtitle(session, _list_art_mode_line(mode))
-    await _write_banner_menu(
-        session,
-        [
-            MenuEntry(label=menu_key("P", "review"), brief="Show it as callers see it"),
-            MenuEntry(label=menu_key("S", "peed"), brief=_art_speed_brief(speed)),
-            _art_time_limit_entry(time_limit),
-            MenuEntry(
-                label=menu_key("M", "ode"),
-                brief="Make the art the list itself" if mode == LIST_MASTHEAD_MODE else "Show the art above the list",
+    """A banner's or masthead's own screen, and every key on it."""
+    with entered(session, slot.title):
+        description_level = await lane.run(menu_description_level, actor)
+        unicode_style = await lane.run(unicode_style_enabled, actor)
+        collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
+        redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
+        prefs = (description_level, redraw_in_place, unicode_style, collapsed)
+        actions = {
+            "p": lambda: _preview_slot(session, lane, actor, slot=slot, node_controls=node_controls),
+            "e": lambda: _enable_slot_screen(session, lane, actor, slot),
+            "d": lambda: _disable_slot_screen(session, lane, actor, slot),
+            "o": lambda: _edit_slot_screen(session, lane, actor, slot),
+            "g": lambda: _slot_gallery_screen(session, lane, actor, slot, *prefs),
+            "f": lambda: _slot_filesystem_screen(session, lane, actor, slot, *prefs),
+            "u": lambda: _upload_banner_piece(
+                session, lane, actor, path_of=slot.path_of, label=slot.piece, audit_action=f"upload_{slot.key}",
             ),
-            MenuEntry(label=menu_key("C", "heck"), brief="Slots, problems and list fit"),
-            MenuEntry(label=menu_key("E", "nable"), brief="Turn the masthead on"),
-            MenuEntry(label=menu_key("D", "isable"), brief="Turn the masthead off"),
-            MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the masthead art"),
-            MenuEntry(label=menu_key("G", "allery"), brief="Apply a bundled sample masthead"),
-            MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
-            MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
-            *_remove_file_entry(status),
-            MenuEntry(label=menu_key("B", "ack"), brief="Return to Mastheads"),
-        ],
-        description_level,
-        used_rows=rows,
+            "r": lambda: _remove_banner_file(
+                session, lane, actor, status_of=slot.status_of, set_enabled=slot.set_enabled,
+                label=slot.piece, audit_action=f"remove_{slot.key}",
+            ),
+            HELP_KEY: lambda: _slot_help_screen(session, lane, slot, unicode_style),
+        }
+        if slot.art_kind is not None:
+            actions["s"] = lambda: _cycle_art_speed(lane, actor, slot.art_kind)
+            actions["t"] = lambda: _cycle_art_time_limit(lane, actor, slot.art_kind)
+        if slot.mode is not None:
+            actions["m"] = lambda: slot.mode.toggle(session, lane, actor)
+            actions["c"] = lambda: slot.mode.check(session, lane, actor)
+        if slot.credit:
+            actions["c"] = lambda: _toggle_credit_screen(session, lane, actor)
+
+        await _draw_slot_menu(session, lane, *prefs, slot=slot)
+        while True:
+            choice = (await session.read_key()).lower()
+            if choice == "b":
+                await session.write_line("")
+                return
+            action = actions.get(choice)
+            if action is None:
+                await session.write(reject_unhandled_key(choice))
+                continue
+            await session.write_line("")
+            await action()
+            await _draw_slot_menu(session, lane, *prefs, slot=slot)
+
+
+async def _toggle_credit_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
+    shown = await lane.run(_toggle_welcome_banner_credit, actor)
+    _announce(session, "Callers now see the art's credit under your banner." if shown
+              else "The art's credit is no longer shown under your banner.")
+
+
+async def _slot_help_screen(session: Session, lane: DatabaseLane, slot: _BannerSlot, unicode_style: bool) -> None:
+    await _banner_help_screen(
+        session, path=await lane.run(slot.path_of),
+        header_color=await lane.run(effective_header_color_256), unicode_style=unicode_style,
+    )
+
+
+async def _draw_slot_menu(
+    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
+    unicode_style: bool, collapsed: bool, *, slot: _BannerSlot,
+) -> None:
+    status = await lane.run(slot.status_of)
+    rows = await _write_counted(session, "\r\n" + screen_title(slot.title,
+            breadcrumb=crumbs(session, own=True), width=session.terminal_width, clear=redraw_in_place,
+            unicode_style=unicode_style, collapsed=collapsed,
+            header_color=await lane.run(effective_header_color_256), node_name_gradient=session.node_name_gradient))
+    if slot.subtitle:
+        rows += await _write_wrapped_subtitle(session, slot.subtitle)
+    speed = time_limit = None
+    if slot.art_kind is not None:
+        speed = await lane.run(art_speed, slot.art_kind)
+        time_limit = await lane.run(art_time_limit, slot.art_kind)
+    rows += await _write_sections(
+        session,
+        [_banner_status_section(
+            status, unicode_style=unicode_style, sauce=await asyncio.to_thread(_banner_sauce, status),
+            credit_line=await lane.run(is_welcome_banner_credit_enabled) if slot.credit else None,
+            too_wide=slot.too_wide, speed=speed,
+        )],
+        unicode_style=unicode_style,
+    )
+    mode = None
+    if slot.mode is not None:
+        mode = await lane.run(slot.mode.read)
+        await session.write_line("")
+        rows += 1
+        # One row each on the main menu's, so its screen fits 80x24 with [S]peed.
+        rows += await _write_wrapped_subtitle(session, slot.mode.line(mode))
+    entries = [MenuEntry(
+        label=menu_key("P", "review"),
+        brief="Show it as callers see it" if slot.mode is not None else f"Show the {slot.noun} as callers see it",
+    )]
+    if slot.art_kind is not None:
+        entries += [MenuEntry(label=menu_key("S", "peed"), brief=_art_speed_brief(speed)), _art_time_limit_entry(time_limit)]
+    if slot.mode is not None:
+        entries += [
+            MenuEntry(label=menu_key("M", "ode"), brief=slot.mode.entry_brief(mode)),
+            MenuEntry(label=menu_key("C", "heck"), brief=slot.mode.check_brief),
+        ]
+    entries += [
+        MenuEntry(label=menu_key("E", "nable"), brief=f"Turn the {slot.noun} on"),
+        MenuEntry(label=menu_key("D", "isable"), brief=f"Turn the {slot.noun} off"),
+        MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the banner text" if slot.noun == "banner" else "Edit the masthead art"),
+    ]
+    if slot.credit:
+        entries.append(MenuEntry(label=menu_key("C", "redit line"), brief="Credit the art under the banner"))
+    entries += [
+        MenuEntry(label=menu_key("G", "allery"), brief=f"Apply a bundled sample {slot.noun}"),
+        MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
+        MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
+        *_remove_file_entry(status),
+        MenuEntry(label=menu_key("B", "ack"), brief=f"Return to {slot.back_to}"),
+    ]
+    await _write_banner_menu(
+        session, entries, description_level, used_rows=rows,
         help_text="(Ctrl-H for where to place your own .ans files)",
     )
     await _choice_prompt(session)
 
 
-async def _preview_board_list_masthead_screen(session: Session, lane: DatabaseLane) -> None:
-    status, masthead_text = await lane.run(lambda db: (board_list_banner_status(db), load_board_list_banner(db)))
-    await session.write_line(colored("\r\nPreviewing board list masthead as shown above the board list:", fg_color=MUTED_COLOR))
-    if masthead_text:
+async def _preview_slot(
+    session: Session, lane: DatabaseLane, actor: User, *, slot: _BannerSlot,
+    node_controls: NodeControls | None = None,
+) -> None:
+    """[P]review: the slot's own preview where it has one (the welcome and
+    logoff banners fill field slots as callers get them), the screen drawn
+    into the art in slots mode, and otherwise the art exactly as the
+    caller-facing loader returns it -- a smoke test of that loading path,
+    not a separate rendering."""
+    if slot.preview is not None:
+        await slot.preview(session, lane, actor, node_controls=node_controls)
+        return
+    if slot.mode is not None and await lane.run(slot.mode.read) == slot.mode.slots:
+        await slot.mode.preview(session, lane, actor)
+        return
+    status, text = await lane.run(lambda db: (slot.status_of(db), slot.load(db)))
+    await session.write_line(colored(f"\r\n{slot.preview_heading}", fg_color=MUTED_COLOR))
+    if not text:
+        await _write_banner_not_live(session, status, callers_see=f"no {slot.noun}")
+    elif slot.art_kind is not None:
+        # At the speed callers get it (issue #929).
         await write_preview_art(
-            session, masthead_text, speed=await lane.run(art_speed, BOARD_LIST), limit=await lane.run(art_time_limit, BOARD_LIST),
+            session, text, speed=await lane.run(art_speed, slot.art_kind), limit=await lane.run(art_time_limit, slot.art_kind),
         )
     else:
-        await _write_banner_not_live(session, status, callers_see="no masthead")
+        await write_preformatted_line(session, text)
+    if text and slot.preview_note:
+        await session.write_line(colored(slot.preview_note, fg_color=MUTED_COLOR))
+    # Without this wait, redraw_in_place clears the preview before it can be
+    # read (see _preview_welcome_banner_screen).
     await session.write_line(continue_prompt())
     await session.read_any_key()
 
 
-async def _enable_board_list_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    status = await lane.run(board_list_banner_status)
+async def _enable_slot_screen(session: Session, lane: DatabaseLane, actor: User, slot: _BannerSlot) -> None:
+    status = await lane.run(slot.status_of)
     if not status.exists:
-        _announce(session, f"No masthead file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
+        _announce(session, f"No {slot.noun} file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
         return
-    if (status.size_bytes or 0) > MAX_BOARD_LIST_BANNER_SIZE_BYTES:
+    if (status.size_bytes or 0) > slot.max_bytes:
         _announce_line(session,
             colored(
-                f"Masthead file at {status.path} is {status.size_bytes} bytes, over the "
-                f"{MAX_BOARD_LIST_BANNER_SIZE_BYTES} byte limit -- not enabling.",
+                f"{slot.noun.capitalize()} file at {status.path} is {status.size_bytes} bytes, over the "
+                f"{slot.max_bytes} byte limit -- not enabling.",
                 fg_color=MUTED_COLOR,
             )
         )
         return
 
     def _apply(db: Database) -> None:
-        set_board_list_banner_enabled(db, True)
-        record_action(db, actor=actor, action="enable_board_list_banner", detail=str(status.path))
+        slot.set_enabled(db, True)
+        record_action(db, actor=actor, action=f"enable_{slot.key}", detail=str(status.path))
 
     await lane.run(_apply)
-    _announce_line(session, "Board list masthead enabled. Use [P]review to verify it looks right.")
+    _announce_line(session, f"{slot.shown_name} enabled. Use [P]review to verify it looks right.")
 
 
-async def _disable_board_list_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
+async def _disable_slot_screen(session: Session, lane: DatabaseLane, actor: User, slot: _BannerSlot) -> None:
     def _apply(db: Database):
-        status = board_list_banner_status(db)
-        set_board_list_banner_enabled(db, False)
-        record_action(db, actor=actor, action="disable_board_list_banner", detail=str(status.path))
+        status = slot.status_of(db)
+        slot.set_enabled(db, False)
+        record_action(db, actor=actor, action=f"disable_{slot.key}", detail=str(status.path))
         return status
 
     status = await lane.run(_apply)
-    _announce_line(session, f"Board list masthead disabled. Your file at {status.path} was left in place.")
+    lead = slot.disabled_lead or f"{slot.shown_name} disabled."
+    _announce_line(session, f"{lead} Your file at {status.path} was left in place.")
 
 
-async def _edit_board_list_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    path = await lane.run(board_list_banner_path)
+async def _edit_slot_screen(session: Session, lane: DatabaseLane, actor: User, slot: _BannerSlot) -> None:
+    """Opens the WYSIWYG ANSI art editor (design doc) against the slot's
+    current file, if any. `edit_ansi_art` itself knows nothing about
+    banners -- this screen is responsible for loading the existing file,
+    computing the draft path, and writing a real save back to the slot's
+    path."""
+    path = await lane.run(slot.path_of)
     initial_bytes = path.read_bytes() if path.exists() else None
     draft_path = path.parent / f"{path.name}.draft"
 
@@ -2970,25 +1535,40 @@ async def _edit_board_list_masthead_screen(session: Session, lane: DatabaseLane,
         return
 
     path.write_bytes(result)
-    await lane.run(record_action, actor=actor, action="edit_board_list_banner", detail=str(path))
+    await lane.run(record_action, actor=actor, action=f"edit_{slot.key}", detail=str(path))
     _announce_saved(session, "Saved ", path, ". Use [P]review to verify it looks right.")
 
 
-async def _board_list_masthead_gallery_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
+async def _slot_gallery_screen(
+    session: Session, lane: DatabaseLane, actor: User, slot: _BannerSlot, description_level: str,
     redraw_in_place: bool, unicode_style: bool, collapsed: bool,
 ) -> None:
-    """Preview and apply a message-board-specific masthead."""
+    """Issue #169: apply one of NetBBS's own bundled samples with zero
+    filesystem access to the node -- the samples are real installed package
+    data (`netbbs.net.banner_presets`), not files a SysOp has to `cp` into
+    place first (the gap this closes: a wheel install has no `examples/`
+    directory to copy from at all).
+
+    Dogfood follow-up: declining the apply prompt loops back into this same
+    gallery picker instead of exiting to the slot's menu -- browsing several
+    samples in a row used to mean re-entering `[G]allery` after every
+    single one just to look at the next.
+
+    Second dogfood follow-up: that loop-back used to always reopen the
+    picker at page 1 with nothing highlighted, discarding exactly the
+    browsing position a decline is supposed to return you to -- `pick_
+    item`'s `start_stable_id` now re-highlights whichever sample was just
+    declined."""
     last_stable_id: int | None = None
     while True:
         selection = await pick_item(
             session,
-            list(enumerate(BOARD_LIST_MASTHEAD_PRESETS, start=1)),
+            list(enumerate(slot.presets, start=1)),
             name_of=lambda pair: pair[1].name,
             stable_id_of=lambda pair: pair[0],
             description_of=lambda pair: f"{pair[1].depth} -- {pair[1].description}",
-            title="Board list masthead gallery",
-            empty_message="No bundled masthead samples.",
+            title=f"{slot.listed_name} gallery",
+            empty_message=slot.gallery_empty or f"No bundled {slot.noun} samples.",
             description_level=description_level,
             redraw_in_place=redraw_in_place,
             unicode_style=unicode_style,
@@ -2999,20 +1579,24 @@ async def _board_list_masthead_gallery_screen(
             return
         last_stable_id = selection[0]
         preset = selection[1]
-        data = load_board_list_masthead_preset(preset)
+        data = slot.load_preset(preset)
         await session.write_line(colored(f"\r\nPreviewing {preset.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
+        if slot.preview_preset is not None:
+            await slot.preview_preset(session, lane, actor, preset, data)
+        else:
+            await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
 
-        if not await _preview_apply_choice(session, f"Apply {preset.name!r} as the board list masthead"):
+        what = slot.preset_as(preset) if slot.preset_as is not None else f"as {slot.as_what}"
+        if not await _preview_apply_choice(session, f"Apply {preset.name!r} {what}"):
             continue
 
         def _apply(db: Database) -> Path:
-            path = board_list_banner_path(db)
+            path = slot.path_of(db)
             path.write_bytes(data)
-            set_board_list_banner_enabled(db, True)
-            # A list sample is the list itself; any other sample goes above it.
-            set_list_art_mode(db, BOARD_LIST, LIST_SLOTS_MODE if preset.mode == "slots" else LIST_MASTHEAD_MODE)
-            record_action(db, actor=actor, action="apply_board_list_banner_preset", detail=f"{preset.key} -> {path}")
+            slot.set_enabled(db, True)
+            if slot.mode is not None:
+                slot.mode.apply_preset(db, preset)
+            record_action(db, actor=actor, action=f"apply_{slot.key}_preset", detail=f"{preset.key} -> {path}")
             return path
 
         path = await lane.run(_apply)
@@ -3020,18 +1604,36 @@ async def _board_list_masthead_gallery_screen(
         return
 
 
-async def _board_list_masthead_filesystem_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
+async def _slot_filesystem_screen(
+    session: Session, lane: DatabaseLane, actor: User, slot: _BannerSlot, description_level: str,
     redraw_in_place: bool, unicode_style: bool, collapsed: bool,
 ) -> None:
-    """Same load-from-disk screen as `_main_menu_banner_filesystem_screen`
-    (issue #170), against `board_list_banner_path` instead -- see that
-    function's own docstring for the locked design (browsable root,
-    copy-not-reference load semantics, validate-before-copy)."""
+    """Issue #170: load a SysOp's own externally-authored `.ans` file --
+    drawn in a dedicated tool, or downloaded from elsewhere -- instead of
+    having to shell in and place it at the slot's path by hand. Different
+    problem from the bundled gallery (issue #169, sibling): nothing here was
+    ever going to ship *with* NetBBS, so this enumerates real files on disk
+    instead of a fixed preset tuple.
+
+    **Browsable root** (locked design, see the issue's own comments): the
+    node's own state directory only -- exactly the slot path's own parent,
+    the same directory NetBBS already reads/writes banner state in. No new
+    `node_config` setting, no new attack surface beyond what already exists.
+
+    **Load semantics**: copy, not reference-in-place. The selected file's
+    bytes are written to the slot's existing well-known path, exactly as if
+    the SysOp had `cp`'d it there by hand -- the loaders, the status, backup
+    and restore, and the WYSIWYG editor all keep their existing
+    one-file-one-path assumption completely untouched.
+
+    **Validation timing**: the same size cap `[E]nable` already enforces
+    runs *before* the copy, against the source file -- rejecting a pick
+    immediately with a clear reason, not a weaker path into the same target
+    than manual placement already has."""
 
     def _list(db: Database) -> tuple[list[Path], Path]:
-        directory = board_list_banner_path(db).parent
-        return _browsable_ans_files(directory, exclude=board_list_banner_path(db)), directory
+        directory = slot.path_of(db).parent
+        return _browsable_ans_files(directory, exclude=slot.path_of(db)), directory
 
     files, directory = await lane.run(_list)
     if not files:
@@ -3051,7 +1653,7 @@ async def _board_list_masthead_filesystem_screen(
             list(enumerate(files, start=1)),
             name_of=lambda pair: pair[1].name,
             stable_id_of=lambda pair: pair[0],
-            title="Board list masthead -- load from disk",
+            title=f"{slot.listed_name} -- load from disk",
             empty_message="No other .ans files found.",
             description_level=description_level,
             redraw_in_place=redraw_in_place,
@@ -3065,11 +1667,13 @@ async def _board_list_masthead_filesystem_screen(
         path = selection[1]
 
         size = path.stat().st_size
-        if size > MAX_BOARD_LIST_BANNER_SIZE_BYTES:
+        if size > slot.max_bytes:
             await session.write_line(colored(
-                f"{path.name} is {size} bytes, over the {MAX_BOARD_LIST_BANNER_SIZE_BYTES} byte "
+                f"{path.name} is {size} bytes, over the {slot.max_bytes} byte "
                 f"limit -- not loading.", fg_color=MUTED_COLOR,
             ))
+            # Otherwise `pick_item`'s own next redraw clears this before it
+            # can be read.
             await session.write_line(continue_prompt())
             await session.read_any_key()
             continue
@@ -3078,14 +1682,14 @@ async def _board_list_masthead_filesystem_screen(
         await session.write_line(colored(f"\r\nPreviewing {path.name!r}:", fg_color=MUTED_COLOR))
         await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
 
-        if not await _preview_apply_choice(session, f"Load {path.name!r} as the board list masthead"):
+        if not await _preview_apply_choice(session, f"Load {path.name!r} as {slot.as_what}"):
             continue
 
         def _apply(db: Database) -> Path:
-            target = board_list_banner_path(db)
+            target = slot.path_of(db)
             target.write_bytes(data)
-            set_board_list_banner_enabled(db, True)
-            record_action(db, actor=actor, action="load_board_list_banner_from_file", detail=f"{path} -> {target}")
+            slot.set_enabled(db, True)
+            record_action(db, actor=actor, action=f"load_{slot.key}_from_file", detail=f"{path} -> {target}")
             return target
 
         target = await lane.run(_apply)
@@ -3093,638 +1697,149 @@ async def _board_list_masthead_filesystem_screen(
         return
 
 
-@located("File area masthead")
-async def _file_area_masthead_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    header_color = await lane.run(effective_header_color_256)
-    await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-    while True:
-        choice = (await session.read_key()).lower()
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "p":
-            await session.write_line("")
-            if await lane.run(list_art_mode, FILE_AREA) == LIST_SLOTS_MODE:
-                await _preview_list_slot_art(session, lane, actor, FILE_AREA)
-            else:
-                await _preview_file_area_masthead_screen(session, lane)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "e":
-            await session.write_line("")
-            await _enable_file_area_masthead_screen(session, lane, actor)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "d":
-            await session.write_line("")
-            await _disable_file_area_masthead_screen(session, lane, actor)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "o":
-            await session.write_line("")
-            await _edit_file_area_masthead_screen(session, lane, actor)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "g":
-            await session.write_line("")
-            await _file_area_masthead_gallery_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "f":
-            await session.write_line("")
-            await _file_area_masthead_filesystem_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "u":
-            await session.write_line("")
-            await _upload_banner_piece(session, lane, actor, path_of=file_area_banner_path, label="the file-area masthead", audit_action="upload_file_area_banner")
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "r":
-            await session.write_line("")
-            await _remove_banner_file(
-                session, lane, actor, status_of=file_area_banner_status, set_enabled=set_file_area_banner_enabled,
-                label="the file-area masthead", audit_action="remove_file_area_banner",
-            )
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "m":
-            await session.write_line("")
-            await _toggle_list_art_mode(session, lane, actor, FILE_AREA)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "s":
-            await session.write_line("")
-            await _cycle_art_speed(lane, actor, FILE_AREA)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "t":
-            await session.write_line("")
-            await _cycle_art_time_limit(lane, actor, FILE_AREA)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "c":
-            await session.write_line("")
-            await _check_list_slot_art_screen(session, lane, actor, FILE_AREA)
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == HELP_KEY:
-            await session.write_line("")
-            await _banner_help_screen(
-                session, path=await lane.run(file_area_banner_path), has_gallery=True,
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_file_area_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        else:
-            await session.write(reject_unhandled_key(choice))
-
-
-async def _draw_file_area_masthead_menu(
-    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
-    unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
+async def _preview_main_menu_preset(
+    session: Session, lane: DatabaseLane, actor: User, preset, data: bytes,
 ) -> None:
-    status = await lane.run(file_area_banner_status)
-    mode = await lane.run(list_art_mode, FILE_AREA)
-    rows = await _write_counted(session, "\r\n" + screen_title("File area masthead",
-            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
-            clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
-            node_name_gradient=session.node_name_gradient))
-    rows += await _write_wrapped_subtitle(
-        session,
-        "Shown above every file-area-browsing view -- the top level, a category, or a "
-        "Community.",
-    )
-    sauce = await asyncio.to_thread(_banner_sauce, status)
-    speed = await lane.run(art_speed, FILE_AREA)
-    time_limit = await lane.run(art_time_limit, FILE_AREA)
-    rows += await _write_sections(session, [_banner_status_section(status, unicode_style=unicode_style, sauce=sauce, speed=speed)], unicode_style=unicode_style)
-    await session.write_line("")
-    rows += 1
-    rows += await _write_wrapped_subtitle(session, _list_art_mode_line(mode))
-    await _write_banner_menu(
-        session,
-        [
-            MenuEntry(label=menu_key("P", "review"), brief="Show it as callers see it"),
-            MenuEntry(label=menu_key("S", "peed"), brief=_art_speed_brief(speed)),
-            _art_time_limit_entry(time_limit),
-            MenuEntry(
-                label=menu_key("M", "ode"),
-                brief="Make the art the list itself" if mode == LIST_MASTHEAD_MODE else "Show the art above the list",
-            ),
-            MenuEntry(label=menu_key("C", "heck"), brief="Slots, problems and list fit"),
-            MenuEntry(label=menu_key("E", "nable"), brief="Turn the masthead on"),
-            MenuEntry(label=menu_key("D", "isable"), brief="Turn the masthead off"),
-            MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the masthead art"),
-            MenuEntry(label=menu_key("G", "allery"), brief="Apply a bundled sample masthead"),
-            MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
-            MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
-            *_remove_file_entry(status),
-            MenuEntry(label=menu_key("B", "ack"), brief="Return to Mastheads"),
-        ],
-        description_level,
-        used_rows=rows,
-        help_text="(Ctrl-H for where to place your own .ans files)",
-    )
-    await _choice_prompt(session)
-
-
-async def _preview_file_area_masthead_screen(session: Session, lane: DatabaseLane) -> None:
-    status, masthead_text = await lane.run(lambda db: (file_area_banner_status(db), load_file_area_banner(db)))
-    await session.write_line(colored("\r\nPreviewing file area masthead as shown above the file-area list:", fg_color=MUTED_COLOR))
-    if masthead_text:
-        await write_preview_art(
-            session, masthead_text, speed=await lane.run(art_speed, FILE_AREA), limit=await lane.run(art_time_limit, FILE_AREA),
-        )
+    """A main-menu gallery sample: a slots sample drawn as your menu."""
+    if preset.mode == SLOTS_MODE:
+        await _write_slot_art_preview(session, lane, actor, parse_slot_art(decode_banner_bytes(data)), level=None)
     else:
-        await _write_banner_not_live(session, status, callers_see="no masthead")
-    await session.write_line(continue_prompt())
-    await session.read_any_key()
-
-
-async def _enable_file_area_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    status = await lane.run(file_area_banner_status)
-    if not status.exists:
-        _announce(session, f"No masthead file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
-        return
-    if (status.size_bytes or 0) > MAX_FILE_AREA_BANNER_SIZE_BYTES:
-        _announce_line(session,
-            colored(
-                f"Masthead file at {status.path} is {status.size_bytes} bytes, over the "
-                f"{MAX_FILE_AREA_BANNER_SIZE_BYTES} byte limit -- not enabling.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return
-
-    def _apply(db: Database) -> None:
-        set_file_area_banner_enabled(db, True)
-        record_action(db, actor=actor, action="enable_file_area_banner", detail=str(status.path))
-
-    await lane.run(_apply)
-    _announce_line(session, "File area masthead enabled. Use [P]review to verify it looks right.")
-
-
-async def _disable_file_area_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    def _apply(db: Database):
-        status = file_area_banner_status(db)
-        set_file_area_banner_enabled(db, False)
-        record_action(db, actor=actor, action="disable_file_area_banner", detail=str(status.path))
-        return status
-
-    status = await lane.run(_apply)
-    _announce_line(session, f"File area masthead disabled. Your file at {status.path} was left in place.")
-
-
-async def _edit_file_area_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    path = await lane.run(file_area_banner_path)
-    initial_bytes = path.read_bytes() if path.exists() else None
-    draft_path = path.parent / f"{path.name}.draft"
-
-    result = await edit_ansi_art(
-        session, initial_bytes=initial_bytes, draft_path=draft_path,
-        redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
-        unicode_style=await lane.run(unicode_style_enabled, actor),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
-    )
-    if result is None:
-        _announce_line(session, colored("\r\nNo changes saved.", fg_color=MUTED_COLOR))
-        return
-
-    path.write_bytes(result)
-    await lane.run(record_action, actor=actor, action="edit_file_area_banner", detail=str(path))
-    _announce_saved(session, "Saved ", path, ". Use [P]review to verify it looks right.")
-
-
-async def _file_area_masthead_gallery_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Preview and apply a file-archive-specific masthead."""
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(FILE_AREA_MASTHEAD_PRESETS, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            description_of=lambda pair: f"{pair[1].depth} -- {pair[1].description}",
-            title="File area masthead gallery",
-            empty_message="No bundled masthead samples.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        preset = selection[1]
-        data = load_file_area_masthead_preset(preset)
-        await session.write_line(colored(f"\r\nPreviewing {preset.name!r}:", fg_color=MUTED_COLOR))
         await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
 
-        if not await _preview_apply_choice(session, f"Apply {preset.name!r} as the file area masthead"):
-            continue
 
-        def _apply(db: Database) -> Path:
-            path = file_area_banner_path(db)
-            path.write_bytes(data)
-            set_file_area_banner_enabled(db, True)
-            # A list sample is the list itself; any other sample goes above it.
-            set_list_art_mode(db, FILE_AREA, LIST_SLOTS_MODE if preset.mode == "slots" else LIST_MASTHEAD_MODE)
-            record_action(db, actor=actor, action="apply_file_area_banner_preset", detail=f"{preset.key} -> {path}")
-            return path
-
-        path = await lane.run(_apply)
-        _announce_saved(session, "Applied and enabled. Saved to ", path, ". Use [P]review to verify it looks right.")
-        return
-
-
-async def _file_area_masthead_filesystem_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Same load-from-disk screen as `_main_menu_banner_filesystem_screen`
-    (issue #170), against `file_area_banner_path` instead."""
-
-    def _list(db: Database) -> tuple[list[Path], Path]:
-        directory = file_area_banner_path(db).parent
-        return _browsable_ans_files(directory, exclude=file_area_banner_path(db)), directory
-
-    files, directory = await lane.run(_list)
-    if not files:
-        # Announced, not held behind a keypress: it is on the menu this returns to.
-        _announce(
-            session,
-            f"No other .ans files found in {directory}. Place one there "
-            f"(e.g. via SFTP/SCP), or send one with [U]pload, then browse again.",
-            color=MUTED_COLOR,
-        )
-        return
-
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(files, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            title="File area masthead -- load from disk",
-            empty_message="No other .ans files found.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        path = selection[1]
-
-        size = path.stat().st_size
-        if size > MAX_FILE_AREA_BANNER_SIZE_BYTES:
-            await session.write_line(colored(
-                f"{path.name} is {size} bytes, over the {MAX_FILE_AREA_BANNER_SIZE_BYTES} byte "
-                f"limit -- not loading.", fg_color=MUTED_COLOR,
-            ))
-            await session.write_line(continue_prompt())
-            await session.read_any_key()
-            continue
-
-        data = path.read_bytes()
-        await session.write_line(colored(f"\r\nPreviewing {path.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Load {path.name!r} as the file area masthead"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            target = file_area_banner_path(db)
-            target.write_bytes(data)
-            set_file_area_banner_enabled(db, True)
-            record_action(db, actor=actor, action="load_file_area_banner_from_file", detail=f"{path} -> {target}")
-            return target
-
-        target = await lane.run(_apply)
-        _announce_saved(session, "Loaded and enabled. Saved to ", target, ". Use [P]review to verify it looks right.")
-        return
+_MAIN_MENU_MODE = _ArtMode(
+    read=main_menu_art_mode,
+    slots=SLOTS_MODE,
+    line=lambda mode: (
+        "Mode: above the menu. The art is shown above the live main menu."
+        if mode == MASTHEAD_MODE else
+        "Mode: the menu itself. Callers' items and live values fill its slots."
+    ),
+    entry_brief=lambda mode: "Make the art the menu itself" if mode == MASTHEAD_MODE else "Show the art above the menu",
+    check_brief="Slots, problems and menu fit",
+    toggle=_toggle_main_menu_art_mode,
+    check=_check_main_menu_slot_art_screen,
+    preview=_preview_main_menu_slot_art,
+    apply_preset=lambda db, preset: set_main_menu_art_mode(db, preset.mode),
+)
 
 
-@located("Chat channel picker masthead")
-async def _chat_channel_picker_masthead_menu(session: Session, lane: DatabaseLane, actor: User) -> None:
-    description_level = await lane.run(menu_description_level, actor)
-    unicode_style = await lane.run(unicode_style_enabled, actor)
-    collapsed = await lane.run(breadcrumb_collapsed_enabled, actor)
-    redraw_in_place = await lane.run(redraw_in_place_enabled, actor)
-    header_color = await lane.run(effective_header_color_256)
-    await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-    while True:
-        choice = (await session.read_key()).lower()
-
-        if choice == "b":
-            await session.write_line("")
-            return
-        elif choice == "p":
-            await session.write_line("")
-            if await lane.run(list_art_mode, CHAT_CHANNEL_PICKER) == LIST_SLOTS_MODE:
-                await _preview_list_slot_art(session, lane, actor, CHAT_CHANNEL_PICKER)
-            else:
-                await _preview_chat_channel_picker_masthead_screen(session, lane)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "e":
-            await session.write_line("")
-            await _enable_chat_channel_picker_masthead_screen(session, lane, actor)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "d":
-            await session.write_line("")
-            await _disable_chat_channel_picker_masthead_screen(session, lane, actor)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "o":
-            await session.write_line("")
-            await _edit_chat_channel_picker_masthead_screen(session, lane, actor)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "g":
-            await session.write_line("")
-            await _chat_channel_picker_masthead_gallery_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "f":
-            await session.write_line("")
-            await _chat_channel_picker_masthead_filesystem_screen(session, lane, actor, description_level, redraw_in_place, unicode_style, collapsed)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "u":
-            await session.write_line("")
-            await _upload_banner_piece(session, lane, actor, path_of=chat_channel_picker_banner_path, label="the chat-channel masthead", audit_action="upload_chat_channel_picker_banner")
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "r":
-            await session.write_line("")
-            await _remove_banner_file(
-                session, lane, actor, status_of=chat_channel_picker_banner_status, set_enabled=set_chat_channel_picker_banner_enabled,
-                label="the chat-channel masthead", audit_action="remove_chat_channel_picker_banner",
-            )
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "m":
-            await session.write_line("")
-            await _toggle_list_art_mode(session, lane, actor, CHAT_CHANNEL_PICKER)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "s":
-            await session.write_line("")
-            await _cycle_art_speed(lane, actor, CHAT_CHANNEL_PICKER)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "t":
-            await session.write_line("")
-            await _cycle_art_time_limit(lane, actor, CHAT_CHANNEL_PICKER)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "c":
-            await session.write_line("")
-            await _check_list_slot_art_screen(session, lane, actor, CHAT_CHANNEL_PICKER)
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == HELP_KEY:
-            await session.write_line("")
-            await _banner_help_screen(
-                session, path=await lane.run(chat_channel_picker_banner_path), has_gallery=True,
-                header_color=header_color, unicode_style=unicode_style,
-            )
-            await _draw_chat_channel_picker_masthead_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        else:
-            await session.write(reject_unhandled_key(choice))
-
-
-async def _draw_chat_channel_picker_masthead_menu(
-    session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
-    unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
-) -> None:
-    status = await lane.run(chat_channel_picker_banner_status)
-    mode = await lane.run(list_art_mode, CHAT_CHANNEL_PICKER)
-    rows = await _write_counted(session, "\r\n" + screen_title("Chat channel picker masthead",
-            breadcrumb=crumbs(session, own=True), width=session.terminal_width,
-            clear=redraw_in_place, unicode_style=unicode_style, collapsed=collapsed, header_color=header_color,
-            node_name_gradient=session.node_name_gradient))
-    rows += await _write_wrapped_subtitle(
-        session,
-        "Shown above every channel-picker view -- the top level, a category, or a "
-        "Community. Never inside a live channel.",
+def _list_mode(kind: str) -> _ArtMode:
+    """[M]ode, [C]heck and slots-mode [P]review for a list's masthead."""
+    return _ArtMode(
+        read=lambda db: list_art_mode(db, kind),
+        slots=LIST_SLOTS_MODE,
+        line=_list_art_mode_line,
+        entry_brief=lambda mode: "Make the art the list itself" if mode == LIST_MASTHEAD_MODE else "Show the art above the list",
+        check_brief="Slots, problems and list fit",
+        toggle=lambda session, lane, actor: _toggle_list_art_mode(session, lane, actor, kind),
+        check=lambda session, lane, actor: _check_list_slot_art_screen(session, lane, actor, kind),
+        preview=lambda session, lane, actor: _preview_list_slot_art(session, lane, actor, kind),
+        # A list sample is the list itself; any other sample goes above it.
+        apply_preset=lambda db, preset: set_list_art_mode(
+            db, kind, LIST_SLOTS_MODE if preset.mode == "slots" else LIST_MASTHEAD_MODE,
+        ),
     )
-    sauce = await asyncio.to_thread(_banner_sauce, status)
-    speed = await lane.run(art_speed, CHAT_CHANNEL_PICKER)
-    time_limit = await lane.run(art_time_limit, CHAT_CHANNEL_PICKER)
-    rows += await _write_sections(session, [_banner_status_section(status, unicode_style=unicode_style, sauce=sauce, speed=speed)], unicode_style=unicode_style)
-    await session.write_line("")
-    rows += 1
-    rows += await _write_wrapped_subtitle(session, _list_art_mode_line(mode))
-    await _write_banner_menu(
-        session,
-        [
-            MenuEntry(label=menu_key("P", "review"), brief="Show it as callers see it"),
-            MenuEntry(label=menu_key("S", "peed"), brief=_art_speed_brief(speed)),
-            _art_time_limit_entry(time_limit),
-            MenuEntry(
-                label=menu_key("M", "ode"),
-                brief="Make the art the list itself" if mode == LIST_MASTHEAD_MODE else "Show the art above the list",
-            ),
-            MenuEntry(label=menu_key("C", "heck"), brief="Slots, problems and list fit"),
-            MenuEntry(label=menu_key("E", "nable"), brief="Turn the masthead on"),
-            MenuEntry(label=menu_key("D", "isable"), brief="Turn the masthead off"),
-            MenuEntry(label=menu_key("O", "pen editor"), brief="Edit the masthead art"),
-            MenuEntry(label=menu_key("G", "allery"), brief="Apply a bundled sample masthead"),
-            MenuEntry(label=menu_key("F", "rom disk"), brief="Load your own .ans from this node"),
-            MenuEntry(label=menu_key("U", "pload"), brief="Send an .ans from your computer"),
-            *_remove_file_entry(status),
-            MenuEntry(label=menu_key("B", "ack"), brief="Return to Mastheads"),
-        ],
-        description_level,
-        used_rows=rows,
-        help_text="(Ctrl-H for where to place your own .ans files)",
-    )
-    await _choice_prompt(session)
 
 
-async def _preview_chat_channel_picker_masthead_screen(session: Session, lane: DatabaseLane) -> None:
-    status, masthead_text = await lane.run(
-        lambda db: (chat_channel_picker_banner_status(db), load_chat_channel_picker_banner(db))
-    )
-    await session.write_line(
-        colored("\r\nPreviewing chat channel picker masthead as shown above the channel picker:", fg_color=MUTED_COLOR)
-    )
-    if masthead_text:
-        await write_preview_art(
-            session, masthead_text, speed=await lane.run(art_speed, CHAT_CHANNEL_PICKER), limit=await lane.run(art_time_limit, CHAT_CHANNEL_PICKER),
-        )
-    else:
-        await _write_banner_not_live(session, status, callers_see="no masthead")
-    await session.write_line(continue_prompt())
-    await session.read_any_key()
+_WELCOME = _BannerSlot(
+    key="welcome_banner", title="Welcome banner", noun="banner", piece="the welcome banner",
+    back_to="Session banners", path_of=banner_path, status_of=welcome_banner_status,
+    set_enabled=set_welcome_banner_enabled, max_bytes=MAX_BANNER_SIZE_BYTES,
+    presets=WELCOME_BANNER_PRESETS, load_preset=load_welcome_banner_preset,
+    preview=_preview_welcome_banner_screen, disabled_lead="Reverted to the default banner.",
+    gallery_empty="No bundled welcome-banner samples.", art_kind=WELCOME_ART, credit=True,
+    too_wide="the default banner",
+)
+_LOGOFF = _BannerSlot(
+    key="logoff_banner", title="Logoff banner", noun="banner", piece="the log-off banner",
+    back_to="Session banners", path_of=logoff_banner_path, status_of=logoff_banner_status,
+    set_enabled=set_logoff_banner_enabled, max_bytes=MAX_LOGOFF_BANNER_SIZE_BYTES,
+    presets=LOGOFF_BANNER_PRESETS, load_preset=load_logoff_banner_preset,
+    preview=_preview_logoff_banner_screen,
+    subtitle="Shown above the ordinary Goodbye message on an intentional Log off only -- never on an idle "
+    "timeout, kick, or account revocation.",
+)
+_NEW_ACCOUNT_BEFORE = _BannerSlot(
+    key="new_account_banner_before", title="New account banner (before)", noun="banner",
+    piece="the before-signup banner", back_to="Session banners", path_of=new_account_banner_before_path,
+    status_of=new_account_banner_before_status, set_enabled=set_new_account_banner_before_enabled,
+    max_bytes=MAX_NEW_ACCOUNT_BANNER_BEFORE_SIZE_BYTES, presets=NEW_ACCOUNT_BANNER_BEFORE_PRESETS,
+    load_preset=load_new_account_banner_before_preset, load=load_new_account_banner_before,
+    preview_heading="Previewing new-account (before) banner as shown at signup:",
+    name="New-account (before) banner",
+    subtitle="Shown once, right when a caller starts self-service signup -- before the Create "
+    "account prompts, never repeated on a fixable retry.",
+)
+_NEW_ACCOUNT_AFTER = _BannerSlot(
+    key="new_account_banner_after", title="New account banner (after)", noun="banner",
+    piece="the after-signup banner", back_to="Session banners", path_of=new_account_banner_after_path,
+    status_of=new_account_banner_after_status, set_enabled=set_new_account_banner_after_enabled,
+    max_bytes=MAX_NEW_ACCOUNT_BANNER_AFTER_SIZE_BYTES, presets=NEW_ACCOUNT_BANNER_AFTER_PRESETS,
+    load_preset=load_new_account_banner_after_preset, load=load_new_account_banner_after,
+    preview_heading="Previewing new-account (after) banner as shown once signup succeeds:",
+    name="New-account (after) banner",
+    subtitle="Shown once self-service signup succeeds -- covers both an immediate login and a "
+    "pending-approval account, alongside the existing message either way.",
+)
+_MAIN_MENU = _BannerSlot(
+    key="main_menu_banner", title="Main-menu masthead", noun="masthead", piece="the main-menu masthead",
+    back_to="Mastheads", path_of=main_menu_banner_path, status_of=main_menu_banner_status,
+    set_enabled=set_main_menu_banner_enabled, max_bytes=MAX_MASTHEAD_SIZE_BYTES,
+    presets=MAIN_MENU_BANNER_PRESETS, load_preset=load_main_menu_banner_preset, load=load_main_menu_banner,
+    # No real menu under it: netbbs.net.main_menu imports this module, and
+    # the masthead carries nothing truecolor-dependent to showcase.
+    preview_heading="Previewing the masthead as shown above the main menu:",
+    preview_note="(the main menu itself renders live, unchanged, immediately below this)",
+    picker_name="Masthead",
+    disabled_lead="Masthead disabled -- the main menu reverts to showing no banner above it.",
+    art_kind=MAIN_MENU_ART, mode=_MAIN_MENU_MODE, preview_preset=_preview_main_menu_preset,
+    preset_as=lambda preset: "as the main menu" if preset.mode == SLOTS_MODE else "as the masthead",
+)
+_BOARD_LIST = _BannerSlot(
+    key="board_list_banner", title="Board list masthead", noun="masthead", piece="the message-board masthead",
+    back_to="Mastheads", path_of=board_list_banner_path, status_of=board_list_banner_status,
+    set_enabled=set_board_list_banner_enabled, max_bytes=MAX_BOARD_LIST_BANNER_SIZE_BYTES,
+    presets=BOARD_LIST_MASTHEAD_PRESETS, load_preset=load_board_list_masthead_preset, load=load_board_list_banner,
+    preview_heading="Previewing board list masthead as shown above the board list:",
+    subtitle="Shown above every board-browsing view -- the top level, a category, or a Community.",
+    art_kind=BOARD_LIST, mode=_list_mode(BOARD_LIST),
+)
+_FILE_AREA = _BannerSlot(
+    key="file_area_banner", title="File area masthead", noun="masthead", piece="the file-area masthead",
+    back_to="Mastheads", path_of=file_area_banner_path, status_of=file_area_banner_status,
+    set_enabled=set_file_area_banner_enabled, max_bytes=MAX_FILE_AREA_BANNER_SIZE_BYTES,
+    presets=FILE_AREA_MASTHEAD_PRESETS, load_preset=load_file_area_masthead_preset, load=load_file_area_banner,
+    preview_heading="Previewing file area masthead as shown above the file-area list:",
+    subtitle="Shown above every file-area-browsing view -- the top level, a category, or a Community.",
+    art_kind=FILE_AREA, mode=_list_mode(FILE_AREA),
+)
+_CHAT_CHANNEL_PICKER = _BannerSlot(
+    key="chat_channel_picker_banner", title="Chat channel picker masthead", noun="masthead",
+    piece="the chat-channel masthead", back_to="Mastheads", path_of=chat_channel_picker_banner_path,
+    status_of=chat_channel_picker_banner_status, set_enabled=set_chat_channel_picker_banner_enabled,
+    max_bytes=MAX_CHAT_CHANNEL_PICKER_BANNER_SIZE_BYTES, presets=CHAT_CHANNEL_PICKER_MASTHEAD_PRESETS,
+    load_preset=load_chat_channel_picker_masthead_preset, load=load_chat_channel_picker_banner,
+    preview_heading="Previewing chat channel picker masthead as shown above the channel picker:",
+    subtitle="Shown above every channel-picker view -- the top level, a category, or a Community. "
+    "Never inside a live channel.",
+    art_kind=CHAT_CHANNEL_PICKER, mode=_list_mode(CHAT_CHANNEL_PICKER),
+)
+_BANNER_SLOTS = (
+    _WELCOME, _LOGOFF, _NEW_ACCOUNT_BEFORE, _NEW_ACCOUNT_AFTER, _MAIN_MENU, _BOARD_LIST, _FILE_AREA,
+    _CHAT_CHANNEL_PICKER,
+)
 
+# Each piece's file name, built from the database's own name without
+# resolving it (`_upload_banner_piece`).
+_BANNER_FILE_SUFFIX_OF: dict[Callable[[Database], Path], Callable[[str], str]] = {
+    slot.path_of: (lambda stem, key=slot.key: f"{stem}_{key}.ans") for slot in _BANNER_SLOTS
+}
 
-async def _enable_chat_channel_picker_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    status = await lane.run(chat_channel_picker_banner_status)
-    if not status.exists:
-        _announce(session, f"No masthead file found at {status.path}. Place a .ans file there first, then enable.", color=WARNING_COLOR)
-        return
-    if (status.size_bytes or 0) > MAX_CHAT_CHANNEL_PICKER_BANNER_SIZE_BYTES:
-        _announce_line(session,
-            colored(
-                f"Masthead file at {status.path} is {status.size_bytes} bytes, over the "
-                f"{MAX_CHAT_CHANNEL_PICKER_BANNER_SIZE_BYTES} byte limit -- not enabling.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return
-
-    def _apply(db: Database) -> None:
-        set_chat_channel_picker_banner_enabled(db, True)
-        record_action(db, actor=actor, action="enable_chat_channel_picker_banner", detail=str(status.path))
-
-    await lane.run(_apply)
-    _announce_line(session, "Chat channel picker masthead enabled. Use [P]review to verify it looks right.")
-
-
-async def _disable_chat_channel_picker_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    def _apply(db: Database):
-        status = chat_channel_picker_banner_status(db)
-        set_chat_channel_picker_banner_enabled(db, False)
-        record_action(db, actor=actor, action="disable_chat_channel_picker_banner", detail=str(status.path))
-        return status
-
-    status = await lane.run(_apply)
-    _announce_line(session, f"Chat channel picker masthead disabled. Your file at {status.path} was left in place.")
-
-
-async def _edit_chat_channel_picker_masthead_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
-    path = await lane.run(chat_channel_picker_banner_path)
-    initial_bytes = path.read_bytes() if path.exists() else None
-    draft_path = path.parent / f"{path.name}.draft"
-
-    result = await edit_ansi_art(
-        session, initial_bytes=initial_bytes, draft_path=draft_path,
-        redraw_in_place=await lane.run(redraw_in_place_enabled, actor),
-        unicode_style=await lane.run(unicode_style_enabled, actor),
-        collapsed=await lane.run(breadcrumb_collapsed_enabled, actor),
-    )
-    if result is None:
-        _announce_line(session, colored("\r\nNo changes saved.", fg_color=MUTED_COLOR))
-        return
-
-    path.write_bytes(result)
-    await lane.run(record_action, actor=actor, action="edit_chat_channel_picker_banner", detail=str(path))
-    _announce_saved(session, "Saved ", path, ". Use [P]review to verify it looks right.")
-
-
-async def _chat_channel_picker_masthead_gallery_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Preview and apply a live-chat-specific masthead."""
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(CHAT_CHANNEL_PICKER_MASTHEAD_PRESETS, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            description_of=lambda pair: f"{pair[1].depth} -- {pair[1].description}",
-            title="Chat channel picker masthead gallery",
-            empty_message="No bundled masthead samples.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        preset = selection[1]
-        data = load_chat_channel_picker_masthead_preset(preset)
-        await session.write_line(colored(f"\r\nPreviewing {preset.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Apply {preset.name!r} as the chat channel picker masthead"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            path = chat_channel_picker_banner_path(db)
-            path.write_bytes(data)
-            set_chat_channel_picker_banner_enabled(db, True)
-            # A list sample is the list itself; any other sample goes above it.
-            set_list_art_mode(
-                db, CHAT_CHANNEL_PICKER, LIST_SLOTS_MODE if preset.mode == "slots" else LIST_MASTHEAD_MODE,
-            )
-            record_action(
-                db, actor=actor, action="apply_chat_channel_picker_banner_preset", detail=f"{preset.key} -> {path}"
-            )
-            return path
-
-        path = await lane.run(_apply)
-        _announce_saved(session, "Applied and enabled. Saved to ", path, ". Use [P]review to verify it looks right.")
-        return
-
-
-async def _chat_channel_picker_masthead_filesystem_screen(
-    session: Session, lane: DatabaseLane, actor: User, description_level: str,
-    redraw_in_place: bool, unicode_style: bool, collapsed: bool,
-) -> None:
-    """Same load-from-disk screen as `_main_menu_banner_filesystem_screen`
-    (issue #170), against `chat_channel_picker_banner_path` instead."""
-
-    def _list(db: Database) -> tuple[list[Path], Path]:
-        directory = chat_channel_picker_banner_path(db).parent
-        return _browsable_ans_files(directory, exclude=chat_channel_picker_banner_path(db)), directory
-
-    files, directory = await lane.run(_list)
-    if not files:
-        # Announced, not held behind a keypress: it is on the menu this returns to.
-        _announce(
-            session,
-            f"No other .ans files found in {directory}. Place one there "
-            f"(e.g. via SFTP/SCP), or send one with [U]pload, then browse again.",
-            color=MUTED_COLOR,
-        )
-        return
-
-    last_stable_id: int | None = None
-    while True:
-        selection = await pick_item(
-            session,
-            list(enumerate(files, start=1)),
-            name_of=lambda pair: pair[1].name,
-            stable_id_of=lambda pair: pair[0],
-            title="Chat channel picker masthead -- load from disk",
-            empty_message="No other .ans files found.",
-            description_level=description_level,
-            redraw_in_place=redraw_in_place,
-            unicode_style=unicode_style,
-            collapsed=collapsed,
-            start_stable_id=last_stable_id,
-        )
-        if selection is None:
-            return
-        last_stable_id = selection[0]
-        path = selection[1]
-
-        size = path.stat().st_size
-        if size > MAX_CHAT_CHANNEL_PICKER_BANNER_SIZE_BYTES:
-            await session.write_line(colored(
-                f"{path.name} is {size} bytes, over the {MAX_CHAT_CHANNEL_PICKER_BANNER_SIZE_BYTES} byte "
-                f"limit -- not loading.", fg_color=MUTED_COLOR,
-            ))
-            await session.write_line(continue_prompt())
-            await session.read_any_key()
-            continue
-
-        data = path.read_bytes()
-        await session.write_line(colored(f"\r\nPreviewing {path.name!r}:", fg_color=MUTED_COLOR))
-        await write_preformatted_line(session, decode_banner_bytes(data) + RESET)
-
-        if not await _preview_apply_choice(session, f"Load {path.name!r} as the chat channel picker masthead"):
-            continue
-
-        def _apply(db: Database) -> Path:
-            target = chat_channel_picker_banner_path(db)
-            target.write_bytes(data)
-            set_chat_channel_picker_banner_enabled(db, True)
-            record_action(
-                db, actor=actor, action="load_chat_channel_picker_banner_from_file", detail=f"{path} -> {target}"
-            )
-            return target
-
-        target = await lane.run(_apply)
-        _announce_saved(session, "Loaded and enabled. Saved to ", target, ". Use [P]review to verify it looks right.")
-        return
+# The screens tests draw on their own: the welcome banner's menu, and the
+# main-menu masthead's [P]review.
+_draw_welcome_banner_menu = functools.partial(_draw_slot_menu, slot=_WELCOME)
+_preview_main_menu_banner_screen = functools.partial(_preview_slot, slot=_MAIN_MENU)
 
 
 _THEME_SLOT_LABELS = {"accent": "Accent color", "header": "Header color", "clock": "Clock color"}

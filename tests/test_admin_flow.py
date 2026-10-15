@@ -10568,7 +10568,7 @@ def test_retired_names_screen_lists_and_can_be_left_without_writing(db, lane, sy
 
     text = " ".join(_visible(_written_text(session)).split())
     assert "Users › Held names" in text
-    assert re.search(r"HELD USERNAMES Username Retired ─+ alice \d{4}-\d{2}-\d{2} ", text), text
+    assert re.search(r"HELD USERNAMES Username Retired Held for ─+ alice \d{4}-\d{2}-\d{2} deleted account ", text), text
     assert "a username is the account's identity" in text
     assert "[R]elease [B]ack" in text
     assert [entry.username for entry in list_retired_usernames(db)] == ["alice"]

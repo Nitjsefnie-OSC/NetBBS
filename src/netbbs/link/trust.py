@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Iterable
 
+from netbbs.link.user_renames import current_user_name
 from netbbs.storage.database import Database
 from netbbs.timeutil import utc_now_iso
 
@@ -258,6 +260,7 @@ def register_subject(
     db: Database, subject: TrustSubject, *, first_accepted_at: str, now_iso: str | None = None
 ) -> None:
     """Register a verified node hello or accepted stable remote-user identity."""
+    subject = _canonical(db, subject)
     first = _parse_timestamp(first_accepted_at, field_name="first_accepted_at")
     now_value, now = _now(now_iso)
     if first > now + _FUTURE_TOLERANCE:
@@ -327,6 +330,7 @@ def record_activity(
     direct: bool,
     now_iso: str | None = None,
 ) -> None:
+    subject = _canonical(db, subject)
     activity_day = datetime.strptime(activity_date, "%Y-%m-%d").date()
     now_value, now = _now(now_iso)
     if activity_day > now.date():
@@ -885,6 +889,7 @@ def record_trust_signal(
 
     `evidence_verified_at` is when this node reproduced the signal's evidence
     itself (issue #1036); a self-verifying signal counts only with it."""
+    subject = _canonical(db, subject)
     normalized_dimension = _dimension(dimension)
     normalized_evidence = _evidence_class(evidence_class)
     validate_category_evidence(normalized_dimension, category, normalized_evidence)
@@ -1040,6 +1045,7 @@ def record_vouch(
     explanation: str | None = None,
     now_iso: str | None = None,
 ) -> bool:
+    subject = _canonical(db, subject)
     issued = _parse_timestamp(issued_at, field_name="issued_at")
     declared_expiry = _parse_timestamp(expires_at, field_name="expires_at")
     now_value, now = _now(now_iso)
@@ -1103,6 +1109,7 @@ def set_trust_override(
     expires_at: str | None = None,
     now_iso: str | None = None,
 ) -> int:
+    subject = _canonical(db, subject)
     normalized_dimension = _dimension(dimension)
     try:
         normalized_state = TrustState(state)
@@ -1305,12 +1312,14 @@ def get_effective_trust_state(
     db: Database, subject: TrustSubject, dimension: TrustDimension | str
 ) -> EffectiveTrustState:
     normalized_dimension = _dimension(dimension)
+    # A renamed user's old name answers with the new name's state (issue #1306).
+    current = _canonical(db, subject)
     row = db.connection.execute(
         """
         SELECT state, reason_code, recovery_started_at, explanation_json, evaluated_at
         FROM link_trust_effective_states WHERE subject_id = ? AND dimension = ?
         """,
-        (subject.subject_id, normalized_dimension.value),
+        (current.subject_id, normalized_dimension.value),
     ).fetchone()
     if row is None:
         raise ValueError("trust subject has no effective-state projection")
@@ -1382,7 +1391,7 @@ def node_probation(db: Database, fingerprint: str) -> NodeProbation | None:
 def is_registered_subject(db: Database, subject: TrustSubject) -> bool:
     """Whether `subject` is a trust subject here -- what an override needs."""
     return db.connection.execute(
-        "SELECT 1 FROM link_trust_subjects WHERE subject_id = ?", (subject.subject_id,)
+        "SELECT 1 FROM link_trust_subjects WHERE subject_id = ?", (_canonical(db, subject).subject_id,)
     ).fetchone() is not None
 
 
@@ -1470,6 +1479,167 @@ def list_trust_config_audit(db: Database, *, limit: int = 100) -> list[TrustAudi
     ]
 
 
+def _canonical(db: Database, subject: TrustSubject) -> TrustSubject:
+    """`subject` under the name its home node gives it now (issue #1306).
+
+    A peer that learned `old -> new` for a node's user treats `new@node` as
+    the same user as `old@node` (design doc §16 #1111 Decision 4): whatever
+    is recorded or asked about the old name is the new name's. A node subject,
+    or a user nothing renamed, is returned as it is."""
+    if subject.kind != "user" or subject.opaque_user_id is None:
+        return subject
+    try:
+        name = current_user_name(db, subject.node_fingerprint, subject.opaque_user_id)
+    except sqlite3.OperationalError:
+        # A schema from before the alias table, as migration tests open it.
+        return subject
+    if name == subject.opaque_user_id:
+        return subject
+    return TrustSubject.user(subject.node_fingerprint, name)
+
+
+def subject_history_starts(db: Database, subject: TrustSubject) -> str | None:
+    """When this node first accepted anything from `subject` itself (not
+    through an alias), or `None` if it never has."""
+    row = db.connection.execute(
+        "SELECT first_accepted_at FROM link_trust_subjects WHERE subject_id = ?", (subject.subject_id,)
+    ).fetchone()
+    return None if row is None else row["first_accepted_at"]
+
+
+_STRICTNESS = {
+    TrustState.ESTABLISHED.value: 0,
+    TrustState.PROBATIONARY.value: 1,
+    TrustState.QUARANTINED.value: 2,
+    TrustState.BLOCKED.value: 3,
+}
+
+#: Tables whose rows about a renamed user move to the new name as they are.
+_MOVED_WITH_A_RENAME = (
+    "link_trust_signals", "link_trust_local_observations", "link_trust_vouches",
+    "link_trust_decision_audit",
+)
+
+#: What still names the old subject once it has moved: a received attestation
+#: is signed about the old name, and its issuer revokes and reissues it.
+_KEEPS_THE_OLD_SUBJECT = (
+    "link_remote_attestations", "link_remote_attestation_overrides",
+    "link_remote_attestation_effective", "link_remote_attestation_audit",
+)
+
+
+def merge_renamed_user_subject(
+    db: Database, old: TrustSubject, new: TrustSubject, *, now_iso: str | None = None
+) -> None:
+    """Move what this node holds about `old` to `new`, a rename its home
+    node announced (design doc §16 #1111, issue #1306). Inside the caller's
+    transaction; nothing is committed here.
+
+    The new name takes the old one's overrides, quarantine and block states,
+    signals, vouches, observations, activity days and probation age: a rename
+    neither launders a block nor resets probation. When both already carry
+    state -- the renamed user's own content can reach this node before the
+    notice does -- the stricter of each kind stays: of two active overrides
+    on one dimension the stricter is kept and the other cleared, and the
+    stricter effective state is the one the recompute starts from, so a
+    quarantine in its recovery hold stays in it. A rename never lifts a
+    restriction."""
+    now_value, now = _now(now_iso)
+    old_row = db.connection.execute(
+        "SELECT first_accepted_at FROM link_trust_subjects WHERE subject_id = ?", (old.subject_id,)
+    ).fetchone()
+    if old_row is None:
+        return
+    db.connection.execute(
+        """
+        INSERT INTO link_trust_subjects (
+            subject_id, subject_kind, node_fingerprint, opaque_user_id, first_accepted_at, first_verified_hello_at
+        ) VALUES (?, 'user', ?, ?, ?, NULL)
+        ON CONFLICT(subject_id) DO UPDATE SET
+            first_accepted_at = MIN(link_trust_subjects.first_accepted_at, excluded.first_accepted_at)
+        """,
+        (new.subject_id, new.node_fingerprint, new.opaque_user_id, old_row["first_accepted_at"]),
+    )
+    db.connection.execute(
+        """
+        INSERT INTO link_trust_activity_days (subject_id, activity_date, direct)
+        SELECT ?, activity_date, direct FROM link_trust_activity_days WHERE subject_id = ?
+        ON CONFLICT(subject_id, activity_date) DO UPDATE SET direct = MAX(direct, excluded.direct)
+        """,
+        (new.subject_id, old.subject_id),
+    )
+    db.connection.execute("DELETE FROM link_trust_activity_days WHERE subject_id = ?", (old.subject_id,))
+    for dimension in TrustDimension:
+        kept_old = _active_override(db, old.subject_id, dimension, now_value)
+        kept_new = _active_override(db, new.subject_id, dimension, now_value)
+        if kept_old is not None and kept_new is not None:
+            laxer = kept_old if _STRICTNESS[kept_old["state"]] < _STRICTNESS[kept_new["state"]] else kept_new
+            db.connection.execute(
+                "UPDATE link_trust_overrides SET cleared_at = ? WHERE override_id = ?",
+                (now_value, laxer["override_id"]),
+            )
+        old_state = db.connection.execute(
+            """SELECT state, reason_code, recovery_started_at, explanation_json, evaluated_at
+               FROM link_trust_effective_states WHERE subject_id = ? AND dimension = ?""",
+            (old.subject_id, dimension.value),
+        ).fetchone()
+        new_state = db.connection.execute(
+            "SELECT state, recovery_started_at FROM link_trust_effective_states WHERE subject_id = ? AND dimension = ?",
+            (new.subject_id, dimension.value),
+        ).fetchone()
+        if old_state is not None and (
+            new_state is None
+            or _STRICTNESS[old_state["state"]] > _STRICTNESS[new_state["state"]]
+            or (
+                old_state["state"] == new_state["state"] == TrustState.QUARANTINED.value
+                and (old_state["recovery_started_at"] or "") > (new_state["recovery_started_at"] or "")
+            )
+        ):
+            db.connection.execute(
+                """
+                INSERT INTO link_trust_effective_states (
+                    subject_id, dimension, state, reason_code, recovery_started_at, explanation_json, evaluated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(subject_id, dimension) DO UPDATE SET
+                    state = excluded.state, reason_code = excluded.reason_code,
+                    recovery_started_at = excluded.recovery_started_at,
+                    explanation_json = excluded.explanation_json, evaluated_at = excluded.evaluated_at
+                """,
+                (
+                    new.subject_id, dimension.value, old_state["state"], old_state["reason_code"],
+                    old_state["recovery_started_at"], old_state["explanation_json"], old_state["evaluated_at"],
+                ),
+            )
+    db.connection.execute(
+        "UPDATE link_trust_overrides SET subject_id = ? WHERE subject_id = ?", (new.subject_id, old.subject_id)
+    )
+    for table in _MOVED_WITH_A_RENAME:
+        db.connection.execute(
+            f"UPDATE {table} SET subject_id = ? WHERE subject_id = ?", (new.subject_id, old.subject_id)
+        )
+    # This node's own standing intent to vouch: one per subject. Both standing
+    # is one intent twice; the old one is withdrawn and the new one stands, and
+    # the vouch reconcile revokes what was signed about the old name.
+    if db.connection.execute(
+        "SELECT 1 FROM link_trust_vouch_intents WHERE subject_id = ? AND withdrawn_at IS NULL", (new.subject_id,)
+    ).fetchone() is not None:
+        db.connection.execute(
+            "UPDATE link_trust_vouch_intents SET withdrawn_at = ? WHERE subject_id = ? AND withdrawn_at IS NULL",
+            (now_value, old.subject_id),
+        )
+    db.connection.execute(
+        "UPDATE link_trust_vouch_intents SET subject_id = ? WHERE subject_id = ?", (new.subject_id, old.subject_id)
+    )
+    db.connection.execute("DELETE FROM link_trust_effective_states WHERE subject_id = ?", (old.subject_id,))
+    still_named = any(
+        db.connection.execute(f"SELECT 1 FROM {table} WHERE subject_id = ? LIMIT 1", (old.subject_id,)).fetchone()
+        for table in _KEEPS_THE_OLD_SUBJECT
+    )
+    if not still_named:
+        db.connection.execute("DELETE FROM link_trust_subjects WHERE subject_id = ?", (old.subject_id,))
+    _recompute_subject(db, new, now_value, now, actor_user_id=None)
+
+
 def _require_subject(db: Database, subject: TrustSubject) -> None:
     if not db.connection.execute(
         "SELECT 1 FROM link_trust_subjects WHERE subject_id = ?", (subject.subject_id,)
@@ -1524,6 +1694,7 @@ def record_local_observation(
     explanation: str | None = None,
     now_iso: str | None = None,
 ) -> bool:
+    subject = _canonical(db, subject)
     normalized_dimension = _dimension(dimension)
     normalized_evidence = _evidence_class(evidence_class)
     validate_category_evidence(normalized_dimension, category, normalized_evidence)

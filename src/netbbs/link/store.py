@@ -549,6 +549,10 @@ def save_peer(db: Database, peer: PeerRecord, *, direct_contact: bool = True) ->
     from netbbs.link.node_profiles import recheck_introduced_identities_against
 
     recheck_introduced_identities_against(db, peer)
+    # Issue #1306: the renames its verified descriptor announces.
+    from netbbs.link.user_renames import learn_user_renames
+
+    learn_user_renames(db, peer.fingerprint, peer.descriptor.payload)
 
 
 def introduced_by(db: Database, fingerprint: str) -> str | None:
@@ -610,6 +614,11 @@ def save_introduced_identity(db: Database, record: PeerRecord, *, introduced_by:
     db.connection.commit()
     ensure_node_subject(db, record.fingerprint)
     _displace_oldest_introduced_identities(db)
+    # Issue #1306: an introduction carries the node's descriptor, and with it
+    # the renames it announces.
+    from netbbs.link.user_renames import learn_user_renames
+
+    learn_user_renames(db, record.fingerprint, record.descriptor.payload)
 
 
 def _displace_oldest_introduced_identities(db: Database) -> None:
