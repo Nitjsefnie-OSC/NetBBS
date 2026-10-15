@@ -1662,6 +1662,27 @@ carrying the board follows:
   is write level 255 here and "origin's callers only" everywhere.
 - A closed board takes no new post from any node.
 
+#### Polls
+
+Callers ask polls with <kbd>N</kbd> **New poll** on a board's list (not on a
+board gated to an FTN network). A poll is a post: moderation, expiry,
+withdrawal and takedown apply to it, and a takedown or withdrawal closes the
+poll and hides its results. You and the board's moderators can end a poll
+with <kbd>C</kbd> **Close poll**.
+
+- **The ballot is secret on screen only.** No screen shows who voted what. The
+  database records each account's vote (`board_poll_votes`), so anyone with the
+  database file can read it; the User Handbook tells callers so.
+- **On a linked board** the poll travels with its post, and each vote is a signed
+  event naming its voter, so every carrying node holds who voted what. Its
+  answers are fixed when it is posted; only the closing date changes, by the
+  author or, on the origin, a moderator. A moderator elsewhere closes a poll on
+  their own node only.
+- **Counting is per node.** Votes from a node or author your trust policy
+  hides are not counted, at most 50 voters from each other node are counted per
+  poll, and at most 5,000 voters are kept per poll. The results say how many
+  votes were not counted, so two nodes can show different totals for one poll.
+
 ### Link mail
 
 Asynchronous delivery can continue after a peer reconnects. Live chat and
