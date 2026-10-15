@@ -541,6 +541,13 @@ def rewrite_references(target: str, retarget: set[str], lost: set[str], shared: 
                 return False
             return check(name, line)
 
+        # `admin_flow._x = fake` is a hand-rolled patch: every reference to
+        # `_x` in that file (the saved original, the restore) follows it
+        assigned = {
+            n.attr for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Store)
+            and isinstance(n.value, ast.Name) and n.value.id in aliases
+        }
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module == MODULE:
                 move_names = [a for a in node.names if check(a.name, node.lineno)]
@@ -560,7 +567,8 @@ def rewrite_references(target: str, retarget: set[str], lost: set[str], shared: 
                 edits.lines(node.lineno, node.end_lineno, "\n".join(out))
             elif isinstance(node, ast.Attribute):
                 value = node.value
-                if isinstance(value, ast.Name) and value.id in aliases and check(node.attr, node.lineno):
+                decide = check_patch if node.attr in assigned else check
+                if isinstance(value, ast.Name) and value.id in aliases and decide(node.attr, node.lineno):
                     edits.node(value, target)
                     need_from = True
                 elif dotted and ast.unparse(value) == MODULE and check(node.attr, node.lineno):

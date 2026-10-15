@@ -54,6 +54,13 @@ def _patch_targets(tree: ast.Module, modules: dict[str, Path]) -> list[tuple[int
     aliases = _module_aliases(tree, modules)
     targets = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            # a hand-rolled patch: `admin_flow._x = fake`
+            for target in node.targets:
+                if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) \
+                        and target.value.id in aliases:
+                    targets.append((node.lineno, aliases[target.value.id], target.attr))
+            continue
         if not isinstance(node, ast.Call) or not node.args:
             continue
         function = ast.unparse(node.func)
@@ -103,6 +110,7 @@ def test(monkeypatch):
     monkeypatch.setattr("netbbs.net.admin_flow.four", None)
     with patch("netbbs.net.admin_flow.five"), patch.object(af, "six"):
         pass
+    admin_flow.seven = None
 """
     targets = _patch_targets(ast.parse(source), {"netbbs.net.admin_flow": tmp_path})
-    assert [name for _, _, name in targets] == ["one", "two", "three", "four", "five", "six"]
+    assert sorted(name for _, _, name in targets) == ["five", "four", "one", "seven", "six", "three", "two"]
