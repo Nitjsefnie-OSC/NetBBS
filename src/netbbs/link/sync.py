@@ -167,10 +167,12 @@ from aiohttp import ClientSession
 
 from netbbs.link.boards import load_own_board_events
 from netbbs.link.channels import load_own_channel_events
+from netbbs.link.communities import load_own_community_events, refresh_own_community_members
 from netbbs.link.files import load_own_file_area_events
 from netbbs.link.events import (
     INVENTORY_NOT_CARRIED_CAPABILITY,
     INVENTORY_PAGES_CAPABILITY,
+    LINK_COMMUNITIES_CAPABILITY,
     LINK_MESSAGE_OBJECT_TYPE,
     BoardGenesis,
     ChannelGenesis,
@@ -483,6 +485,10 @@ async def run_link_sync(
             # (is this node outgoing-only?), and sampling twice invited them
             # to disagree within a single pass.
             own_hello = own_hello_provider()
+            # Issue #1308: a Community promoted here whose members changed --
+            # a board linked, unlinked or moved, by any path -- gets a new
+            # signed membership list before anything is exchanged.
+            await _reconcile_own_communities(node, lane)
             reliable = await lane.run(_reliable_node_urls_if_accepted)
             # De-duplicated, order-preserving: operator-configured first.
             pass_seeds = list(dict.fromkeys(seeds + reliable))
@@ -645,6 +651,16 @@ async def run_link_sync(
         await _sleep_until_woken(node, stop_event, interval_seconds)
 
 
+async def _reconcile_own_communities(node: LinkNode, lane: DatabaseLane) -> None:
+    """Sign new membership lists for this node's own Link Communities
+    (`refresh_own_community_members`) and register them with the running
+    node, on the event loop, as every own event is."""
+    for raw in await lane.run(refresh_own_community_members, node.identity):
+        content_id = event_content_id(raw["envelope"])
+        node.known_event_ids.add(content_id)
+        node.events[content_id] = raw
+
+
 async def _sleep_until_woken(
     node: LinkNode, stop_event: asyncio.Event | None, interval_seconds: float
 ) -> None:
@@ -678,6 +694,7 @@ async def _push_own_events(
     peer_fingerprint: str,
     fallback_offsets: dict[str, int],
     declared: frozenset[str] = frozenset(),
+    communities: bool = False,
 ) -> None:
     """
     Push this node's own originated events to one seed -- design doc
@@ -747,6 +764,9 @@ async def _push_own_events(
         + await lane.run(load_own_channel_events, node.identity.fingerprint)
         # Design doc §11, issue #89.
         + await lane.run(load_own_file_area_events, node.identity.fingerprint)
+        # Issue #1308: only to a peer advertising `LINK_COMMUNITIES_CAPABILITY`;
+        # an older one would keep them as opaque events it cannot use.
+        + (await lane.run(load_own_community_events, node.identity.fingerprint) if communities else [])
     )
     exchange = node.peer_exchange.setdefault(peer_fingerprint, PeerExchange())
     now = time.time()
@@ -984,6 +1004,9 @@ async def _sync_one_seed(
     # pass sends, counted per seed so each one is walked through every page.
     page_cursor = node.inventory_page_cursors.get(seed_peer.fingerprint, 0)
     node.inventory_page_cursors[seed_peer.fingerprint] = page_cursor + 1
+    # Issue #1308: Link Communities travel only between nodes that both
+    # understand them.
+    speaks_communities = descriptor_has_capability(seed_peer.descriptor, LINK_COMMUNITIES_CAPABILITY)
     try:
         inventory_request = await lane.run(
             build_inventory_request,
@@ -997,10 +1020,14 @@ async def _sync_one_seed(
             ),
             paged=descriptor_has_capability(seed_peer.descriptor, INVENTORY_PAGES_CAPABILITY),
             page_cursor=page_cursor,
+            include_communities=speaks_communities,
         )
         declared = frozenset(
             content_id
-            for resources in (inventory_request.boards, inventory_request.channels, inventory_request.file_areas)
+            for resources in (
+                inventory_request.boards, inventory_request.channels, inventory_request.file_areas,
+                inventory_request.communities or {},
+            )
             for content_ids in resources.values()
             for content_id in content_ids
         )
@@ -1112,7 +1139,7 @@ async def _sync_one_seed(
     if peer_state == TrustState.ESTABLISHED:
         await _push_own_events(
             node, session, seed_url, lane, wanted=wanted,
-            peer_fingerprint=seed_peer.fingerprint, declared=declared,
+            peer_fingerprint=seed_peer.fingerprint, declared=declared, communities=speaks_communities,
             # A caller with no loop of its own gets a throwaway: a single
             # pass has nothing to rotate against.
             fallback_offsets=fallback_offsets if fallback_offsets is not None else {},

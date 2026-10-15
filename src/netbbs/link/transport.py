@@ -85,6 +85,9 @@ from netbbs.link.events import (
     BOARD_POST_TOMBSTONE_OBJECT_TYPE,
     CHANNEL_GENESIS_OBJECT_TYPE,
     CHANNEL_MESSAGE_OBJECT_TYPE,
+    COMMUNITY_CLOSURE_OBJECT_TYPE,
+    COMMUNITY_GENESIS_OBJECT_TYPE,
+    COMMUNITY_MEMBERS_OBJECT_TYPE,
     FILE_AREA_GENESIS_OBJECT_TYPE,
     FILE_DESCRIPTOR_OBJECT_TYPE,
     LINK_MESSAGE_ACCEPTED_OBJECT_TYPE,
@@ -181,6 +184,14 @@ from netbbs.link.protocol import (
     validate_realtime_frame_payload,
 )
 from netbbs.link.carry import KIND_LABELS, accept_genesis, genesis_kind
+from netbbs.link.communities import (
+    CarryCaps,
+    accept_community_genesis,
+    place_all_subscriptions,
+    place_listed_member,
+    store_received_closure,
+    store_received_members,
+)
 from netbbs.link.store import event_is_stored, forget_opaque_event, opaque_events_to_rejudge, store_opaque_event
 from netbbs.link.realtime_proxy import open_realtime_connection, record_handshake_outcome
 from netbbs.link.attestation_delivery import receive_attestation_bundle_safely
@@ -202,6 +213,8 @@ from netbbs.link.store import (
     board_event_diff,
     build_inventory_request,
     channel_event_diff,
+    community_event_diff,
+    community_wanted_ids,
     file_area_event_diff,
     inventory_wanted_ids,
     save_candidate_descriptor,
@@ -356,6 +369,24 @@ async def _rate_limit_middleware(request: web.Request, handler):
 
 
 _GENESIS_ID_FIELDS = {"boards": "board_id", "channels": "channel_id", "file_areas": "area_id"}
+
+
+def _forget_community_event(node: LinkNode, content_id: str, envelope: dict) -> None:
+    """Undo `handle_events`' in-memory acceptance of a community event that
+    was not persisted (issue #1308), as `_forget_genesis` does for the rest."""
+    node.known_event_ids.discard(content_id)
+    node.events.pop(content_id, None)
+    payload = envelope["envelope"]["payload"]
+    community_id = payload.get("community_id")
+    object_type = envelope["envelope"]["object_type"]
+    if object_type == COMMUNITY_GENESIS_OBJECT_TYPE:
+        held = node.community_events.communities.get(community_id)
+        if held is not None and held.content_id == content_id:
+            del node.community_events.communities[community_id]
+    elif object_type == COMMUNITY_CLOSURE_OBJECT_TYPE:
+        held = node.community_events.closures.get(community_id)
+        if held is not None and held.content_id == content_id:
+            del node.community_events.closures[community_id]
 
 
 def _forget_genesis(node: LinkNode, kind: str, content_id: str, envelope: dict) -> None:
@@ -623,6 +654,44 @@ async def persist_accepted_events(
                 _logger.warning("Link sync: %s", exc)
             continue
 
+        if object_type in (COMMUNITY_GENESIS_OBJECT_TYPE, COMMUNITY_MEMBERS_OBJECT_TYPE, COMMUNITY_CLOSURE_OBJECT_TYPE):
+            # Issue #1308: a Link Community's genesis is offered (never carried
+            # on arrival); a membership list replaces an older one and, for a
+            # Community subscribed to here, accepts and places its members; a
+            # closure turns a copy into a plain local Community.
+            try:
+                if object_type == COMMUNITY_GENESIS_OBJECT_TYPE:
+                    outcome = await lane.run(
+                        accept_community_genesis, envelope=envelope, sender_fingerprint=sender_fingerprint,
+                        content_id=content_id,
+                    )
+                    if outcome == "offered":
+                        _logger.info(
+                            "Link sync: Community %r offered for the SysOp to subscribe to",
+                            envelope["envelope"]["payload"].get("name"),
+                        )
+                elif object_type == COMMUNITY_MEMBERS_OBJECT_TYPE:
+                    await lane.run(
+                        store_received_members, envelope=envelope, sender_fingerprint=sender_fingerprint,
+                        content_id=content_id,
+                        caps=CarryCaps(
+                            boards=max_carried_boards, channels=max_carried_channels,
+                            file_areas=max_carried_file_areas, own_fingerprint=node.identity.fingerprint,
+                            max_remote_files_per_area=max_remote_files_per_area,
+                        ),
+                    )
+                else:
+                    await lane.run(
+                        store_received_closure, envelope=envelope, sender_fingerprint=sender_fingerprint,
+                        content_id=content_id,
+                    )
+            except BaseException:
+                # Nothing persisted: forget it in memory too, or it is skipped
+                # as a duplicate on every later delivery.
+                _forget_community_event(node, content_id, envelope)
+                raise
+            continue
+
         kind = genesis_kind(object_type)
         if kind is not None:
             # Issue #683 (design doc §9.3): the genesis and its carry outcome
@@ -649,6 +718,13 @@ async def persist_accepted_events(
                 _logger.info(
                     "Link sync: %s %r offered for the SysOp to accept rather than carried (%s)",
                     KIND_LABELS[kind], envelope["envelope"]["payload"].get("name"), outcome,
+                )
+            else:
+                # Issue #1308: into the copy of a subscribed Community that lists it.
+                await lane.run(
+                    place_listed_member, kind,
+                    str(envelope["envelope"]["payload"].get({"boards": "board_id", "channels": "channel_id",
+                                                             "file_areas": "area_id"}[kind])),
                 )
             continue
 
@@ -688,6 +764,9 @@ async def persist_accepted_events(
                 transfer_accepted.payload["board_id"],
                 transfer_accepted.payload["new_origin_fingerprint"],
             )
+            # Issue #1308 (Decision 1): a member whose origin moved away
+            # drops out of the Community's copy.
+            await lane.run(place_all_subscriptions)
         elif object_type == BOARD_CLOSURE_OBJECT_TYPE:
             # Design doc §9.5, issue #88: a bystander witnessing someone
             # else's board being closed needs the same local-materialization
@@ -2254,12 +2333,28 @@ class LinkServer:
         # for `page`, which narrows all three to one page of a declaration
         # too large to send whole.
         not_carried = inventory_request.not_carried
-        board_events, board_truncated = await self._lane.run(
-            board_event_diff, inventory_request.boards, limit=response_limit,
-            not_carried=not_carried.get("boards", ()), page=inventory_request.page,
-            page_salt=inventory_request.nonce,
-        )
-        remaining = response_limit - len(board_events)
+        # Issue #1308: Link Communities first, and only to a requester that
+        # sent the `communities` map (it understands them). At most three
+        # events per Community, so they cannot crowd out the rest, while
+        # behind a board backlog they would wait for it to drain.
+        if inventory_request.communities is not None:
+            community_events, community_truncated = await self._lane.run(
+                community_event_diff, inventory_request.communities, limit=response_limit,
+                not_carried=not_carried.get("communities", ()), page=inventory_request.page,
+                page_salt=inventory_request.nonce,
+            )
+        else:
+            community_events, community_truncated = [], False
+        board_limit = response_limit - len(community_events)
+        if board_limit > 0:
+            board_events, board_truncated = await self._lane.run(
+                board_event_diff, inventory_request.boards, limit=board_limit,
+                not_carried=not_carried.get("boards", ()), page=inventory_request.page,
+                page_salt=inventory_request.nonce,
+            )
+        else:
+            board_events, board_truncated = [], True
+        remaining = board_limit - len(board_events)
         if remaining > 0:
             channel_events, channel_truncated = await self._lane.run(
                 channel_event_diff, inventory_request.channels, limit=remaining,
@@ -2277,8 +2372,8 @@ class LinkServer:
             )
         else:
             file_area_events, file_area_truncated = [], True
-        events = board_events + channel_events + file_area_events
-        more_available = board_truncated or channel_truncated or file_area_truncated
+        events = community_events + board_events + channel_events + file_area_events
+        more_available = community_truncated or board_truncated or channel_truncated or file_area_truncated
         # Issue #630: whose identity a requester may then ask this node for.
         self._node.note_served_signers(events)
         # Issue #478: the other half of the same exchange. The request
@@ -2297,6 +2392,12 @@ class LinkServer:
             requested_channels=inventory_request.channels,
             requested_file_areas=inventory_request.file_areas,
         )
+        if inventory_request.communities:
+            wanted += [
+                content_id
+                for content_id in await self._lane.run(community_wanted_ids, inventory_request.communities)
+                if content_id not in wanted
+            ]
         body = {"events": events, "more_available": more_available, "wanted": wanted}
         # Issue #914: the key histories of whoever signed these events, so a
         # requester that knows a signer only by introduction learns of a
@@ -2308,7 +2409,10 @@ class LinkServer:
             # that signer has since marked a key compromised.
             declared_ids=(
                 content_id
-                for declared in (inventory_request.boards, inventory_request.channels, inventory_request.file_areas)
+                for declared in (
+                    inventory_request.boards, inventory_request.channels, inventory_request.file_areas,
+                    inventory_request.communities or {},
+                )
                 for ids in declared.values() for content_id in ids
             ),
         )
