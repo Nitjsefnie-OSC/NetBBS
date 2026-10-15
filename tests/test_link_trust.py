@@ -276,7 +276,7 @@ def test_a_report_that_cannot_count_toward_the_threshold_shows_no_distance(db):
     assert "counted_domains" not in content.explanation
     assert "counted_weight" not in content.explanation
 
-    from netbbs.net.admin_flow import _quarantine_distance_text
+    from netbbs.net.admin_trust import _quarantine_distance_text
 
     assert _quarantine_distance_text(content.explanation) == ""
 
@@ -307,7 +307,7 @@ def test_a_sole_authority_quarantine_outside_identity_claims_no_distance(db):
     assert "counted_domains" not in state.explanation
     assert "required_domains" not in state.explanation
 
-    from netbbs.net.admin_flow import _quarantine_distance_text
+    from netbbs.net.admin_trust import _quarantine_distance_text
 
     assert _quarantine_distance_text(state.explanation) == ""
     # An explanation stored before this rule, with the fields but nothing
