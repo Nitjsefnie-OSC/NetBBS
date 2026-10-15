@@ -168,6 +168,12 @@ def create_file_area(
                 community_id,
             ),
         )
+        if community_id is not None:
+            # Issue #1310: filed by whoever created it, so a Link Community's
+            # membership list never moves it.
+            db.connection.execute(
+                "UPDATE file_areas SET community_placed_locally = 1 WHERE area_id = ?", (area_id,)
+            )
         if age_requirement is not None:
             db.connection.execute(
                 "UPDATE file_areas SET age_requirement = ? WHERE area_id = ?", (age_requirement, area_id)
@@ -363,13 +369,17 @@ def update_file_area(
             UPDATE file_areas
             SET name = ?, description = ?, min_read_level = ?, min_write_level = ?,
                 category_id = ?, pinned = ?, moderated = ?, max_file_age_days = ?,
-                min_age = ?, name_requirement = ?, community_id = ?
+                min_age = ?, name_requirement = ?,
+                -- Issue #1308: a SysOp who changes the Community has placed it;
+                -- a Link Community's membership list never moves it again.
+                community_placed_locally = CASE WHEN community_id IS ? THEN community_placed_locally ELSE 1 END,
+                community_id = ?
             WHERE id = ?
             """,
             (
                 name, description, min_read_level, min_write_level,
                 category_id, int(pinned), int(moderated), max_file_age_days,
-                min_age, name_requirement, community_id, area.id,
+                min_age, name_requirement, community_id, community_id, area.id,
             ),
         )
         if age_requirement is not UNCHANGED:

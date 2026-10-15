@@ -1462,9 +1462,9 @@ it does not make that sender trustworthy.
 > presence, and live relay are implemented. Federation remains private and
 > experimental pending [public-readiness validation](NetBBS-phase4-readiness.md)
 > and independently operated dogfood. Independent implementation
-> compatibility is not yet established. Local Communities are available;
-> Link Communities and cross-node `/dm` invitation chats are not. Cross-node
-> `/msg` and `/private` do work when a live path exists.
+> compatibility is not yet established. Link Communities are available;
+> cross-node `/dm` invitation chats are not. Cross-node `/msg` and
+> `/private` do work when a live path exists.
 
 In this chapter: [Join and share](#join-and-share) ·
 [Link mail](#link-mail) · [Behind an HTTP proxy](#behind-an-http-proxy) ·
@@ -1516,9 +1516,9 @@ lists the less common transport and quota settings.
 
 #### What your node carries
 
-There is nothing to subscribe to: what an established peer shares arrives on
-its own, within the caps. Linked boards, channels and file areas from other
-nodes are carried automatically up to the `max_carried_boards` /
+A board, channel or file area needs no subscription: what an established peer
+shares arrives on its own, within the caps. Linked boards, channels and file
+areas from other nodes are carried automatically up to the `max_carried_boards` /
 `max_carried_channels` / `max_carried_file_areas` caps (500 each;
 **Settings ▸ Operating limits ▸ Carry caps**).
 
@@ -1539,8 +1539,9 @@ being held back.
   not automatically download all file contents.
 - Carried boards, channels and file areas appear in callers'
   **Message boards**, **Chat** and **Files** lists, outside any Community,
-  because Link Communities do not exist. Edit one and set its **Community** to
-  put it in one of yours.
+  unless you subscribe to the other node's Community
+  ([Subscribe to a Community](#subscribe-to-a-community)). Edit one and set
+  its **Community** to put it in one of yours.
 
 > [!TIP]
 > Ask the other SysOp to verify both sides when first testing publication.
@@ -1578,6 +1579,66 @@ A node learns this only from peers it dials itself, so a peer that only dials
 yours reads "not known". **Fork of** is for a board that carries on another
 node's board under yours, for example after that one was closed; leave it
 empty for a board of your own.
+
+#### Share a Community
+
+A Community of yours can be Linked too, so other nodes can carry its topic as
+one. Open it under **Content ▸ Topics ▸ List** and press
+<kbd>L</kbd> **Link this Community**, then confirm.
+
+- Other nodes are offered it with its name, description and default levels and
+  gates, and the list of its message boards, chat channels and file areas that
+  are already Linked from here.
+- Linking the Community links nothing else. A private board filed under it stays
+  private: link it on its own screen when you want it shared, and it joins the
+  list with the next sync pass. Moving a Linked board in or out, or unlinking
+  it, updates the list the same way.
+- Boards, channels and file areas you carry from other nodes are never listed:
+  a Community lists only what this node shares itself.
+- The Community's screen shows its **NetBBS Link** section: whether it is
+  Linked and how many members it lists.
+
+<kbd>C</kbd> **Close on Link** closes it on every node that carries it, for good.
+They keep every board, channel and file area they carry from it; their copy
+becomes an ordinary Community there. It stays here as a local Community, and you
+can link it again later as a new one. <kbd>R</kbd> **Remove** on a Linked
+Community closes it the same way before deleting it.
+
+> [!NOTE]
+> Removing a Linked Community needs the running node, which signs its closure:
+> the shell's `python -m netbbs.admin` console refuses it.
+
+#### Subscribe to a Community
+
+A Community another node shares is never carried on its own. It waits under
+**Link status ▸ Offered** with its origin and how many members it lists:
+
+- <kbd>A</kbd> **Accept** subscribes. A copy of the Community is created here
+  (if one of yours already has its name, a short suffix is added), with its
+  origin's default levels and gates, which you may change.
+- Its boards, channels and file areas are carried and filed in the copy, now
+  and as the origin adds more, within the carry caps. One past a cap waits
+  under **Offered** with the reason "cap", like any other; accept it there.
+- Accepting also carries what the Community lists that is already waiting
+  under **Offered**, within the caps. After that, something offered to you
+  before is left for you to decide, even when a later list names it again.
+- A member you file under another Community stays where you put it. A member
+  the origin takes out of the Community moves out of the copy and stays
+  carried.
+- To keep one member out, <kbd>E</kbd> **Exclude** it on its own offer, or
+  remove it as any carried resource.
+
+The copy shows in callers' **Topics** and in your Community list with the
+Linked marker. Its screen names the origin.
+
+To leave a Community, <kbd>R</kbd> **Remove** its copy. Nothing more arrives
+from it and nothing you carry is removed; the members just lose their
+Community. It is listed under **Link status ▸ Excluded**, where
+<kbd>R</kbd> **Restore** subscribes again.
+
+When the origin unlinks a Community, your copy becomes an ordinary Community,
+marked as closed at its origin. You keep everything in it, and you may keep or
+remove it.
 
 #### Who may post on a linked board
 

@@ -90,6 +90,9 @@ from netbbs.link.events import (
     BOARD_POST_TOMBSTONE_OBJECT_TYPE,
     CHANNEL_GENESIS_OBJECT_TYPE,
     CHANNEL_MESSAGE_OBJECT_TYPE,
+    COMMUNITY_CLOSURE_OBJECT_TYPE,
+    COMMUNITY_GENESIS_OBJECT_TYPE,
+    COMMUNITY_MEMBERS_OBJECT_TYPE,
     FILE_AREA_GENESIS_OBJECT_TYPE,
     FILE_DESCRIPTOR_OBJECT_TYPE,
     KEY_TRANSITION_OBJECT_TYPE,
@@ -108,6 +111,9 @@ from netbbs.link.events import (
     BoardPostTombstone,
     ChannelGenesis,
     ChannelMessage,
+    CommunityClosure,
+    CommunityGenesis,
+    CommunityMembers,
     EndpointDescriptor,
     FileAreaGenesis,
     FileDescriptor,
@@ -118,6 +124,8 @@ from netbbs.link.events import (
     RelayConsentRequest,
     RelayConsentResponse,
     build_endpoint_descriptor,
+    community_link_id,
+    community_members_problem,
     verify_board_closure,
     verify_board_posting,
     verify_board_genesis,
@@ -129,6 +137,7 @@ from netbbs.link.events import (
     verify_board_post_tombstone,
     verify_channel_genesis,
     verify_channel_message,
+    verify_community_event,
     verify_endpoint_descriptor,
     verify_file_area_genesis,
     verify_file_descriptor,
@@ -1456,6 +1465,11 @@ class InventoryRequest:
     file_areas: dict[str, tuple[str, ...]] = field(default_factory=dict)
     not_carried: dict[str, tuple[str, ...]] = field(default_factory=dict)
     page: tuple[int, int] | None = None
+    # Issue #1308: the Link Communities this requester holds, each mapped to
+    # the community events it has for it -- `None` from a requester that does
+    # not understand them (or sends to a responder that does not), which is
+    # how the responder knows not to answer with any.
+    communities: dict[str, tuple[str, ...]] | None = None
 
     def to_dict(self) -> dict:
         data = {
@@ -1475,6 +1489,8 @@ class InventoryRequest:
         # Issue #685: likewise omitted for a whole (one-page) declaration.
         if self.page is not None:
             data["page"] = {"index": self.page[0], "count": self.page[1]}
+        if self.communities is not None:
+            data["communities"] = {community_id: list(ids) for community_id, ids in self.communities.items()}
         return data
 
     @classmethod
@@ -1494,10 +1510,29 @@ class InventoryRequest:
             file_areas={area_id: tuple(ids) for area_id, ids in data.get("file_areas", {}).items()},
             not_carried=_parse_not_carried(data.get("not_carried", {})),
             page=_parse_page(data.get("page")),
+            communities=_parse_communities(data.get("communities")),
         )
 
 
-INVENTORY_RESOURCE_KINDS = ("boards", "channels", "file_areas")
+INVENTORY_RESOURCE_KINDS = ("boards", "channels", "file_areas", "communities")
+"""The kinds a `not_carried` declaration may name. `communities` (issue
+#1308) is only ever sent to a responder advertising
+`LINK_COMMUNITIES_CAPABILITY`."""
+
+
+def _parse_communities(raw: object) -> dict[str, tuple[str, ...]] | None:
+    """Issue #1308: `{community_id: [content_id, ...]}`, or `None` when
+    absent. Strict, as `not_carried` is: it steers what the responder sends."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("communities must be an object")
+    parsed: dict[str, tuple[str, ...]] = {}
+    for community_id, ids in raw.items():
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise ValueError(f"communities[{community_id!r}] must be a list of content IDs")
+        parsed[community_id] = tuple(ids)
+    return parsed
 
 
 def _parse_not_carried(raw: object) -> dict[str, tuple[str, ...]]:
@@ -1812,7 +1847,7 @@ class PeerExchange:
 MAX_SET_ASIDE_PER_PEER = 1024
 
 
-_GENESIS_OBJECT_TYPES = frozenset({"board_genesis", "channel_genesis", "file_area_genesis"})
+_GENESIS_OBJECT_TYPES = frozenset({"board_genesis", "channel_genesis", "file_area_genesis", "community_genesis"})
 
 
 def _event_resource(raw: dict) -> tuple[str, str] | None:
@@ -1821,7 +1856,10 @@ def _event_resource(raw: dict) -> tuple[str, str] | None:
     payload = envelope.get("payload") if isinstance(envelope, dict) else None
     if not isinstance(payload, dict):
         return None
-    for kind, key in (("boards", "board_id"), ("channels", "channel_id"), ("file_areas", "area_id")):
+    for kind, key in (
+        ("boards", "board_id"), ("channels", "channel_id"), ("file_areas", "area_id"),
+        ("communities", "community_id"),
+    ):
         value = payload.get(key)
         if isinstance(value, str) and value:
             return kind, value
@@ -1851,6 +1889,9 @@ KNOWN_EVENT_OBJECT_TYPES = frozenset({
     LINK_MESSAGE_OBJECT_TYPE,
     LINK_MESSAGE_ACCEPTED_OBJECT_TYPE,
     LINK_MESSAGE_BOUNCED_OBJECT_TYPE,
+    COMMUNITY_GENESIS_OBJECT_TYPE,
+    COMMUNITY_MEMBERS_OBJECT_TYPE,
+    COMMUNITY_CLOSURE_OBJECT_TYPE,
 })
 # The largest opaque event kept, as canonical-ish JSON.
 OPAQUE_EVENT_MAX_BYTES = 64 * 1024
@@ -2154,6 +2195,24 @@ class FileAreaEventState:
         self.areas[genesis.payload["area_id"]] = genesis
 
 
+@dataclass
+class CommunityEventState:
+    """Link Community state (issue #1308): the verified geneses, by
+    `community_id`, and the closures. A membership list or closure is only
+    accepted for a Community whose genesis is here. Which membership list is
+    in force is the projection's call (`netbbs.link.communities`), newest
+    `created_at` wins, as for `board_posting`."""
+
+    communities: dict[str, CommunityGenesis] = field(default_factory=dict)
+    closures: dict[str, CommunityClosure] = field(default_factory=dict)
+
+    def genesis_for(self, community_id: str) -> CommunityGenesis | None:
+        return self.communities.get(community_id)
+
+    def record_genesis(self, genesis: CommunityGenesis) -> None:
+        self.communities[genesis.payload["community_id"]] = genesis
+
+
 #: Issue #589: how far back a refused chain extension is compared for a fork,
 #: how many observed equivocations wait for the sync pass, and how many
 #: pairs are remembered so the same fork offered again is not noted twice.
@@ -2339,6 +2398,8 @@ class LinkNode:
     channel_events: ChannelEventState = field(default_factory=ChannelEventState)
     # Design doc §11, issue #89.
     file_area_events: FileAreaEventState = field(default_factory=FileAreaEventState)
+    # Issue #1308: Link Communities.
+    community_events: CommunityEventState = field(default_factory=CommunityEventState)
     # Issue #834: routine Link states (a subject on probation here, a relay
     # candidate not reached) the node log has already explained once since
     # this process started, so they are not repeated on every sync pass.
@@ -2438,6 +2499,10 @@ class LinkNode:
     @property
     def file_areas(self) -> dict[str, FileAreaGenesis]:
         return self.file_area_events.areas
+
+    @property
+    def communities(self) -> dict[str, CommunityGenesis]:
+        return self.community_events.communities
 
     @property
     def post_edits(self) -> dict[str, tuple[BoardPostEdit, ...]]:
@@ -3399,6 +3464,7 @@ class LinkNode:
             signing_verify_key=signing_verify_key,
             not_carried=request.not_carried,
             page=request.page,
+            communities=request.communities,
         ):
             raise LinkProtocolError(
                 f"inventory_request from {sender_fingerprint} does not verify against its "
@@ -3603,6 +3669,10 @@ class LinkNode:
         kind, resource_id = resource
         if kind == "boards":
             return self.current_board_origin(resource_id) if resource_id in self.boards else None
+        if kind == "communities":
+            genesis = self.communities.get(resource_id)
+            origin = genesis.payload.get("origin_fingerprint") if genesis is not None else None
+            return origin if isinstance(origin, str) and origin else None
         genesis = (self.channels if kind == "channels" else self.file_areas).get(resource_id)
         origin = genesis.payload.get("origin_fingerprint") if genesis is not None else None
         return origin if isinstance(origin, str) and origin else None
@@ -4964,6 +5034,15 @@ class LinkNode:
                 self.events[bounced.content_id] = raw
                 accepted.append(bounced.content_id)
 
+            elif (
+                object_type == COMMUNITY_GENESIS_OBJECT_TYPE
+                or object_type == COMMUNITY_MEMBERS_OBJECT_TYPE
+                or object_type == COMMUNITY_CLOSURE_OBJECT_TYPE
+            ):
+                community_id = self._accept_community_event(object_type, raw)
+                if community_id is not None:
+                    accepted.append(community_id)
+
             else:
                 # Issue #1022 (design doc §7.5): a type this node does not
                 # understand is kept and relayed, never projected, and is no
@@ -4973,6 +5052,98 @@ class LinkNode:
                     accepted.append(opaque_id)
 
         return accepted
+
+    def _accept_community_event(self, object_type: str, raw: dict) -> str | None:
+        """Issue #1308: a Link Community's genesis, membership list or
+        closure. All three are signed by the Community's origin -- who signed
+        its genesis; a Community's origin never moves (Decision 7) -- and
+        verified against that origin's keys, so a carrier may relay them
+        (multi-hop, as for boards) but never author them. Returns the content
+        ID when newly accepted, `None` when there is nothing new."""
+        event_class = {
+            COMMUNITY_GENESIS_OBJECT_TYPE: CommunityGenesis,
+            COMMUNITY_MEMBERS_OBJECT_TYPE: CommunityMembers,
+            COMMUNITY_CLOSURE_OBJECT_TYPE: CommunityClosure,
+        }[object_type]
+        event = event_class.from_dict(raw)
+        if event.content_id in self.known_event_ids:
+            return None
+        payload = event.payload
+        community_id = payload.get("community_id")
+        if not isinstance(community_id, str) or not community_id:
+            raise LinkProtocolError(f"{object_type} names no community_id")
+
+        if object_type == COMMUNITY_GENESIS_OBJECT_TYPE:
+            origin = payload.get("origin_fingerprint")
+            name, created_at = payload.get("name"), payload.get("created_at")
+            if not isinstance(name, str) or not name.strip() or not isinstance(created_at, str):
+                raise LinkProtocolError(f"community_genesis {community_id!r} has no name or created_at")
+            if not isinstance(origin, str) or community_id != community_link_id(
+                origin_fingerprint=origin, name=name, created_at=created_at
+            ):
+                raise LinkProtocolError(
+                    f"community_genesis {community_id!r} does not match the id its origin, name and "
+                    "time give it -- refusing"
+                )
+            existing = self.community_events.genesis_for(community_id)
+            if existing is not None and existing.content_id != event.content_id:
+                raise LinkProtocolError(
+                    f"received a conflicting community_genesis for community_id {community_id!r}"
+                )
+        else:
+            genesis = self.community_events.genesis_for(community_id)
+            if genesis is None:
+                # Waits for its genesis, as a member id waits for its own.
+                raise MissingDependency(
+                    f"received a {object_type} for community_id {community_id!r}, which has no "
+                    "verified community_genesis on file -- refusing (no relay from a stranger yet)"
+                )
+            origin = genesis.payload["origin_fingerprint"]
+            if payload.get("origin_fingerprint") != origin:
+                raise LinkProtocolError(
+                    f"{object_type} for community_id {community_id!r} names an origin other than "
+                    "the Community's -- refusing"
+                )
+            if object_type == COMMUNITY_MEMBERS_OBJECT_TYPE:
+                problem = community_members_problem(payload.get("members"))
+                if problem is not None:
+                    raise LinkProtocolError(f"community_members for {community_id!r}: {problem}")
+                if not isinstance(payload.get("created_at"), str):
+                    raise LinkProtocolError(f"community_members for {community_id!r} has no created_at")
+                if community_id in self.community_events.closures:
+                    # Closed: no list is in force any more. Nothing to apply,
+                    # and no reason to refuse what came with it.
+                    return None
+            else:
+                existing_closure = self.community_events.closures.get(community_id)
+                if existing_closure is not None:
+                    if existing_closure.content_id == event.content_id:
+                        self.known_event_ids.add(event.content_id)
+                        self.events.setdefault(event.content_id, raw)
+                        return None
+                    raise LinkProtocolError(
+                        f"community_id {community_id!r} is already closed -- refusing a second, "
+                        "different community_closure"
+                    )
+
+        origin_peer = self.known_identity(origin)
+        if origin_peer is None:
+            raise MissingDependency(
+                f"received a {object_type} originated by {origin}, which has no completed hello "
+                "with this node -- refusing (no relay from a stranger)",
+                missing_identity=origin,
+            )
+        signing_verify_keys = self._resolve_sender_content_keys(origin_peer, origin, object_type)
+        if not any(verify_community_event(event, key) for key in signing_verify_keys):
+            raise LinkProtocolError(f"{object_type} from origin {origin} does not verify against its signing keys")
+
+        if object_type == COMMUNITY_GENESIS_OBJECT_TYPE:
+            self.community_events.record_genesis(event)
+        elif object_type == COMMUNITY_CLOSURE_OBJECT_TYPE:
+            self.community_events.closures[community_id] = event
+        self.known_event_ids.add(event.content_id)
+        self.events[event.content_id] = raw
+        return event.content_id
 
     def _accept_opaque(self, raw: dict, object_type: object) -> str | None:
         """Take an event of a type this node does not understand (issue
