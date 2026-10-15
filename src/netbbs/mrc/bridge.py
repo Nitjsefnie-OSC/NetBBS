@@ -198,6 +198,12 @@ RECONNECT_STABLE_AFTER_SECONDS = 30.0
 CONNECT_TIMEOUT_SECONDS = 10.0
 KEEPALIVE_INTERVAL_SECONDS = 60.0
 USERLIST_REFRESH_INTERVAL_SECONDS = 300.0
+# Issue #1283: the network's room count, read with the hub's documented
+# server stats query (a single `~` on a connection of its own, MRCDoc
+# rev 1.26) about once a minute while MRC is on; up to fifteen minutes
+# apart while the hub does not answer.
+ROOM_COUNT_POLL_SECONDS = 60.0
+ROOM_COUNT_MAX_BACKOFF_SECONDS = 900.0
 USERLIST_MIN_INTERVAL_SECONDS = 5.0
 OUTBOUND_QUEUE_SIZE = 200
 # NEWROOM, USERLIST, STATUS AFK, IAMHERE, TERMSIZE, USERIP, BBSMETA, STATUS
@@ -382,6 +388,7 @@ class MrcBridge:
         outbound_queue_size: int = OUTBOUND_QUEUE_SIZE,
         reply_burst: int = REPLY_BURST,
         per_user_interval_seconds: float = PER_USER_MIN_INTERVAL_SECONDS,
+        room_count_poll_seconds: float = ROOM_COUNT_POLL_SECONDS,
     ) -> None:
         self._hub = hub
         self._lane = lane
@@ -405,6 +412,11 @@ class MrcBridge:
         self._connect_timeout = connect_timeout_seconds
         self._keepalive_interval = keepalive_interval_seconds
         self._userlist_refresh = userlist_refresh_seconds
+        self._room_count_poll = room_count_poll_seconds
+        # Issue #1283: the poll's own task and the count it read last; a
+        # change between two polls is what sends a listing.
+        self._room_count_task: asyncio.Task | None = None
+        self._polled_rooms: int | None = None
         self._reply_burst = reply_burst
         self._per_user_interval = per_user_interval_seconds
 
@@ -540,11 +552,136 @@ class MrcBridge:
             await self._reload_from_db()
             self._start_connector_if_enabled()
             self._start_sweeper()
+            self._start_room_count_poll()
 
     async def close(self) -> None:
         self._stopping = True
         await self._stop_sweeper()
+        await self._stop_room_count_poll()
         await self._stop_connector(graceful=True)
+
+    def _start_room_count_poll(self) -> None:
+        if self._stopping or (self._room_count_task is not None and not self._room_count_task.done()):
+            return
+        self._room_count_task = asyncio.create_task(self._room_count_loop(), name="mrc-room-count")
+
+    async def _stop_room_count_poll(self) -> None:
+        task, self._room_count_task = self._room_count_task, None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    async def _room_count_loop(self) -> None:
+        """Read the network's room count once per poll while MRC is on
+        (issue #1283). Sequential, so never more than one query is in
+        flight; while the hub does not answer, the wait doubles up to
+        `ROOM_COUNT_MAX_BACKOFF_SECONDS`. A failure changes nothing a
+        caller sees: without a count the picker shows what it showed."""
+        delay = self._room_count_poll
+        while not self._stopping:
+            await asyncio.sleep(delay)
+            settings = self._settings
+            if self._stopping:
+                return
+            if settings is None or not settings.enabled:
+                delay = self._room_count_poll
+                continue
+            try:
+                params = await self._query_room_count(settings)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # one odd answer must not end the poll
+                _logger.debug("MRC room count: %r", exc)
+                params = None
+            if params is None:
+                delay = min(delay * 2, max(self._room_count_poll, ROOM_COUNT_MAX_BACKOFF_SECONDS))
+                continue
+            delay = self._room_count_poll
+            # A SysOp may have pointed the bridge at another hub while the
+            # query was out (`reload_settings` loads a new settings object):
+            # the old hub's count must not describe the new one.
+            if self._settings is not settings:
+                continue
+            self._apply_room_count(params)
+
+    async def _query_room_count(self, settings: MrcSettings) -> str | None:
+        """The hub's server stats line (`<bbses> <rooms> <users>
+        <activity>`), asked for with a single `~` on a short connection
+        of its own, which the hub closes after answering. Nothing else is
+        sent: no handshake, no nick. `None` when it cannot be read."""
+        ssl_context = ssl.create_default_context() if settings.tls else None
+        kwargs: dict[str, Any] = {"limit": INBOUND_BUFFER_LIMIT}
+        if ssl_context is not None:
+            kwargs["ssl"] = ssl_context
+            kwargs["server_hostname"] = settings.host
+        try:
+            reader, writer = await asyncio.wait_for(
+                self._open_connection(settings.host, settings.port, **kwargs), timeout=self._connect_timeout
+            )
+        except (OSError, asyncio.TimeoutError, ssl.SSLError):
+            return None
+        try:
+            writer.write(protocol.SEPARATOR.encode("ascii") + b"\n")
+            await writer.drain()
+            raw = await asyncio.wait_for(reader.readline(), timeout=self._connect_timeout)
+        except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, ValueError):
+            return None
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+        params = raw.decode("ascii", errors="replace").strip()[:protocol.MAX_LINE]
+        return params if protocol.parse_stats(params) is not None else None
+
+    def _apply_room_count(self, params: str) -> None:
+        """Keep the reading as the network's size (the status screen and
+        Who's online show it), and when the room count has changed since
+        the last poll, ask for the listing right away as a caller who is
+        on MRC -- still the shared refresh bound, still that caller's
+        nick. With nobody on MRC, `directory_drift` tells the picker."""
+        previous = self._polled_rooms
+        self._record_stats(params)
+        rooms = self._network_stats[1] if self._network_stats is not None else None
+        self._polled_rooms = rooms
+        if previous is None or rooms is None or rooms == previous:
+            return
+        if self._clock() - self._last_directory_request < self._userlist_refresh:
+            return
+        for channel_id, nicks in list(self._announced.items()):
+            mapping = self._by_channel.get(channel_id)
+            if mapping is None:
+                continue
+            for username in list(nicks):
+                if self.refresh_directory(mapping.channel, username):
+                    return
+
+    def directory_drift(self) -> tuple[int, int, float] | None:
+        """`(rooms in the kept listing, rooms the network has now, the
+        listing's age in seconds)` when they disagree and the listing is
+        no longer fresh -- what the picker says beside the rooms, so a
+        days-old listing stops reading as complete (issue #1283). `None`
+        with no current count, no listing, a fresh listing or no
+        difference. A count older than three polls no longer describes
+        the network. A listing is capped at `MAX_OBSERVED_ROOMS`, so a
+        bigger network is compared against the cap."""
+        stats, read_at = self._network_stats, self._network_stats_at
+        if stats is None or read_at is None or not self._directory:
+            return None
+        now = self._clock()
+        if now - read_at > 3 * self._room_count_poll:
+            return None
+        age = max(0.0, now - max(received for _users, _topic, received in self._directory.values()))
+        if self._state is MrcState.CONNECTED and age <= self._userlist_refresh:
+            return None
+        kept, network = len(self._directory), stats[1]
+        if kept == min(network, MAX_OBSERVED_ROOMS):
+            return None
+        return kept, network, age
 
     def _start_sweeper(self) -> None:
         if self._stopping or (self._sweeper_task is not None and not self._sweeper_task.done()):
@@ -595,6 +732,7 @@ class MrcBridge:
             self._network_stats = None
             self._network_stats_at = None
             self._network_stats_raw = None
+            self._polled_rooms = None
             self._banner.clear()
             self._ambiguous_controls.clear()
             self._known_sites.clear()
