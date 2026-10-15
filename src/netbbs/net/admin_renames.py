@@ -7,9 +7,11 @@ account directly with `[C]hange username` on its detail screen.
 
 A rename takes effect at once and ends the account's live sessions, each with
 a line naming the new username (`netbbs.auth.renames.ended_session_notice`,
-shown by the session's own account watcher). Its yes/no is the last keystroke
-before that, and it names the one thing outside the node's reach: an RLogin
-remote door that keys its players on the handle sees a new player.
+shown by the session's own account watcher). Approving a request is one yes/no
+behind `[A]pprove`; a direct rename types the name and then shows what the
+rename does with `[A]pply` and `[B]ack`, as a level change does (§5.7). Both
+name the one thing outside the node's reach: an RLogin remote door that keys
+its players on the handle sees a new player.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from netbbs.auth.renames import (
     sysop_rename_problem,
     username_history,
 )
-from netbbs.auth.users import User, UserManagementError, get_user_by_id
+from netbbs.auth.users import User, UserManagementError, deletion_retires_username, get_user_by_id
 from netbbs.net.admin_fields import _EDIT_HINT, _read_seeded_line
 from netbbs.net.admin_sessions import _request_live_access_recheck
 from netbbs.net.admin_ui import (
@@ -55,11 +57,19 @@ from netbbs.rendering.detail import Field, Note, Section
 from netbbs.storage.execution import DatabaseLane
 
 
-def rename_question(old: str, new: str) -> str:
-    """The yes/no before a rename, approved or direct."""
+def _old_name_fate(old: str, held: bool) -> str:
+    """What becomes of the old name, as the rename will actually do it
+    (`deletion_retires_username`, the predicate the rename asks)."""
+    if held:
+        return f"{old!r} stays held for them, so mail written to it still reaches them."
+    return f"{old!r} is freed: this node has never run NetBBS Link, so anyone may register it."
+
+
+def rename_question(old: str, new: str, *, held: bool) -> str:
+    """The yes/no before approving a requested rename."""
     return (
         f"Rename {old!r} to {new!r}? Their live sessions end, and they log in as {new!r} from now on. "
-        f"{old!r} stays held for them. An RLogin remote door that keys players on the handle sees a new player."
+        f"{_old_name_fate(old, held)} An RLogin remote door that keys players on the handle sees a new player."
     )
 
 
@@ -98,7 +108,30 @@ async def rename_account_directly(
     if problem is not None:
         _announce_line(session, colored(f"Not renamed: {sanitize_text(problem)}", fg_color=MUTED_COLOR))
         return target
-    if not await prompt_yes_no(session, rename_question(target.username, new_name), default=False):
+    # What the rename does, shown before it is made, as a level change is
+    # (design doc §5.7): [A]pply makes it, [B]ack leaves the name as it was.
+    held = await lane.run(deletion_retires_username, target)
+    chrome = await _load_chrome(lane, actor)
+    choice, _page = await show_detail(
+        session,
+        title=_detail_title(
+            session, chrome, f"Rename {target.username} → {new_name}",
+            subtitle="What a rename does. Nothing changes until you apply it.",
+        ),
+        sections=[Section("When you apply it", [
+            Note(f"{target.username!r} becomes {new_name!r} at once. Their live sessions end, each with a "
+                 f"line saying to log in as {new_name!r}."),
+            Note(_old_name_fate(target.username, held)),
+            Note("Posts, files and sent mail keep the name they were written under."),
+            Note("An RLogin remote door that keys its players on the handle sees a new player."),
+        ])],
+        actions=[("a", menu_key("A", "pply")), _BACK_ACTION],
+        redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
+        help_title="Rename help",
+        help_about="What renaming this account does. [A]pply renames it; [B]ack keeps its name.",
+    )
+    if choice != "a":
+        _announce_line(session, colored(f"{target.username!r} keeps its name.", fg_color=MUTED_COLOR))
         return target
     try:
         before, after = await lane.run(rename_user, target, new_name, renamed_by=actor)
@@ -128,6 +161,7 @@ async def _decide_request(
         _announce_line(session, colored("That account no longer exists.", fg_color=MUTED_COLOR))
         return
     former = await lane.run(username_history, account)
+    held = await lane.run(deletion_retires_username, account)
     fields: list[Field | Note] = [
         Field("Account", sanitize_text(account.username)),
         Field("Asks for", sanitize_text(request.requested_username)),
@@ -148,8 +182,8 @@ async def _decide_request(
                 Section("Request", fields),
                 Section("If you approve", [Note(
                     "The name was checked as a signup is when it was asked for, and is checked again "
-                    "now. The old name stays held for this account, so mail to it still arrives; "
-                    "posts keep the name they were written under."
+                    f"now. {_old_name_fate(account.username, held)} Posts keep the name they were "
+                    "written under."
                 )]),
             ],
             actions=[("a", menu_key("A", "pprove")), ("r", menu_key("R", "efuse")), _BACK_ACTION],
@@ -166,7 +200,7 @@ async def _decide_request(
             return
         if choice == "a":
             if not await prompt_yes_no(
-                session, rename_question(account.username, request.requested_username), default=False
+                session, rename_question(account.username, request.requested_username, held=held), default=False
             ):
                 continue
             try:

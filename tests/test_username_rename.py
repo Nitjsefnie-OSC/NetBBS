@@ -582,19 +582,23 @@ def _console(db, inputs, actor):
 
 
 def test_a_sysop_renames_an_account_from_its_detail_screen(db, sysop, alice, linked):
-    # [U]sers -> [U]ser list -> 01 alice -> [C]hange username -> nib -> yes.
-    text = _console(db, ["u", "u", "0", "1", "c", "nib", "y", "b", "b", "b", "b"], sysop)
+    # [U]sers -> [U]ser list -> 01 alice -> [C]hange username -> nib -> [A]pply.
+    text = _console(db, ["u", "u", "0", "1", "c", "nib", "a", "b", "b", "b", "b"], sysop)
 
     assert get_user_by_id(db, alice.id).username == "nib"
-    assert "Rename 'alice' to 'nib'?" in text
+    assert "Rename alice → nib" in text
+    assert "'alice' stays held for them" in text
     assert "RLogin remote door" in text
     assert "'alice' is now 'nib'" in text
     assert "Formerly: alice" in text
 
 
-def test_declining_the_rename_confirm_changes_nothing(db, sysop, alice):
-    _console(db, ["u", "u", "0", "1", "c", "nib", "n", "b", "b", "b", "b"], sysop)
+def test_backing_out_of_the_rename_changes_nothing(db, sysop, alice):
+    text = _console(db, ["u", "u", "0", "1", "c", "nib", "b", "b", "b", "b", "b"], sysop)
     assert get_user_by_id(db, alice.id).username == "alice"
+    # A node that never ran Link frees the old name, and the screen says so.
+    assert "'alice' is freed" in text
+    assert "stays held" not in text
 
 
 def test_a_name_the_rename_would_refuse_is_refused_before_the_confirm(db, sysop, alice):

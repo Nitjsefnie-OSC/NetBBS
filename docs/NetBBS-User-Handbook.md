@@ -67,8 +67,8 @@ NetBBS Link, so the SysOp decides on a new one.
 
 What changes and what stays:
 
-- Mail written to your old name, from this node, other nodes, or an FTN
-  network, still reaches you, and so does a `/msg`.
+- Mail written to your old name from other nodes or an FTN network still
+  reaches you, and so does a `/msg`. On this node, write to your new name.
 - Your posts, files and sent mail keep the name they were written under.
   Chat lines you wrote show your new name.
 - The SysOp approves one change every 30 days.
