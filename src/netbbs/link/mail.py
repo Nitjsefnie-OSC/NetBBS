@@ -51,6 +51,7 @@ import nacl.signing
 
 import netbbs.mail as mail_module
 from netbbs.auth.renames import get_recipient_by_name
+from netbbs.link.user_renames import address_with_current_name
 from netbbs.auth.users import AuthError, User, get_user_by_username
 from netbbs.identity.addressing import AddressError, is_valid_user_part, parse_address
 from netbbs.identity.encryption import EncryptionError, decrypt_with_any, encrypt_for
@@ -114,7 +115,9 @@ def compose_link_message(
     exchanged a hello with this node (nothing on file to encrypt to).
     """
     try:
-        address = parse_address(recipient_address)
+        # A letter to a user's old address goes to the name their node renamed
+        # them to (issue #1306): a reply to an old letter is the usual case.
+        address = parse_address(address_with_current_name(db, recipient_address))
     except AddressError as exc:
         raise LinkMailError(str(exc)) from exc
     # The sender's name goes out as the user half of its address, which the
@@ -698,6 +701,7 @@ _BOUNCE_REASON_TEXT = {
     "link_policy_user_quarantined": "that BBS has quarantined your account",
     "link_policy_user_probationary_approval_required": "that BBS does not trust your account yet",
     "link_policy_probation_budget_exceeded": "this BBS is new to that BBS and has sent it as much as it accepts for now",
+    "link_policy_retired_identity": "that BBS knows your account by a newer name, so it refuses mail signed with the old one",
 }
 _UNKNOWN_BOUNCE_TEXT = "that BBS refused it"
 

@@ -996,6 +996,10 @@ A rename takes effect at once:
   netmail and `/msg` written to it still reach the account. Releasing it
   frees it for anyone, and mail to it then goes to whoever takes it.
 - Each request, refusal and rename is in the account's **History**.
+- Linked nodes learn the rename from your node's next hello and carry what
+  they recorded about the old name over to the new one: a block or a
+  quarantine stays. A node that has not heard from yours for 400 days meets
+  the new name as a new user.
 
 > [!WARNING]
 > An RLogin remote door that keys its players on the handle sees a renamed
