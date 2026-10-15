@@ -5076,7 +5076,7 @@ def test_from_disk_selecting_and_confirming_loads_and_enables_it(db, lane, sysop
 
 
 def test_from_disk_rejects_an_oversized_file_without_loading_it(db, lane, sysop, tmp_path):
-    from netbbs.net.admin_flow import MAX_BANNER_SIZE_BYTES
+    from netbbs.net.admin_banners import MAX_BANNER_SIZE_BYTES
     from netbbs.net.welcome_banner import banner_path, is_welcome_banner_enabled
 
     (tmp_path / "toobig.ans").write_bytes(b"A" * (MAX_BANNER_SIZE_BYTES + 1))

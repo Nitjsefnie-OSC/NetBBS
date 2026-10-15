@@ -206,11 +206,11 @@ def _section_text(section) -> str:
 
 
 def test_the_console_status_shows_credit_width_and_a_font_warning(db):
-    from netbbs.net.admin_flow import _banner_status_section
+    from netbbs.net.admin_banners import _banner_status_section
     from netbbs.net.welcome_banner import welcome_banner_status
 
     _enable(db, "welcome", ART + build_sauce(width=80, lines=1, title="Nib Logo", author="InkWell", font="IBM VGA 850"))
-    from netbbs.net.admin_flow import _banner_sauce
+    from netbbs.net.admin_banners import _banner_sauce
 
     status = welcome_banner_status(db)
     text = _section_text(_banner_status_section(
@@ -224,11 +224,11 @@ def test_the_console_status_shows_credit_width_and_a_font_warning(db):
 
 
 def test_art_without_sauce_shows_no_sauce_rows(db):
-    from netbbs.net.admin_flow import _banner_status_section
+    from netbbs.net.admin_banners import _banner_status_section
     from netbbs.net.welcome_banner import welcome_banner_status
 
     _enable(db, "welcome", ART)
-    from netbbs.net.admin_flow import _banner_sauce
+    from netbbs.net.admin_banners import _banner_sauce
 
     status = welcome_banner_status(db)
     text = _section_text(_banner_status_section(status, unicode_style=False, sauce=_banner_sauce(status)))
