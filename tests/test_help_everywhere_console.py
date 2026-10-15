@@ -23,6 +23,7 @@ from netbbs.link.trust import (
     register_subject,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_boards
 from netbbs.net import admin_system
 from netbbs.net import admin_moderation
 from netbbs.net import admin_trust
@@ -302,7 +303,7 @@ def test_the_moderator_scope_choice_has_help(db, lane, sysop):
 
     create_user(db, "carol", password="hunter2")
     session = FakeSession(["0", "1", "0", "1", "0", "2", H, " ", "e", "s"])
-    asyncio.run(admin_flow._grant_moderator_screen(session, lane, sysop))
+    asyncio.run(admin_boards._grant_moderator_screen(session, lane, sysop))
     text = _visible(_written_text(session))
     _assert_help_then_redraw(text, "Moderator scope help", "all of one kind", "Scope:")
     carol = get_user_by_username(db, "carol")

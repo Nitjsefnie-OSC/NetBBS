@@ -29,7 +29,8 @@ from netbbs.moderation.roles import (
     grant_permissions,
     list_grants_for_user,
 )
-from netbbs.net.admin_flow import _grant_moderator_screen, staff_menu
+from netbbs.net.admin_flow import staff_menu
+from netbbs.net.admin_boards import _grant_moderator_screen
 from netbbs.net.admin_moderation import moderation_queue
 from netbbs.net.main_menu import _draw_main_menu
 from netbbs.net.notices import pending_notices
@@ -297,7 +298,7 @@ def test_only_a_moderating_grant_mentions_the_staff_list(db, lane, sysop, monkey
     async def _one_board(*_args, **_kwargs):
         return "board", board.id, "board 'Announcements'"
 
-    monkeypatch.setattr("netbbs.net.admin_flow._pick_moderator_scope", _one_board)
+    monkeypatch.setattr("netbbs.net.admin_boards._pick_moderator_scope", _one_board)
     # User (01): carol (01); On (02): the one board; Preset (04) cycled from full; save.
     session = FakeSession(["0", "1", "0", "1", "0", "2", *["0", "4"] * preset_steps, "s"])
     asyncio.run(_grant_moderator_screen(session, lane, sysop))
