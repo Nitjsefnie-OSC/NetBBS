@@ -169,7 +169,6 @@ from netbbs.net.shared_account import (
     authored_earlier_by_shared_account,
     earlier_guest_refusal,
     note_created_this_call,
-    signed_in_without_credential,
 )
 from netbbs.net.session_activity import records_activity
 from netbbs.net.sort_ui import SORT_MODE_LABELS, prompt_sort_change
