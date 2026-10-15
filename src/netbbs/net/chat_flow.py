@@ -2055,6 +2055,23 @@ class _HubReplyBlock:
         # #1257 -- one shared pager slot let the second overwrite the
         # first's unread pages).
         self.waiting: list[tuple[str, str, list[str]]] = []
+        # The footer under the page drawn last, while it is still in the
+        # chat's kept lines (`retire_footer`).
+        self.footer: str | None = None
+
+    def retire_footer(self, session: Session) -> None:
+        """Take the last page's footer out of the kept lines, once the next
+        page or a typed line has made it stale: scrolled back to, or drawn
+        again after a resize, `PgDn more` under a page long turned read as
+        a second pager inside the first."""
+        footer, self.footer = self.footer, None
+        transcript = getattr(session, "line_transcript", None)
+        if footer is None or not transcript:
+            return
+        for index in range(len(transcript) - 1, -1, -1):
+            if transcript[index] is footer:
+                del transcript[index]
+                return
 
     def expect(self, label: str) -> None:
         if self.rows:
@@ -2105,6 +2122,7 @@ class _HeldPages:
     footer: Callable[[int, int, int, str | None], Awaitable[str]]
     page: int = 0
     pages: int = 0
+    footer_line: str | None = None  # the footer under the page drawn last
 
 
 async def _next_held_page(session: Session, held: _HeldPages, *, waiting: str | None) -> list[str]:
@@ -2117,8 +2135,10 @@ async def _next_held_page(session: Session, held: _HeldPages, *, waiting: str | 
     # A resize since the first page changes how many are left.
     held.pages = held.page + _hub_reply_page_count(held.rows, capacity, width)
     lines = [await held.title(held.page, held.pages, width), *page]
+    held.footer_line = None
     if held.rows or waiting is not None:
-        lines.append(await held.footer(held.page, held.pages, width, None if held.rows else waiting))
+        held.footer_line = await held.footer(held.page, held.pages, width, None if held.rows else waiting)
+        lines.append(held.footer_line)
     return lines
 
 
@@ -4275,7 +4295,9 @@ async def _write_block(
             await ctx.session.write_line(line)
         return
     # Claimed before the first write, which can yield to the receive loop.
+    holder.retire_footer(ctx.session)
     holder.held = held if held.rows else None
+    holder.footer = held.footer_line
     for line in page:
         await ctx.session.write_line(line)
 
@@ -6191,6 +6213,7 @@ async def _chat_loop(
                     view.offset = view.unseen = 0
                 elif hub_reply.held is not None:
                     hub_reply.held = None
+                    hub_reply.retire_footer(session)
                     await print_lines([colored("(the rest of that answer is skipped)", fg_color=MUTED_COLOR)])
                 return
             if key == "PAGE_UP" or view.offset:
@@ -6228,7 +6251,9 @@ async def _chat_loop(
             lines = await _next_held_page(
                 session, held, waiting=hub_reply.waiting[0][0] if hub_reply.waiting else None,
             )
+            hub_reply.retire_footer(session)
             hub_reply.held = held if held.rows else None
+            hub_reply.footer = held.footer_line
             return lines
 
         async def hub_reply_complete() -> None:
@@ -6425,8 +6450,9 @@ async def _chat_loop(
                         if pinned_ui.active and pinned_ui.last_height is not None:
                             await view_live(pinned_ui.last_height)
                         view.offset = 0
-                if line:
+                if line and hub_reply.held is not None:
                     hub_reply.held = None
+                    hub_reply.retire_footer(session)
 
                 # Help is modal because it reads page-turn keys. Prepare its
                 # result through ordinary command dispatch, then render each

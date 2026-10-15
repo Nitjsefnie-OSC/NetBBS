@@ -222,6 +222,39 @@ def test_a_long_command_reply_is_paged_and_esc_drops_the_rest(db, lane, hub, pre
     asyncio.run(scenario())
 
 
+def test_a_turned_page_leaves_no_footer_in_the_kept_lines(db, lane, hub, presence, channel, alice, sysop):
+    """Scrolled back over a paged answer, a turned page's `PgDn more` read
+    as a second pager inside the first: only the newest page's footer, the
+    one still in force, is kept, and none once the rest is dropped."""
+    for n in range(30):
+        create_channel(db, f"room-{n:02}", creator=sysop)
+
+    def footers() -> list[str]:
+        return [line for line in map(strip_ansi, session.line_transcript) if "PgDn more" in line]
+
+    async def scenario():
+        task, _participant = await _in_chat(lane, hub, presence, channel, alice, session)
+        try:
+            session.inputs.put_nowait("/list")
+            assert await eventually(lambda: "page 1 of" in session.text())
+            await session.navigate("PAGE_DOWN")
+            await session.navigate("PAGE_DOWN")
+            [footer] = footers()
+            assert "page 3 of" in footer
+            mark = len(session.written)
+            await session.navigate("PAGE_UP")
+            await session.navigate("PAGE_UP")
+            assert "page 1 of" not in session.since(mark) and "page 2 of" not in session.since(mark)
+            await session.navigate("ESCAPE")  # leaves the scrolled view
+            await session.navigate("ESCAPE")  # drops the rest
+            assert footers() == []
+        finally:
+            await _leave(session, task)
+
+    session = _NavSession(height=12)
+    asyncio.run(scenario())
+
+
 def test_a_short_command_reply_is_not_paged(lane, hub, presence, channel, alice):
     async def scenario():
         session = _NavSession(height=24)
