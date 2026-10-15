@@ -29,7 +29,7 @@ from netbbs.boards.content_id import compute_content_id
 from netbbs.boards.limits import MAX_BODY_BYTES, MAX_SUBJECT_BYTES
 from netbbs.boards.moderation_notices import record_moderation_outcome
 from netbbs.communities import require_read_gate, require_write_gate, resource_age_gate
-from netbbs.config import get_expiry_grace_period_days
+from netbbs.config import get_crosspost_board_limit, get_expiry_grace_period_days
 from netbbs.file_refs import (
     MAX_FILE_REFS,
     FileRef,
@@ -322,6 +322,11 @@ def create_crosspost(
 
     if len({board.id for board in boards}) != len(boards) or not boards:
         raise PostError("a cross-post names each board once")
+    cap = get_crosspost_board_limit(db)
+    if len(boards) > cap:
+        # The SysOp's cap, checked here as well as in the picker: it may have
+        # been lowered while a review screen held more boards.
+        raise PostError(f"a post can go to {cap} message board{'' if cap == 1 else 's'} at most")
     files = list(files or [])
     problem = sender_ref_problem(db, author, files, noun="post", verb="publish") if files else None
     if problem is not None:

@@ -556,3 +556,14 @@ def test_opening_a_copy_does_not_visit_a_board_never_visited(db, sysop, alice):
 
     # Showcase stays "not visited yet": its backlog was never shown to bob.
     assert unread_post_count(db, bob, second) is None
+
+
+def test_create_crosspost_itself_refuses_more_boards_than_the_cap(db, sysop, alice):
+    from netbbs.boards.posts import PostError
+
+    set_crosspost_board_limit(db, 2)
+    boards = [create_board(db, name, creator=sysop) for name in ("Critique", "Showcase", "Gallery")]
+
+    with pytest.raises(PostError, match="2 message boards at most"):
+        create_crosspost(db, boards, alice, "s", "b")
+    assert _roots(db) == []
