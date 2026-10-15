@@ -952,8 +952,16 @@ async def _delete_community_screen(
         closure = await lane.run(
             close_own_community, community.id, node_identity=link_context.node_identity, actor=actor,
         )
-        if closure is not None:
-            _register_community_events(link_context, [closure])
+        if closure is None:
+            # Linked from this database but not by this node's identity (a
+            # copied database): no closure can be signed, so nothing is deleted.
+            _announce_line(session, colored(
+                f"{community.name!r} was not Linked by this node's identity, so it cannot be closed here; "
+                "nothing was removed.",
+                fg_color=ERROR_COLOR,
+            ))
+            return False
+        _register_community_events(link_context, [closure])
     if subscribed:
         def _leave(db: Database) -> None:
             leave_community(db, community.id, actor=actor, delete=lambda: delete_community(db, community, deleted_by=actor))

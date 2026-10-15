@@ -197,3 +197,16 @@ def test_subscribing_refreshes_the_mrc_bridge(db, lane, sysop):
         session, lane, sysop, link_context=_link_context(), state=OFFERED, mrc_bridge=_Bridge(),
     ))
     assert _Bridge.refreshed == 1
+
+
+def test_a_linked_community_another_identity_signed_is_not_removed(db, lane, sysop):
+    """Review of #1340: a database Linked by another identity cannot be
+    closed by this node, so removing must not delete it unannounced."""
+    community = create_community(db, "Pen Talk", creator=sysop)
+    promote_community(db, community.id, node_identity=bootstrap_node_identity("someone-else"))
+
+    session = FakeSession(["m", "t", "l", "0", "1", "r", "Pen Talk", "b", "b", "b", "b", "b"])
+    asyncio.run(admin_menu(session, lane, sysop, link_context=_link_context()))
+
+    assert "cannot be closed here" in " ".join(_visible(_written_text(session)).split())
+    assert len(list_communities(db)) == 1

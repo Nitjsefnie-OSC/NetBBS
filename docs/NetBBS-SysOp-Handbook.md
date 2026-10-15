@@ -1566,8 +1566,9 @@ A Community another node shares is never carried on its own. It waits under
 - Its boards, channels and file areas are carried and filed in the copy, now
   and as the origin adds more, within the carry caps. One past a cap waits
   under **Offered** with the reason "cap", like any other; accept it there.
-- Something already offered to you before is left for you to decide, even if
-  the Community lists it.
+- Accepting also carries what the Community lists that is already waiting
+  under **Offered**, within the caps. After that, something offered to you
+  before is left for you to decide, even when a later list names it again.
 - A member you file under another Community stays where you put it. A member
   the origin takes out of the Community moves out of the copy and stays
   carried.
