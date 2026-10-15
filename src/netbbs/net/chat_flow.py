@@ -84,6 +84,7 @@ from netbbs.attestation import (
     get_display_name,
     meets_name_requirement,
 )
+from netbbs.auth.renames import ended_session_notice, get_recipient_by_name
 from netbbs.auth.users import (
     DOOR_LABEL_SUFFIX,
     SYSOP_LEVEL,
@@ -1308,6 +1309,7 @@ def _record_presence_event(db: Database, channel: Channel, user: User, kind: str
     try:
         return record_message(
             db, channel, kind=kind, author_label=user.username, author_fingerprint=user.fingerprint,
+            author_user_id=user.id,
         )
     except sqlite3.IntegrityError:
         # Deleted from another connection (the standalone admin CLI) between
@@ -1508,13 +1510,20 @@ def _chat_author_label(db: Database, channel: Channel, user: User) -> str:
     return f"{primary} {verified_unit}"
 
 
-def _resolve_message_author(db: Database, author_label: str) -> User | None:
-    """Best-effort live-account lookup behind a stored `ChannelMessage.
-    author_label` (a denormalized username, design doc) —
-    `None` if the account can no longer be found (defensive; no
-    account-deletion feature exists yet to actually trigger this)."""
+def _resolve_message_author(db: Database, message: ChannelMessage) -> User | None:
+    """The live account behind a stored chat line, or `None` once it can no
+    longer be found.
+
+    By `author_user_id` (issue #1306), so a line still resolves to its
+    author after a rename and never to a later holder of the name: 0 is an
+    older line whose author could not be told apart from a later holder,
+    and resolves to nobody. A line with no id is one no account wrote -- a
+    bot, a door -- or one built in memory, and resolves by its label as
+    every line did before."""
+    if message.author_user_id is not None:
+        return get_user_by_id(db, message.author_user_id) if message.author_user_id else None
     try:
-        return get_user_by_username(db, author_label)
+        return get_user_by_username(db, message.author_label)
     except AuthError:
         return None
 
@@ -1559,7 +1568,7 @@ def _message_author_label(
     """
     if link_speaker is not None:
         return sanitize_text(link_address_label(*link_speaker))
-    author = _resolve_message_author(db, message.author_label)
+    author = _resolve_message_author(db, message)
     if author is None:
         return sanitize_text(message.author_label)
     return _chat_author_label(db, channel, author)
@@ -1617,7 +1626,7 @@ def _speaker_label(
             + colored(node, fg_color=NODE_COLOR)
         )
     else:
-        author = _resolve_message_author(db, message.author_label)
+        author = _resolve_message_author(db, message)
         if author is None:
             middle = colored(sanitize_text(message.author_label), fg_color=color, bold=self_message)
         else:
@@ -1667,7 +1676,7 @@ def _is_door_line(db: Database, message: ChannelMessage) -> bool:
     if at:
         return local_part.lower().endswith(DOOR_LABEL_SUFFIX)
     return (message.author_label.lower().endswith(DOOR_LABEL_SUFFIX)
-            and _resolve_message_author(db, message.author_label) is None)
+            and _resolve_message_author(db, message) is None)
 
 
 def _colored_around(prefix: str, middle: str, suffix: str, *, fg_color: int, bold: bool = False) -> str:
@@ -2500,7 +2509,7 @@ async def _handle_msg(ctx: ChatCommandContext, args: str) -> None:
         )
         return
 
-    target = await _resolve_target(ctx.session, ctx.lane, target_name)
+    target = await _resolve_target(ctx.session, ctx.lane, target_name, former_names=True)
     if target is None:
         return
 
@@ -3091,7 +3100,9 @@ async def _show_usage(session: Session, command: str) -> None:
     )
 
 
-async def _resolve_target(session: Session, lane: DatabaseLane, username: str) -> User | None:
+async def _resolve_target(
+    session: Session, lane: DatabaseLane, username: str, *, former_names: bool = False,
+) -> User | None:
     """Look up a mute/ban/kick command's target username, writing a
     friendly message and returning `None` if there's no such account —
     `AuthError`'s own message is deliberately generic for login-failure
@@ -3100,9 +3111,13 @@ async def _resolve_target(session: Session, lane: DatabaseLane, username: str) -
     from a single function body mixing a synchronous lookup with async
     session I/O into a `lane.run` call (the lookup) wrapped by ordinary
     `await`s (the write) in this same coroutine, since a lane job can't
-    itself await anything."""
+    itself await anything.
+
+    `former_names` (issue #1306): a name renamed away from also reaches the
+    renamed account, as it does for `/msg`. Moderation commands act on the
+    name an account has now."""
     try:
-        return await lane.run(get_user_by_username, username)
+        return await lane.run(get_recipient_by_name if former_names else get_user_by_username, username)
     except AuthError:
         await session.write_line(colored(f"No such user: {sanitize_text(username)!r}", fg_color=MUTED_COLOR))
         return None
@@ -3428,6 +3443,7 @@ async def _handle_me(ctx: ChatCommandContext, args: str) -> ChatAction | None:
         author_label=ctx.user.username,
         author_fingerprint=ctx.user.fingerprint,
         body=args,
+        author_user_id=ctx.user.id,
     )
     await ctx.session.write_line(await ctx.lane.run(_render_channel_message, ctx.channel, ctx.user, recorded))
     await ctx.hub.broadcast(ctx.channel.name, recorded, exclude={ctx.participant_id})
@@ -3486,7 +3502,10 @@ async def _announce_nick_change(ctx: ChatCommandContext, *, new_nick: str | None
     notice = colored(f"*** {username} {body}", fg_color=MUTED_COLOR)
 
     await ctx.session.write_line(notice)
-    await ctx.lane.run(record_message, ctx.channel, kind="nick", author_label=ctx.user.username, body=body)
+    await ctx.lane.run(
+        record_message, ctx.channel, kind="nick", author_label=ctx.user.username, body=body,
+        author_user_id=ctx.user.id,
+    )
     await ctx.hub.broadcast(ctx.channel.name, notice, exclude={ctx.participant_id})
 
 
@@ -6427,7 +6446,7 @@ async def _chat_loop(
                             if not await lane.run(account_still_active, user):
                                 await session.write_line(
                                     colored(
-                                        "\r\nYour account is no longer active. Disconnecting.",
+                                        "\r\n" + await lane.run(ended_session_notice, user),
                                         fg_color=MUTED_COLOR,
                                     )
                                 )
@@ -6500,7 +6519,7 @@ async def _chat_loop(
                             # or command, before any of it is actually processed.
                             await session.write_line(
                                 colored(
-                                    "\r\nYour account is no longer active. Disconnecting.",
+                                    "\r\n" + await lane.run(ended_session_notice, user),
                                     fg_color=MUTED_COLOR,
                                 )
                             )
@@ -6672,6 +6691,7 @@ async def _chat_loop(
                             author_label=user.username,
                             author_fingerprint=user.fingerprint,
                             body=line,
+                            author_user_id=user.id,
                         )
                         # Design doc, issue #91: queues this self-authored
                         # message for Link propagation when channel is

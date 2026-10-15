@@ -46,6 +46,12 @@ from netbbs.attestation import (
     set_location_visible,
     set_verified_badge_visible,
 )
+from netbbs.auth.renames import (
+    UsernameChangeError,
+    open_username_request,
+    request_username_change,
+    withdraw_username_request,
+)
 from netbbs.auth.users import (
     SYSOP_LEVEL, User, get_user_by_id, has_password, is_usable_sysop, list_ssh_keys, list_users,
 )
@@ -1271,6 +1277,7 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
         "sort_preference_count": len(await lane.run(list_sort_preferences, user)),
         "ssh_key_count": len(await lane.run(list_ssh_keys, user)),
         "password_set": await lane.run(has_password, user),
+        "username_request": getattr(await lane.run(open_username_request, user), "requested_username", None),
     }
 
     async def _bio_prompt(session: Session, lane: DatabaseLane, draft: Draft) -> None:
@@ -1337,6 +1344,43 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
         user = await manage_password_screen(session, lane, user, changed_by=actor or user)
         draft["password_set"] = await lane.run(has_password, user)
         draft["ssh_key_count"] = len(await lane.run(list_ssh_keys, user))
+
+    @inline_field
+    async def _username_prompt(session: Session, lane: DatabaseLane, draft: Draft) -> None:
+        """Issue #1306 (design doc §16 #1111 Decision 1): ask the SysOp for a
+        new username. The value is the name asked for: typing one asks (or
+        replaces the open request), blank withdraws it, Esc keeps it. Checked
+        as a signup is, at once; the SysOp approves or refuses it later."""
+        if signed_in_without_credential(session):
+            _refuse_shared_account(session, "the username")
+            return
+        current = draft["username_request"] or ""
+        await write_field_prompt(
+            session, colored(f"New username to ask the SysOp for ({_FIELD_HINT}):", fg_color=MUTED_COLOR),
+            hint=_FIELD_HINT,
+        )
+        try:
+            raw = (await read_field_line(session, initial=current)).strip()
+        except InputCancelled:
+            await session.write_line("")
+            return
+        if raw == current:
+            return
+        if not raw:
+            withdrawn = await lane.run(withdraw_username_request, user)
+            draft["username_request"] = None
+            announce_line(session, "Request withdrawn." if withdrawn else "There was no request to withdraw.")
+            return
+        try:
+            await lane.run(request_username_change, user, raw)
+        except UsernameChangeError as exc:
+            announce_line(session, colored(f"Not asked: {sanitize_text(str(exc))}.", fg_color=MUTED_COLOR))
+            return
+        draft["username_request"] = raw
+        announce_line(
+            session,
+            f"Asked for {raw!r}. The SysOp decides; until then you keep {user.username!r}.",
+        )
 
     def _color_depth_render(d: Draft) -> str:
         value = d["color_depth"]
@@ -1848,7 +1892,30 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
             ),
             section="Account",
         ),
+        FieldSpec(
+            key="username",
+            label="Username",
+            render=lambda d: (
+                f"{user.username} (asked for {d['username_request']})" if d["username_request"] else user.username
+            ),
+            prompt=_username_prompt,
+            brief="Ask the SysOp for a new username",
+            help=(
+                "The name you log in with, and who you are to other nodes on NetBBS Link. "
+                "Type a new one to ask the SysOp for it: it is checked as a new account's "
+                "name is, and the SysOp approves or refuses it. A refusal, and why, is shown "
+                "when you next log in. Blank withdraws your request. If it is approved, you "
+                "are logged out and log in with the new name; mail sent to the old one still "
+                "reaches you, and your old posts keep the name they were written under. One "
+                "change every 30 days."
+            ),
+            section="Account",
+        ),
     ]
+    if actor is not None:
+        # The SysOp renames an account from its detail screen ([C]hange
+        # username), not by asking on the member's behalf.
+        fields = [field for field in fields if field.key != "username"]
 
     title, subtitle = "Your profile", "Your public identity and caller preferences."
     if actor is not None:

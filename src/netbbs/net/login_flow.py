@@ -29,6 +29,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
+from netbbs.auth.renames import ended_session_notice
 from netbbs.auth.users import (
     MIN_REGISTRATION_PASSWORD_LENGTH,
     NEW_ACCOUNT_SENTINEL,
@@ -556,9 +557,9 @@ async def _watch_for_account_revocation(
         try:
             await asyncio.wait_for(
                 session.write_line(
-                    colored(
-                        "\r\nYour account is no longer active. Disconnecting.", fg_color=MUTED_COLOR
-                    )
+                    # Issue #1306 (design doc §16 #1111 Decision 6): a rename
+                    # ends the session on purpose, with the name to log in as.
+                    colored("\r\n" + ended_session_notice(db, user), fg_color=MUTED_COLOR)
                 ),
                 timeout=_REVOCATION_NOTICE_TIMEOUT_SECONDS,
             )

@@ -235,6 +235,9 @@ class PendingApprovalError(AuthError):
 class RetiredUsername:
     username: str
     retired_at: str
+    # Issue #1306: the account renamed away from this name, under its name
+    # now; `None` for a name held for a deleted account.
+    renamed_to: str | None = None
 
 
 def _password_work_semaphore() -> asyncio.Semaphore:
@@ -1790,10 +1793,20 @@ def is_username_retired(db: Database, username: str) -> bool:
 
 def list_retired_usernames(db: Database) -> list[RetiredUsername]:
     """Every held username, most recently retired first."""
+    if not any(row["name"] == "user_id" for row in db.connection.execute("PRAGMA table_info(retired_usernames)")):
+        # A schema from before issue #1306, as migration tests open it.
+        return [
+            RetiredUsername(row["username"], row["retired_at"])
+            for row in db.connection.execute(
+                "SELECT username, retired_at FROM retired_usernames ORDER BY retired_at DESC, username"
+            ).fetchall()
+        ]
     return [
-        RetiredUsername(row["username"], row["retired_at"])
+        RetiredUsername(row["username"], row["retired_at"], row["renamed_to"])
         for row in db.connection.execute(
-            "SELECT username, retired_at FROM retired_usernames ORDER BY retired_at DESC, username"
+            """SELECT r.username, r.retired_at, u.username AS renamed_to
+                 FROM retired_usernames AS r LEFT JOIN users AS u ON u.id = r.user_id
+                ORDER BY r.retired_at DESC, r.username"""
         ).fetchall()
     ]
 

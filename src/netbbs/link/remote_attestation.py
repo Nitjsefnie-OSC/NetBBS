@@ -1114,7 +1114,8 @@ def reconcile_issued_attestations(
     one approaching expiry, and signs a revocation whenever the consent behind
     a live object has gone: the toggle switched off, the attestation removed,
     the value re-verified (which clears `link_visible` anyway), or the account
-    deleted.  A deleted account is why the `user_id` column is `SET NULL`
+    deleted. A renamed account's objects name its old username: they are
+    revoked and issued again under the new one (issue #1306).  A deleted account is why the `user_id` column is `SET NULL`
     rather than `CASCADE` -- the signed row has to outlive the account long
     enough to be revoked, or subscribers would hold a live assertion about a
     user who no longer exists until it expired on its own.
@@ -1131,9 +1132,11 @@ def reconcile_issued_attestations(
             ).fetchall()
         }
         live = db.connection.execute(
-            """SELECT content_id, user_id, attribute, attested_value, expires_at
-               FROM link_issued_remote_attestations
-               WHERE object_type = ? AND revoked_at IS NULL AND expires_at > ?""",
+            """SELECT a.content_id, a.user_id, a.attribute, a.attested_value, a.expires_at,
+                      json_extract(a.envelope_json, '$.payload.subject.opaque_user_id') AS subject_name,
+                      u.username
+               FROM link_issued_remote_attestations AS a LEFT JOIN users AS u ON u.id = a.user_id
+               WHERE a.object_type = ? AND a.revoked_at IS NULL AND a.expires_at > ?""",
             (REMOTE_ATTESTATION_OBJECT_TYPE, now_value),
         ).fetchall()
         for row in live:
@@ -1145,6 +1148,11 @@ def reconcile_issued_attestations(
                 reason = "consent_withdrawn"
             elif consented[key] != row["attested_value"]:
                 reason = "attested_value_replaced"
+            elif row["subject_name"] is not None and row["subject_name"] != row["username"]:
+                # Issue #1306 (design doc §16 #1111 Decision 6): the object
+                # names the account by its old username. Revoked here and
+                # issued again below, under the new one.
+                reason = "account_renamed"
             else:
                 continue
             content_id = _revoke_issued(

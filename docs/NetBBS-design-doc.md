@@ -1621,7 +1621,54 @@ confirmed and audited action. Self-service registration refuses a retired
 name in the words it uses for a taken one; a SysOp surface says why and where
 to release it.
 
+**Renaming an account** (issue #1111). A caller asks for a new username from
+their Profile; the request is checked exactly as self-registration checks a
+name and waits beside pending registrations, where the SysOp approves it or
+refuses it with a reason the caller sees at their next login. A SysOp can also
+rename an account directly from its detail screen. Approving, refusing and
+renaming are a SysOp's alone, as deletion is. One open request per account,
+one approved rename per account per 30 days (a SysOp's direct rename is not
+limited, and counts as the latest), and each step is audited
+(`request_username_change`, `refuse_username_change`, `rename_user`).
+
+- **One transaction.** The username changes and the account id, with
+  everything keyed on it, stays. Under the retirement rule above the old name
+  is retired in the same transaction, and the retired row records the account
+  it now belongs to; Link mail, FTN netmail and `/msg` to the old name reach
+  that account. A name retired by deletion records no account and bounces. A
+  later deletion of the renamed account clears the account from its old names,
+  which stay held.
+- **History keeps its name.** Posts, files and sent mail keep the author name
+  they were stored and signed under; this node's copy never disagrees with a
+  peer's. What looks an account up live follows it. Chat scrollback records
+  the writing account's id on every line, so a line resolves to its author
+  after a rename and never to a later holder of the name; a line from before
+  that id existed resolves to its author only if the account holding the name
+  existed when the line was written, and otherwise to nobody.
+- **Live sessions end.** A rename ends the account's live sessions with a line
+  naming the new username; they log in with it. Presence, chat and MRC state
+  follow from there. The remote attestations this node issued about the
+  account are revoked and reissued under the new name. An RLogin remote door
+  keyed on the handle sees a new player, and the confirmation says so.
+- **On the Link** the rename is announced in the node's endpoint descriptor
+  (§4.4) and peers carry the user's state over to the new name (§12.4).
+
 ### 4.4 Human-facing Link addresses
+
+**A renamed user's address** (issue #1111). A node lists its recent username
+renames in its signed endpoint descriptor as `user_renames`: `{from, to, at}`
+entries, at most 64, none older than 400 days, newest first. A reader
+validates each entry and skips what does not validate; it never refuses a
+hello or an introduction over the list. A peer keeps what it learns, keyed by
+node fingerprint and old name, and does not re-read it, since entries age out
+of the list. From then on `new@node` is the same user as `old@node`: chains
+(`A -> B -> C`) resolve to the current name, a letter to the old address is
+sent to the new one (a reply to an old letter is the usual case), and a mail
+block recorded against either address covers both. A peer's views of the
+user -- a trust screen, a block list -- show the current name with "formerly"
+and the old one. Content signed before the rename keeps showing the name it
+was signed under. A peer that has not heard from the node within 400 days of
+the rename meets the new name as a new user.
 
 The normal human-facing cross-node address is:
 
@@ -4854,6 +4901,13 @@ NFC normalization every string field receives — never case-folded the way
 local login/uniqueness lookups are, since a signed event fixes one exact
 string forever, not a case-insensitive equivalence class.
 
+`local_user_id` is immutable *per event*, not per account: a home node may
+rename an account (§4.3, issue #1111). An event keeps the name it was signed
+under. Once a peer has learned `old -> new` for a node (§4.4), an event newly
+signed as `old@node` -- its `created_at` at or after the rename -- is refused as
+a retired identity (`link_policy_retired_identity`) and logged for the SysOp;
+names are retired at home, so an honest node never signs one.
+
 ### 7.4 Immutable content and state-changing chains
 
 There are two event classes.
@@ -7457,6 +7511,32 @@ reporter; establishing an identity locally is an override. A node does not
 vouch for itself or for its own users: the home node is the one party that
 cannot be independent of them, and what such a statement should mean is not
 decided.
+
+**A renamed user** (issue #1111). When a peer learns from a node's descriptor
+that the node renamed `old` to `new` (§4.4), `new@node` takes the old
+subject's state: overrides, quarantine and block states, signals, vouches,
+local observations, activity days and probation age. A rename neither launders
+a block nor resets probation. Whatever is recorded or asked about the old name
+afterwards is the new name's. A peer accepts a rename only when it grants the
+home node nothing it does not already have -- a home node speaks for its users
+-- and refuses two kinds, each logged for the SysOp and never shown to callers:
+
+- **A merge.** An entry whose new name this node already holds as a separate
+  subject with history from *before* the entry's `at` would merge two users.
+  History from `at` onwards is the renamed user's own (the same home node signs
+  it, and it can arrive before the notice does), so an honest rename noticed
+  late is never refused for it.
+- **A rename back** to a name the same node renamed away from earlier: names
+  are retired at home, so an honest node never does this. Together with the
+  first rule this keeps chains acyclic.
+
+A node could backdate `at` to slip past the merge test, so when both names
+already carry state the stricter of each kind stays: of two active overrides
+on a dimension the stricter is kept and the other cleared, a quarantine or
+block on either side stays, and a quarantine in its recovery hold keeps its
+hold. A rename can never lift a restriction. Attestations a peer received
+about the old name are not moved; the issuer revokes them and issues them
+again under the new name.
 
 ### 12.5 Evidence classes and attribution
 
