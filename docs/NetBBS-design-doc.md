@@ -3103,9 +3103,13 @@ Local chat includes bounded persistent channel scrollback, presence, away
 state, invitations/membership, `/who`, `/whois`, `/names`, `/list`, `/join`,
 `/leave`, `/topic`, completion, and online private conversation.
 
-Audible bells for private messages and mentions, with a per-caller level and
-a tone in the web client, are decided in §16, "Issue #1302 — audible chat
-bells", and not yet built. Until then only an MRC private line rings.
+Chat rings the caller's bell for private messages and, if they choose, for
+lines naming them: a per-caller level (`off`, `private`, the default, or
+`mentions`) set in Profile → Communication or with `/bell`, a per-session
+rate limit, and a tone in the web client. §16, "Issue #1302 — audible chat
+bells", is the normative answer (issue #1333 built it). The bell is decided
+by an explicit flag on what the hub delivers and written as its own `\x07`
+after the line, so no line, transcript or replay carries it.
 
 Chat's input row -- in a channel, an MRC room and a direct chat -- scrolls a
 line wider than the terminal within the row, with `<` and `>` marking text out
@@ -15241,17 +15245,17 @@ which have no way to carry one.
 
 ### Issue #1302 — audible chat bells — decided
 
-A caller in another window should notice when chat needs them. Only one thing
-rings today: an MRC private line, which the receive loop in `chat_flow`
-prefixes with `\x07` (#305). A native `/msg` or `/private`
+A caller in another window should notice when chat needs them. Before this
+(built in #1333), only one thing rang: an MRC private line, which the receive
+loop in `chat_flow` prefixed with `\x07` (#305). A native `/msg` or `/private`
 (`_deliver_private_message`, delivered as a `_TimestampedNotice` through
 `ChatHub.send_to`), a Link direct message (`link_direct`), a `/dm` invitation
-and a mention of one's name are silent. `_TimestampedNotice` cannot mark a bell:
+and a mention of one's name were silent. `_TimestampedNotice` cannot mark a bell:
 `daybreak` broadcasts one to everyone each day. Remote text already arrives
 without BEL (`sanitize_text` strips every control character), and the PgUp
 scrollback pager strips it from replayed lines (`_REPLAY_CONTROLS`). The web
-client (`netbbs-terminal.js`, xterm.js 6.0.0) has no bell handling, so a web
-caller hears nothing.
+client (`netbbs-terminal.js`, xterm.js 6.0.0) had no bell handling, so a web
+caller heard nothing.
 
 **Decision 1 — three levels, private by default.** A per-caller preference:
 `off`, `private`, or `private and mentions`.

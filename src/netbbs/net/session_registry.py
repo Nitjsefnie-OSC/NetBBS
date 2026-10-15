@@ -431,7 +431,7 @@ class ActiveSessionRegistry:
             await self.disconnect_one(session)
         return len(targets)
 
-    async def notify_one(self, session: Session, text: str) -> bool:
+    async def notify_one(self, session: Session, text: str, *, ring: str | None = None) -> bool:
         """
         Deliver `text` to just `session` -- the same hook-or-`write_line`
         dispatch `broadcast_to_all` already uses per recipient (design
@@ -454,6 +454,12 @@ class ActiveSessionRegistry:
         try:
             if session.pinned_notice_hook is not None:
                 await session.pinned_notice_hook(text)
+                # Issue #1302: a notice with a ring flag (`ring`, its
+                # sender) rings only where chat has installed a bell --
+                # the chat screens and direct chat.
+                bell_hook = getattr(session, "chat_bell_hook", None)
+                if ring is not None and bell_hook is not None:
+                    await bell_hook(ring)
             else:
                 await session.write_line(text)
             return True

@@ -45,6 +45,7 @@ const document = {
     for (const element of body.walk()) if (element.id === id) return element;
     return id === 'transfer-panel' ? null : new Element('div');
   },
+  addEventListener() {},
 };
 
 function respond(status, headers = {}) {
@@ -67,6 +68,7 @@ class Terminal {
   constructor() { term = this; this.cols = 80; this.rows = 24; }
   loadAddon() {} open() {} write() {} resize() {} focus() {}
   onData(callback) { this.input = callback; }
+  onBell() {}
 }
 class WebSocket {
   static OPEN = 1;

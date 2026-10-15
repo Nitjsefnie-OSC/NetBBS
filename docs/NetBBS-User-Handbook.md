@@ -389,6 +389,7 @@ Choose a chat channel to join the conversation. Type a line and press
 | `/away text` | Set an away message |
 | `/nick name` | Set a chat alias; a bare `/nick` clears it |
 | `/dm user` | Invite someone online to a private direct chat |
+| `/bell` | Show when chat rings your bell; `/bell off`, `/bell private` or `/bell mentions` sets it |
 
 > [!TIP]
 > <kbd>PgUp</kbd> scrolls back through the conversation, a page at a time, and
@@ -429,6 +430,29 @@ message for later.
 > [!NOTE]
 > If live contact fails, send mail explicitly: chat does not silently turn
 > it into mail.
+
+#### The chat bell
+
+Chat rings your terminal's bell when it needs you, so you notice from another
+window. Choose when in **Profile ▸ Chat bell**, or with `/bell` in chat:
+
+- **Private** (the default): a `/msg` or `/private` message, a message from
+  someone on a linked BBS or on MRC, and a `/dm` invitation.
+- **Mentions**: those, and a line in a channel that names you, by your
+  username or your alias, with or without `@`. Your own lines and bots' lines
+  never ring.
+- **Off**: never.
+
+Being away doesn't silence it: the bell is for when you are away from the
+screen. It rings at most a few times in a row, and once every 30 seconds for
+any one person, and never while you are scrolled back with <kbd>PgUp</kbd>.
+It rings on the chat screens and in a direct chat; a message that waits for
+you elsewhere on the board does not ring.
+
+Your terminal decides whether a bell beeps, flashes or stays quiet. In the
+web client it plays a short tone once you have pressed a key or clicked in
+the page, and while the tab is in the background its title starts with `(!)`
+until you come back.
 
 ### Mail
 

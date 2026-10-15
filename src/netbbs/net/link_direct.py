@@ -342,7 +342,10 @@ def build_direct_message_deliverer(
         delivered = False
         live_keys = {pid.session_key for _channel, pid in live}
         for channel_name, pid in live:
-            await hub.send_to(channel_name, pid, _TimestampedNotice(notice, message.created_at))
+            await hub.send_to(channel_name, pid, _TimestampedNotice(
+                notice, message.created_at,
+                ring=f"link:{message.from_user_id}@{message.from_node_fingerprint}",
+            ))
             delivered = True
         if session_registry is not None:
             for target_session in session_registry.sessions_for_username(target.username):

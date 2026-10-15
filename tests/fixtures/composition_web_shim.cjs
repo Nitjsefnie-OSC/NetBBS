@@ -50,6 +50,7 @@ class Terminal {
     installXtermDouble(this.textarea, data => this.input(data));
   }
   onData(callback) { this.input = callback; }
+  onBell() {}
 }
 
 function installXtermDouble(textarea, fire) {
@@ -125,7 +126,7 @@ const context = {
   Terminal, WebSocket, TextDecoder, Uint8Array, URL, setTimeout,
   atob: value => Buffer.from(value, 'base64').toString('binary'),
   FitAddon: {FitAddon: class { fit() {} }},
-  document: {getElementById() { return {}; }},
+  document: {getElementById() { return {}; }, addEventListener() {}},
   navigator: {userAgent: android
     ? 'Mozilla/5.0 (Android 14; Mobile; rv:131.0) Gecko/131.0 Firefox/131.0'
     : 'Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0'},

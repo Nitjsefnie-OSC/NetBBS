@@ -114,6 +114,7 @@ from netbbs.net.ssh_key_screen import manage_ssh_keys_screen
 from netbbs.net.mrc_color_preference import mrc_colors_enabled, set_mrc_colors_enabled
 from netbbs.net.post_color_preference import post_colors_enabled, set_post_colors_enabled
 from netbbs.net.mrc_name_preference import MRC_NAME_STYLES, mrc_name_style, set_mrc_name_style
+from netbbs.chat.bell import BELL_LEVEL_LABELS, BELL_LEVELS, bell_level, set_bell_level
 from netbbs.net.mrc_nick_color_preference import mrc_nick_color, set_mrc_nick_color
 from netbbs.net.mrc_lastseen_preference import mrc_lastseen_recorded, set_mrc_lastseen_recorded
 from netbbs.net.mrc_private_preference import mrc_private_messages_enabled, set_mrc_private_messages_enabled
@@ -1265,6 +1266,7 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
         "post_colors": await lane.run(post_colors_enabled, user),
         "mrc_nick_color": await lane.run(mrc_nick_color, user),
         "mrc_names": await lane.run(mrc_name_style, user),
+        "chat_bell": await lane.run(bell_level, user),
         "breadcrumb_collapsed": await lane.run(breadcrumb_collapsed_enabled, user),
         "sort_preference_count": len(await lane.run(list_sort_preferences, user)),
         "ssh_key_count": len(await lane.run(list_ssh_keys, user)),
@@ -1623,6 +1625,26 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
                 "list shown after login and from the main menu. Your own [H]istory screen is "
                 "unaffected; it only ever shows you your own calls. Hiding it only affects "
                 "what ordinary callers see -- a SysOp can always see the real name."
+            ),
+            section="Communication",
+        ),
+        FieldSpec(
+            key="chat_bell",
+            label="Chat bell",
+            render=lambda d: BELL_LEVEL_LABELS[d["chat_bell"]],
+            prompt=live_choice_field(
+                "chat_bell", list(BELL_LEVELS),
+                persist=_member_persist(user, actor, "chat_bell", set_bell_level, describe=describe),
+            ),
+            brief="When chat rings your terminal's bell",
+            help=(
+                "When chat rings your terminal's bell, so you notice it from another window. "
+                "Private (the default): for a private message -- /msg, /private, a message from "
+                "someone on a linked BBS or on MRC -- and a /dm invitation. Mentions: those, and "
+                "a line in a chat channel that names you, by your username or your alias. Off: "
+                "never. Being away doesn't silence it. Your terminal decides whether a bell beeps, "
+                "flashes or stays quiet; in the web client it plays a short tone. Also set with "
+                "/bell in chat."
             ),
             section="Communication",
         ),
