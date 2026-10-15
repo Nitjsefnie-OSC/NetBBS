@@ -23,6 +23,7 @@ from netbbs.link.trust import (
     register_subject,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_system
 from netbbs.net import admin_moderation
 from netbbs.net import admin_trust
 from netbbs.net import admin_ui
@@ -200,7 +201,7 @@ def test_the_managed_dns_screen_has_help(db, lane, sysop):
 def test_the_mrc_blocklist_has_help(db, lane, sysop):
     draft = {"open_blocklist": []}
     session = FakeSession([H, " ", "a", "Secret Room", "b"])
-    asyncio.run(admin_flow._blocklist_field(session, lane, draft))
+    asyncio.run(admin_system._blocklist_field(session, lane, draft))
     text = _visible(_written_text(session))
     _assert_help_then_redraw(text, "Blocked rooms help", "save the MRC settings", "No MRC rooms are blocked.")
     assert draft["open_blocklist"] == ["Secret_Room"]
