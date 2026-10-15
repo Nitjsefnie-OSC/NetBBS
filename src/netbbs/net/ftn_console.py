@@ -17,8 +17,8 @@ Configuration and operation are kept apart, as MRC's are:
 Every screen follows §3.5: content first, actions on the bar, drafts that
 persist nothing before Save.
 
-The console's own helpers live in `netbbs.net.admin_flow`, which imports
-this module; they are reached through `_af()` when a screen runs.
+The console's own helpers come from `netbbs.net.admin_ui` and
+`netbbs.net.admin_fields`, which never import this module.
 """
 
 from __future__ import annotations
@@ -52,10 +52,35 @@ from netbbs.ftn.nodelist import MAX_NODELIST_BYTES, NodelistError, import_nodeli
 from netbbs.ftn.queue import FtnQueueFullError, count_pending_outbound, delete_held, list_held
 from netbbs.ftn.tosser import release_held
 from netbbs.moderation.log import record_action
+from netbbs.net.admin_fields import _int_field, _optional_text_field
+from netbbs.net.admin_ui import (
+    _BACK_ACTION,
+    _announce,
+    _announce_line,
+    _detail_title,
+    _load_chrome,
+    edit_resource_draft,
+    pick_item,
+    show_detail,
+)
+from netbbs.net.char_input import InputCancelled
+from netbbs.net.confirm import prompt_yes_no
 from netbbs.net.location import located
-from netbbs.net.resource_editor import read_field_line
-from netbbs.net.session import Session
-from netbbs.rendering import MUTED_COLOR, colored
+from netbbs.net.menu_description_preference import menu_description_level
+from netbbs.net.picker import pick_item as _pick_item
+from netbbs.net.resource_editor import (
+    FieldSpec,
+    bool_field,
+    bool_step,
+    choice_field,
+    choice_step,
+    inline_field,
+    read_field_line,
+    text_field,
+    write_field_prompt,
+)
+from netbbs.net.session import Session, write_prompt
+from netbbs.rendering import ERROR_COLOR, MUTED_COLOR, colored
 from netbbs.rendering.detail import Field, Note, Section
 from netbbs.rendering.layout import MenuEntry, status_badge
 from netbbs.rendering.menu import menu_key
@@ -68,12 +93,6 @@ FSXNET = {"name": "fsxNet", "domain": "fsxnet", "uplink_address": "21:1/100", "u
 CHARSETS = [CP437.codec, "utf-8", "latin-1", "cp850", "cp866"]
 
 
-def _af():
-    from netbbs.net import admin_flow
-
-    return admin_flow
-
-
 # --- Settings → Echomail & netmail (FTN) -------------------------------------------------
 
 
@@ -81,7 +100,6 @@ def _af():
 async def ftn_networks_screen(session: Session, lane: DatabaseLane, actor: User, *, node_controls=None) -> None:
     """The networks: picking one edits it, [C]reate adds one, [D]elete removes
     the highlighted one."""
-    af = _af()
     status: str | None = None
 
     async def _load() -> list[FtnNetwork]:
@@ -93,7 +111,7 @@ async def ftn_networks_screen(session: Session, lane: DatabaseLane, actor: User,
     async def _delete(network: FtnNetwork) -> list[FtnNetwork] | None:
         nonlocal status
         await session.write_line("")
-        if not await af.prompt_yes_no(
+        if not await prompt_yes_no(
             session, f"Delete {network.name}? Its boards become local and keep their posts; "
                      f"mail waiting for it is dropped.", default=False):
             return None
@@ -106,10 +124,10 @@ async def ftn_networks_screen(session: Session, lane: DatabaseLane, actor: User,
         status = f"Deleted {network.name}."
         return await _load()
 
-    chrome = await af._load_chrome(lane, actor)
+    chrome = await _load_chrome(lane, actor)
     start = None
     while True:
-        picked = await af._pick_item(
+        picked = await _pick_item(
             session, await _load(),
             name_of=lambda n: n.name,
             stable_id_of=lambda n: n.id,
@@ -122,7 +140,7 @@ async def ftn_networks_screen(session: Session, lane: DatabaseLane, actor: User,
             live_nav=[MenuEntry(label=menu_key("D", "elete"), brief="Remove a network")],
             live_label=lambda: status or "FidoNet-style networks: echomail on boards, netmail in Mail",
             start_stable_id=start,
-            description_level=await lane.run(af.menu_description_level, actor),
+            description_level=await lane.run(menu_description_level, actor),
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
             collapsed=chrome.collapsed, accent_color=chrome.accent_color, header_color=chrome.header_color,
         )
@@ -133,15 +151,14 @@ async def ftn_networks_screen(session: Session, lane: DatabaseLane, actor: User,
 
 
 def _secret_field(key: str, label: str):
-    af = _af()
 
-    @af.inline_field
+    @inline_field
     async def prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
-        await af.write_field_prompt(session, colored(f"{label} (typed unseen; Enter on an empty line clears it):",
+        await write_field_prompt(session, colored(f"{label} (typed unseen; Enter on an empty line clears it):",
                                                      fg_color=MUTED_COLOR))
         try:
             value = await read_field_line(session, initial="", echo=False)
-        except af.InputCancelled:
+        except InputCancelled:
             return
         draft[key] = value.strip()
 
@@ -192,68 +209,67 @@ def _listen_port(db: Database) -> int:
 async def edit_network(session: Session, lane: DatabaseLane, actor: User, existing: FtnNetwork | None, *,
                        node_controls=None) -> FtnNetwork | None:
     """One network's settings in a draft; nothing is stored before [S]ave."""
-    af = _af()
     draft = _network_draft(existing, await lane.run(_listen_port))
     secret = lambda key: (lambda d: "set" if d[key] else "(not set)")  # noqa: E731
     fields = [
-        af.FieldSpec(key="enabled", label="Enabled",
-                     render=lambda d: "yes" if d["enabled"] else "no", prompt=af.bool_field("enabled"),
-                     step=af.bool_step("enabled"), section="Network",
+        FieldSpec(key="enabled", label="Enabled",
+                     render=lambda d: "yes" if d["enabled"] else "no", prompt=bool_field("enabled"),
+                     step=bool_step("enabled"), section="Network",
                      brief="Call the uplink and carry this network's mail",
                      help="Off by default. Nothing is sent or polled while it is off."),
-        af.FieldSpec(key="name", label="Name",
-                     render=lambda d: d["name"], prompt=af.text_field("name", required=True), section="Network",
+        FieldSpec(key="name", label="Name",
+                     render=lambda d: d["name"], prompt=text_field("name", required=True), section="Network",
                      brief="How the network is called here (fsxNet, FidoNet)"),
-        af.FieldSpec(key="domain", label="Domain",
-                     render=lambda d: d["domain"], prompt=af.text_field("domain", required=True), section="Network",
+        FieldSpec(key="domain", label="Domain",
+                     render=lambda d: d["domain"], prompt=text_field("domain", required=True), section="Network",
                      brief="The network's 5D domain, up to 8 characters (fsxnet)"),
-        af.FieldSpec(key="our_address", label="Our address",
-                     render=lambda d: d["our_address"] or "(not set)", prompt=af.text_field("our_address"),
+        FieldSpec(key="our_address", label="Our address",
+                     render=lambda d: d["our_address"] or "(not set)", prompt=text_field("our_address"),
                      section="Network", brief="zone:net/node[.point] the network gave this BBS"),
-        af.FieldSpec(key="netmail_min_level",
+        FieldSpec(key="netmail_min_level",
                      label="Netmail level", render=lambda d: str(d["netmail_min_level"]),
-                     prompt=af._int_field("netmail_min_level", "Netmail level"), section="Network",
+                     prompt=_int_field("netmail_min_level", "Netmail level"), section="Network",
                      brief="Who may send netmail; 255 = SysOp only",
                      help="Netmail leaves under this BBS's address, so it starts at SysOp only."),
-        af.FieldSpec(key="default_charset",
+        FieldSpec(key="default_charset",
                      label="Charset", render=lambda d: d["default_charset"],
-                     prompt=af.choice_field("default_charset", CHARSETS), step=af.choice_step("default_charset", CHARSETS),
+                     prompt=choice_field("default_charset", CHARSETS), step=choice_step("default_charset", CHARSETS),
                      section="Network", brief="How to read a message that names no character set"),
-        af.FieldSpec(key="origin_text", label="Origin",
-                     render=lambda d: d["origin_text"] or "(the BBS's name)", prompt=af._optional_text_field("origin_text"),
+        FieldSpec(key="origin_text", label="Origin",
+                     render=lambda d: d["origin_text"] or "(the BBS's name)", prompt=_optional_text_field("origin_text"),
                      section="Network", brief="The line under every post sent out"),
-        af.FieldSpec(key="uplink_address", label="Uplink",
-                     render=lambda d: d["uplink_address"], prompt=af.text_field("uplink_address", required=True),
+        FieldSpec(key="uplink_address", label="Uplink",
+                     render=lambda d: d["uplink_address"], prompt=text_field("uplink_address", required=True),
                      section="Uplink", brief="The hub's address (fsxNet: 21:1/100)"),
-        af.FieldSpec(key="uplink_host", label="Host",
-                     render=lambda d: d["uplink_host"] or "(not set)", prompt=af.text_field("uplink_host"),
+        FieldSpec(key="uplink_host", label="Host",
+                     render=lambda d: d["uplink_host"] or "(not set)", prompt=text_field("uplink_host"),
                      section="Uplink", brief="Where the hub answers BinkP"),
-        af.FieldSpec(key="uplink_port", label="Port",
-                     render=lambda d: str(d["uplink_port"]), prompt=af._int_field("uplink_port", "Port"),
+        FieldSpec(key="uplink_port", label="Port",
+                     render=lambda d: str(d["uplink_port"]), prompt=_int_field("uplink_port", "Port"),
                      section="Uplink", brief="Usually 24554"),
-        af.FieldSpec(key="session_password",
+        FieldSpec(key="session_password",
                      label="Session password", render=secret("session_password"),
                      prompt=_secret_field("session_password", "Session password"), section="Uplink",
                      brief="Proves this BBS to the hub (CRAM-MD5 when offered)"),
-        af.FieldSpec(key="packet_password",
+        FieldSpec(key="packet_password",
                      label="Packet password", render=secret("packet_password"),
                      prompt=_secret_field("packet_password", "Packet password"), section="Uplink",
                      brief="Up to 8 characters, if the hub uses one"),
-        af.FieldSpec(key="areafix_password",
+        FieldSpec(key="areafix_password",
                      label="AreaFix password", render=secret("areafix_password"),
                      prompt=_secret_field("areafix_password", "AreaFix password"), section="Uplink",
                      brief="For linking echo areas"),
-        af.FieldSpec(key="poll_minutes", label="Poll every",
-                     render=lambda d: f"{d['poll_minutes']} minutes", prompt=af._int_field("poll_minutes", "Minutes"),
+        FieldSpec(key="poll_minutes", label="Poll every",
+                     render=lambda d: f"{d['poll_minutes']} minutes", prompt=_int_field("poll_minutes", "Minutes"),
                      section="Calls", brief="How often to call the hub; at least once a day"),
-        af.FieldSpec(key="answers_calls", label="Answer calls",
-                     render=lambda d: "yes" if d["answers_calls"] else "no", prompt=af.bool_field("answers_calls"),
-                     step=af.bool_step("answers_calls"), section="Calls",
+        FieldSpec(key="answers_calls", label="Answer calls",
+                     render=lambda d: "yes" if d["answers_calls"] else "no", prompt=bool_field("answers_calls"),
+                     step=bool_step("answers_calls"), section="Calls",
                      brief="Let the hub (and other nodes) call this BBS",
                      help="Needs the answer port open to the internet. Hubs deliver crash mail sooner."),
-        af.FieldSpec(key="listen_port",
+        FieldSpec(key="listen_port",
                      label="Answer port", render=lambda d: f"{d['listen_port']} (every network)",
-                     prompt=af._int_field("listen_port", "Answer port"), section="Calls",
+                     prompt=_int_field("listen_port", "Answer port"), section="Calls",
                      brief="Where this BBS answers BinkP, for all networks"),
     ]
 
@@ -274,19 +290,19 @@ async def edit_network(session: Session, lane: DatabaseLane, actor: User, existi
 
         return await lane.run(_persist)
 
-    chrome = await af._load_chrome(lane, actor)
-    saved = await af.edit_resource_draft(
+    chrome = await _load_chrome(lane, actor)
+    saved = await edit_resource_draft(
         session, lane, title=existing.name if existing is not None else "New FTN network",
         fields=fields, draft=draft, save=save, error_type=FtnNetworkError,
         save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
         preamble=("A new network starts as fsxNet's main hub: fill in the address fsxNet gave you."
                   if existing is None else None),
-        description_level=await lane.run(af.menu_description_level, actor),
+        description_level=await lane.run(menu_description_level, actor),
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style, collapsed=chrome.collapsed,
         accent_color=chrome.accent_color, header_color=chrome.header_color,
     )
     if saved is not None:
-        af._announce_line(session, f"Saved {saved.name}. The mailer and the listener pick it up within a minute.")
+        _announce_line(session, f"Saved {saved.name}. The mailer and the listener pick it up within a minute.")
         mailer = getattr(node_controls, "ftn_mailer", None) if node_controls is not None else None
         if mailer is not None:
             mailer.kick()
@@ -334,19 +350,18 @@ def _status_sections(db: Database, mailer, listener, *, unicode_style: bool) -> 
 @located("Echomail & netmail (FTN)")
 async def ftn_status_screen(session: Session, lane: DatabaseLane, actor: User, node_controls) -> None:
     """What the FTN gateway last did, and the work on it."""
-    af = _af()
     mailer = getattr(node_controls, "ftn_mailer", None)
     listener = getattr(node_controls, "ftn_listener", None)
     message = None
     page = 0
     while True:
-        chrome = await af._load_chrome(lane, actor)
+        chrome = await _load_chrome(lane, actor)
         sections = await lane.run(lambda db: _status_sections(db, mailer, listener, unicode_style=chrome.unicode_style))
-        choice, page = await af.show_detail(
-            session, title=af._detail_title(session, chrome, "Echomail & netmail (FTN)", own=True),
+        choice, page = await show_detail(
+            session, title=_detail_title(session, chrome, "Echomail & netmail (FTN)", own=True),
             sections=sections, page=page, message=message,
             actions=[("p", menu_key("P", "oll now")), ("a", menu_key("A", "reaFix")),
-                     ("n", menu_key("N", "odelist import")), ("h", menu_key("H", "eld packets")), af._BACK_ACTION],
+                     ("n", menu_key("N", "odelist import")), ("h", menu_key("H", "eld packets")), _BACK_ACTION],
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
             help_title="Echomail & netmail help",
             help_about=(
@@ -366,7 +381,7 @@ async def ftn_status_screen(session: Session, lane: DatabaseLane, actor: User, n
                 continue
             status = await mailer.poll(network)
             message = (f"Called {network.name}: {status.last_summary}" if status.last_error is None
-                       else colored(f"Call failed: {sanitize_text(status.last_error)}", fg_color=af.ERROR_COLOR))
+                       else colored(f"Call failed: {sanitize_text(status.last_error)}", fg_color=ERROR_COLOR))
         elif choice == "a":
             await _areafix(session, lane, actor, network, mailer)
         elif choice == "n":
@@ -376,14 +391,13 @@ async def ftn_status_screen(session: Session, lane: DatabaseLane, actor: User, n
 
 
 async def _pick_network(session: Session, lane: DatabaseLane, actor: User) -> FtnNetwork | None:
-    af = _af()
     networks = await lane.run(list_networks)
     if len(networks) <= 1:
         if not networks:
-            af._announce(session, "No FTN networks yet: add one under Settings → Echomail & netmail (FTN).", error=True)
+            _announce(session, "No FTN networks yet: add one under Settings → Echomail & netmail (FTN).", error=True)
         return networks[0] if networks else None
-    chrome = await af._load_chrome(lane, actor)
-    return await af.pick_item(
+    chrome = await _load_chrome(lane, actor)
+    return await pick_item(
         session, networks, name_of=lambda n: n.name, stable_id_of=lambda n: n.id,
         description_of=lambda n: n.our_address.four_d,
         title="Which network?", empty_message="No networks.",
@@ -393,50 +407,48 @@ async def _pick_network(session: Session, lane: DatabaseLane, actor: User) -> Ft
 
 
 async def _areafix(session: Session, lane: DatabaseLane, actor: User, network: FtnNetwork, mailer) -> None:
-    af = _af()
     await session.write_line("")
     await session.write_line(colored(
         f"AreaFix at {network.uplink_address.four_d}: +TAG links an echo, -TAG unlinks it, %LIST asks what "
         f"the hub carries. The hub's answer comes to your Mail.", fg_color=MUTED_COLOR))
-    await af.write_prompt(session, "Request: ")
+    await write_prompt(session, "Request: ")
     try:
         text = await session.read_line(cancellable=True)
-    except af.InputCancelled:
+    except InputCancelled:
         text = ""
     if not text.strip():
-        af._announce(session, "Nothing sent.", color=MUTED_COLOR)
+        _announce(session, "Nothing sent.", color=MUTED_COLOR)
         return
     try:
         commands = areafix_commands(text)
         await lane.run(lambda db: queue_areafix(db, get_network(db, network.id), actor, commands))
     except (AreaFixError, FtnQueueFullError) as exc:
-        af._announce(session, str(exc), error=True)
+        _announce(session, str(exc), error=True)
         return
     if mailer is not None:
         mailer.kick()
-    af._announce(session, f"AreaFix request queued: {' '.join(commands)}. It goes out with the next call.")
+    _announce(session, f"AreaFix request queued: {' '.join(commands)}. It goes out with the next call.")
 
 
 async def _import_nodelist(session: Session, lane: DatabaseLane, actor: User, network: FtnNetwork) -> None:
-    af = _af()
     await session.write_line("")
     await session.write_line(colored(
         f"The {network.name} nodelist, as a file on this machine (unpacked, e.g. /bbs/nodelist/FSXNET.123).",
         fg_color=MUTED_COLOR))
-    await af.write_prompt(session, "Nodelist file: ")
+    await write_prompt(session, "Nodelist file: ")
     try:
         path_text = (await session.read_line(cancellable=True)).strip()
-    except af.InputCancelled:
+    except InputCancelled:
         path_text = ""
     if not path_text:
-        af._announce(session, "Nothing imported.", color=MUTED_COLOR)
+        _announce(session, "Nothing imported.", color=MUTED_COLOR)
         return
     try:
         count = await import_nodelist_file(lane, actor, network, Path(os.path.expanduser(path_text)))
     except (OSError, NodelistError) as exc:
-        af._announce(session, f"Not imported: {exc}", error=True)
+        _announce(session, f"Not imported: {exc}", error=True)
         return
-    af._announce(session, f"Imported {count} nodes for {network.name}. Netmail to listed BinkP nodes now goes direct.")
+    _announce(session, f"Imported {count} nodes for {network.name}. Netmail to listed BinkP nodes now goes direct.")
 
 
 async def import_nodelist_file(lane: DatabaseLane, actor: User | None, network: FtnNetwork, path: Path) -> int:
@@ -456,7 +468,6 @@ async def import_nodelist_file(lane: DatabaseLane, actor: User | None, network: 
 
 
 async def _held_packets(session: Session, lane: DatabaseLane, actor: User, network: FtnNetwork) -> None:
-    af = _af()
     status: str | None = None
 
     async def _load():
@@ -478,8 +489,8 @@ async def _held_packets(session: Session, lane: DatabaseLane, actor: User, netwo
         status = f"Deleted {held.file_name}."
         return await _load()
 
-    chrome = await af._load_chrome(lane, actor)
-    await af._pick_item(
+    chrome = await _load_chrome(lane, actor)
+    await _pick_item(
         session, await _load(),
         name_of=lambda h: f"{h.file_name} from {h.remote_address}",
         stable_id_of=lambda h: h.id,
@@ -490,7 +501,7 @@ async def _held_packets(session: Session, lane: DatabaseLane, actor: User, netwo
         live_nav=[MenuEntry(label=menu_key("R", "elease"), brief="Toss it as from a known system"),
                   MenuEntry(label=menu_key("D", "elete"), brief="Throw it away")],
         live_label=lambda: status or "Held: from an unknown caller, or what could not be stored",
-        description_level=await lane.run(af.menu_description_level, actor),
+        description_level=await lane.run(menu_description_level, actor),
         redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style, collapsed=chrome.collapsed,
         accent_color=chrome.accent_color, header_color=chrome.header_color,
     )
@@ -511,10 +522,9 @@ def board_echo_rows(db: Database, board: Board) -> list[Field]:
 async def board_echo_action(session: Session, lane: DatabaseLane, actor: User, board: Board) -> bool:
     """[E]cho on a board's screen: carry an echo area, or stop carrying it
     (an empty tag). Returns whether anything changed."""
-    af = _af()
     networks = await lane.run(list_networks)
     if not networks:
-        af._announce(session, "No FTN networks yet: add one under Settings → Echomail & netmail (FTN).", error=True)
+        _announce(session, "No FTN networks yet: add one under Settings → Echomail & netmail (FTN).", error=True)
         return False
     network = networks[0] if len(networks) == 1 else await _pick_network(session, lane, actor)
     if network is None:
@@ -524,11 +534,11 @@ async def board_echo_action(session: Session, lane: DatabaseLane, actor: User, b
     await session.write_line(colored(
         f"The {network.name} echo tag this board carries (e.g. FSX_GEN). An empty line makes it local again; "
         f"link the echo at the hub with AreaFix (Node → Echomail & netmail (FTN)).", fg_color=MUTED_COLOR))
-    await af.write_prompt(session, "Echo tag: ")
+    await write_prompt(session, "Echo tag: ")
     try:
         tag = (await session.read_line(cancellable=True,
                                        initial=current.tag if current and current.network_id == network.id else "")).strip()
-    except af.InputCancelled:
+    except InputCancelled:
         return False
     try:
         if not tag:
@@ -540,8 +550,8 @@ async def board_echo_action(session: Session, lane: DatabaseLane, actor: User, b
             mapping = await lane.run(set_board_area, board, network.id, tag)
             outcome = f"{board.name} carries {mapping.tag} on {network.name}."
     except FtnNetworkError as exc:
-        af._announce(session, str(exc), error=True)
+        _announce(session, str(exc), error=True)
         return False
     await lane.run(lambda db: record_action(db, actor=actor, action="set_board_echo", detail=outcome))
-    af._announce(session, outcome)
+    _announce(session, outcome)
     return True
