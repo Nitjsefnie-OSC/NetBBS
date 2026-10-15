@@ -10672,6 +10672,24 @@ without teaching native chat anything about MRC. Decisions:
   only while someone is in it) and leaves the directory, unless chatter
   or a caller named it after the listing was asked for. A footer with no
   row before it proves nothing and changes nothing.
+- **The room count says when the kept listing is out of date (issue
+  #1283).** Room *names* need a user, but the room *count* does not: the
+  hub's server stats query, a lone `~` on a connection of its own
+  (MRCDoc rev 1.26), answers `<bbses> <rooms> <users> <activity>` and
+  closes. While MRC is on, the bridge asks once a minute, never with
+  more than one query in flight, and up to fifteen minutes apart while
+  the hub does not answer. It sends nothing else on that connection: no
+  handshake, no nick. The reading becomes the network's size that the
+  SysOp status screen and Who's online already show. With nobody here
+  on MRC, a count that differs from the kept listing's room count puts
+  one line in the picker's header, such as "Room list as of 3 h ago; the
+  network now has 14 rooms." That way the old listing stops reading as
+  complete. With a caller on MRC, a count that changed since the last
+  poll sends `LIST` at once, as that caller and under the shared
+  five-minute bound, instead of waiting for the refresh. The count says
+  *that* the network changed, never *which* rooms: the names still come
+  only from a caller's listing. A count older than three polls is not
+  used, and a poll that fails changes nothing a caller sees.
 - **MRC on, nothing reachable.** Decision 2 stands: switching MRC on
   bridges nothing. With open rooms off and no active mapping, saving the
   settings says that no caller can reach MRC yet and names both ways out.

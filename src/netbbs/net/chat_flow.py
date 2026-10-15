@@ -1070,7 +1070,21 @@ async def _pick_mrc_room(
     async def _header() -> str:
         # The picker clears before drawing its masthead and budgets its
         # wrapped rows. Keep feedback there across paging/refresh/Ctrl-L.
-        return "\r\n".join(part for part in (masthead, feedback) if part)
+        return "\r\n".join(part for part in (masthead, _drift_note(), feedback) if part)
+
+    def _drift_note() -> str:
+        # Issue #1283: a kept listing that no longer matches the network's
+        # room count says so, so it stops reading as complete.
+        drift = mrc_bridge.directory_drift()
+        if drift is None:
+            return ""
+        _kept, network, age = drift
+        when = _reading_age(age).strip("()")
+        when = "a moment ago" if when == "stale" else when
+        return colored(
+            f"Room list as of {when}; the network now has {network} room{'s' if network != 1 else ''}.",
+            fg_color=MUTED_COLOR,
+        )
 
     while True:
         status = mrc_bridge.status()
