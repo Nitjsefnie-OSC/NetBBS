@@ -42,6 +42,7 @@ from netbbs.mail import (
     set_kept,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_link
 from netbbs.net.admin_flow import admin_menu
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
@@ -364,7 +365,7 @@ def test_mailboxes_show_counts_and_never_a_subject(db, lane, sysop):
 def test_mailboxes_count_the_cap_without_kept_letters(db, lane, sysop, monkeypatch):
     """Issue #921: Kept is outside the cap, so "Of the cap" and the order
     count the Inbox alone, while Letters still counts everything."""
-    monkeypatch.setattr(admin_flow, "MAX_MAIL_PER_RECIPIENT", 4)
+    monkeypatch.setattr(admin_link, "MAX_MAIL_PER_RECIPIENT", 4)
     alice = create_user(db, "alice", password="hunter2")
     bob = create_user(db, "bob", password="hunter2")
     carol = create_user(db, "carol", password="hunter2")
