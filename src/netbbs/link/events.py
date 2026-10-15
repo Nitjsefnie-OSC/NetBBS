@@ -124,6 +124,11 @@ BOARD_POSTING_MODES = ("anyone", "origin_threads", "origin_only")
 # No channel_origin_transfer_offer/_accepted pair yet -- origin succession
 # for channels is reused by reference (§9.4's model, unchanged) rather
 # than built in this issue; see ChannelGenesis's own docstring.
+COMMUNITY_GENESIS_OBJECT_TYPE = "community_genesis"
+COMMUNITY_MEMBERS_OBJECT_TYPE = "community_members"
+COMMUNITY_CLOSURE_OBJECT_TYPE = "community_closure"
+"""Issue #1308: a Link Community, its membership list and its closure."""
+
 CHANNEL_GENESIS_OBJECT_TYPE = "channel_genesis"
 CHANNEL_MESSAGE_OBJECT_TYPE = "channel_message"
 
@@ -421,10 +426,19 @@ from its own relays. An issuer sends one only to a recipient advertising this,
 and deposits it only at a relay advertising it; an older relay would refuse
 the unknown type, and an older recipient would never pick it up."""
 
+LINK_COMMUNITIES_CAPABILITY = "link_communities"
+"""Issue #1308: this node understands Link Communities -- the three community
+event types, and an `InventoryRequest`'s signed `communities` map and
+`not_carried["communities"]`. A requester sends either only to a responder
+advertising this (an older one would rebuild the signed payload without them
+and refuse the request), and pushes its own community events only to such a
+peer. A responder answers with community events only to a request that
+carries the `communities` map, which says the requester understands them."""
+
 LINK_CAPABILITIES: tuple[str, ...] = (
     INVENTORY_NOT_CARRIED_CAPABILITY, INVENTORY_PAGES_CAPABILITY, CHANNEL_RELAY_CAPABILITY, CHAT_BOTS_CAPABILITY,
     SEALED_ATTESTATIONS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY,
-    PRESENCE_RELAY_CAPABILITY,
+    PRESENCE_RELAY_CAPABILITY, LINK_COMMUNITIES_CAPABILITY,
 )
 """Every optional behaviour this version advertises in its own descriptor."""
 
@@ -2131,6 +2145,198 @@ def verify_board_posting(posting: BoardPosting, signing_verify_key: nacl.signing
     return verify_signature(signing_verify_key, canonical_bytes(posting.envelope), posting.signature)
 
 
+# -- Link Communities (design doc §6.5; decided in §16, issue #1308) ---------
+
+COMMUNITY_MEMBER_KINDS = ("boards", "channels", "file_areas")
+"""The kinds a `community_members` list names, one list each. Doors are not
+linked (issue #1308, "Not done")."""
+
+MAX_COMMUNITY_MEMBERS_PER_KIND = 500
+"""The most ids one `community_members` list names per kind -- the default
+per-type carry cap (§9.3), which bounds what a subscription can take in
+anyway (issue #1308, Decision 2)."""
+
+MAX_COMMUNITY_MEMBER_ID_LENGTH = 128
+"""The longest resource id a membership list may name. Every real id is a
+64-character content hash (an MRC channel's a little longer); the bound keeps
+a list a peer can make this node store small."""
+
+
+def community_link_id(*, origin_fingerprint: str, name: str, created_at: str) -> str:
+    """A Link Community's `community_id`: content-addressed from its origin,
+    its name and the time it was promoted, as a board id is (issue #1308,
+    Decision 2), so two origins' same-named Communities are distinct by
+    construction. A receiver recomputes it and refuses a genesis it does not
+    match."""
+    return compute_content_id(
+        {"type": "community", "origin": origin_fingerprint, "name": name, "created_at": created_at}
+    )
+
+
+@dataclass(frozen=True)
+class _SignedEvent:
+    """The `envelope`/`signature` pair every Link Community event shares."""
+
+    envelope: dict
+    signature: bytes
+
+    @property
+    def payload(self) -> dict:
+        return self.envelope["payload"]
+
+    @property
+    def content_id(self) -> str:
+        return event_content_id(self.envelope)
+
+    def to_dict(self) -> dict:
+        return {
+            "envelope": self.envelope,
+            "signature": base64.b64encode(self.signature).decode("ascii"),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls(envelope=data["envelope"], signature=base64.b64decode(data["signature"]))
+
+
+@dataclass(frozen=True)
+class CommunityGenesis(_SignedEvent):
+    """One signed `community_genesis` (issue #1308, Decision 2): a local
+    Community promoted into Link scope by its origin. Not chained; one per
+    `community_id`, ever. Its `default_*` fields are recommendations, as a
+    board genesis's are: a carrying node stores them on its copy, and its
+    SysOp may change them there."""
+
+
+@dataclass(frozen=True)
+class CommunityMembers(_SignedEvent):
+    """One signed `community_members` (issue #1308, Decision 2): the whole
+    membership of a Link Community, one list of resource ids per kind. It
+    replaces the previous list rather than editing it, and is not chained: the
+    newest `created_at` from the Community's origin wins, as with
+    `board_posting`, so a lost update is repaired by the next one."""
+
+
+@dataclass(frozen=True)
+class CommunityClosure(_SignedEvent):
+    """One signed `community_closure` (issue #1308, Decision 7): terminal.
+    Carriers keep every member they carry; their copy becomes a plain local
+    Community marked as closed at its origin."""
+
+
+def build_community_genesis(
+    *,
+    signing_identity: Identity,
+    origin_fingerprint: str,
+    name: str,
+    created_at: str,
+    description: str | None = None,
+    default_min_read_level: int | None = None,
+    default_min_write_level: int | None = None,
+    default_min_age: int | None = None,
+    default_name_requirement: str | None = None,
+    default_age_requirement: str | None = None,
+) -> CommunityGenesis:
+    """Build and sign a `community_genesis` with the origin's current signing
+    key. Each `default_*` is omitted when `None`, as on a board genesis."""
+    if default_name_requirement is not None and default_name_requirement not in _VALID_NAME_REQUIREMENTS:
+        raise EventError(f"invalid default_name_requirement: {default_name_requirement!r}")
+    if default_age_requirement is not None and default_age_requirement not in _VALID_AGE_REQUIREMENTS:
+        raise EventError(f"invalid default_age_requirement: {default_age_requirement!r}")
+    payload: dict = {
+        "origin_fingerprint": origin_fingerprint,
+        "community_id": community_link_id(origin_fingerprint=origin_fingerprint, name=name, created_at=created_at),
+        "name": name,
+        "created_at": created_at,
+    }
+    for key, value in (
+        ("description", description),
+        ("default_min_read_level", default_min_read_level),
+        ("default_min_write_level", default_min_write_level),
+        ("default_min_age", default_min_age),
+        ("default_name_requirement", default_name_requirement),
+        ("default_age_requirement", default_age_requirement),
+    ):
+        if value is not None:
+            payload[key] = value
+    envelope = build_envelope(COMMUNITY_GENESIS_OBJECT_TYPE, payload)
+    return CommunityGenesis(envelope=envelope, signature=signing_identity.sign(canonical_bytes(envelope)))
+
+
+def build_community_members(
+    *,
+    signing_identity: Identity,
+    origin_fingerprint: str,
+    community_id: str,
+    members: dict[str, list[str]],
+    created_at: str,
+    nonce: str | None = None,
+) -> CommunityMembers:
+    """Build and sign a `community_members` list. `members` names every kind
+    in `COMMUNITY_MEMBER_KINDS`, each a sorted list of at most
+    `MAX_COMMUNITY_MEMBERS_PER_KIND` ids; the caller decides which ids, and
+    this refuses a list a receiver would refuse."""
+    shaped = {kind: sorted(dict.fromkeys(members.get(kind, ()))) for kind in COMMUNITY_MEMBER_KINDS}
+    problem = community_members_problem(shaped)
+    if problem is not None:
+        raise EventError(problem)
+    payload = {
+        "community_id": community_id,
+        "origin_fingerprint": origin_fingerprint,
+        "members": shaped,
+        "created_at": created_at,
+        "nonce": nonce if nonce is not None else secrets.token_hex(16),
+    }
+    envelope = build_envelope(COMMUNITY_MEMBERS_OBJECT_TYPE, payload)
+    return CommunityMembers(envelope=envelope, signature=signing_identity.sign(canonical_bytes(envelope)))
+
+
+def community_members_problem(members: object) -> str | None:
+    """Why a `community_members` list is malformed, or `None`: exactly the
+    three kinds, each a list of distinct non-empty string ids of bounded
+    length, at most `MAX_COMMUNITY_MEMBERS_PER_KIND` of them."""
+    if not isinstance(members, dict) or set(members) != set(COMMUNITY_MEMBER_KINDS):
+        return f"members must name exactly {', '.join(COMMUNITY_MEMBER_KINDS)}"
+    for kind, ids in members.items():
+        if not isinstance(ids, list):
+            return f"members[{kind!r}] must be a list"
+        if len(ids) > MAX_COMMUNITY_MEMBERS_PER_KIND:
+            return f"members[{kind!r}] names {len(ids)} ids, more than {MAX_COMMUNITY_MEMBERS_PER_KIND}"
+        if not all(isinstance(i, str) and 0 < len(i) <= MAX_COMMUNITY_MEMBER_ID_LENGTH for i in ids):
+            return f"members[{kind!r}] must hold resource ids"
+        if len(set(ids)) != len(ids):
+            return f"members[{kind!r}] names an id twice"
+    return None
+
+
+def build_community_closure(
+    *,
+    signing_identity: Identity,
+    origin_fingerprint: str,
+    community_id: str,
+    created_at: str,
+    nonce: str | None = None,
+) -> CommunityClosure:
+    """Build and sign a terminal `community_closure`."""
+    payload = {
+        "community_id": community_id,
+        "origin_fingerprint": origin_fingerprint,
+        "created_at": created_at,
+        "nonce": nonce if nonce is not None else secrets.token_hex(16),
+    }
+    envelope = build_envelope(COMMUNITY_CLOSURE_OBJECT_TYPE, payload)
+    return CommunityClosure(envelope=envelope, signature=signing_identity.sign(canonical_bytes(envelope)))
+
+
+def verify_community_event(
+    event: CommunityGenesis | CommunityMembers | CommunityClosure, signing_verify_key: nacl.signing.VerifyKey
+) -> bool:
+    """Verify a Link Community event's signature against its origin's signing
+    key; resolving that key, and checking the signer is the Community's
+    origin, are the caller's job."""
+    return verify_signature(signing_verify_key, canonical_bytes(event.envelope), event.signature)
+
+
 @dataclass(frozen=True)
 class LinkMessage:
     """
@@ -2469,6 +2675,7 @@ def _inventory_request_payload(
     file_areas: dict[str, tuple[str, ...]],
     not_carried: dict[str, tuple[str, ...]] | None = None,
     page: tuple[int, int] | None = None,
+    communities: dict[str, tuple[str, ...]] | None = None,
 ) -> dict:
     """The exact payload shape `sign_inventory_request`/`verify_inventory_
     request` (issues #106/#124) both build canonical bytes over — one shared
@@ -2493,6 +2700,11 @@ def _inventory_request_payload(
         payload["not_carried"] = {kind: list(ids) for kind, ids in not_carried.items() if ids}
     if page is not None:
         payload["page"] = {"index": page[0], "count": page[1]}
+    # Issue #1308: present -- even empty -- exactly when the requester
+    # understands Link Communities, which is how the responder knows it may
+    # answer with community events. Absent, the request signs as before.
+    if communities is not None:
+        payload["communities"] = {community_id: list(ids) for community_id, ids in communities.items()}
     return payload
 
 
@@ -2508,6 +2720,7 @@ def sign_inventory_request(
     file_areas: dict[str, tuple[str, ...]],
     not_carried: dict[str, tuple[str, ...]] | None = None,
     page: tuple[int, int] | None = None,
+    communities: dict[str, tuple[str, ...]] | None = None,
 ) -> bytes:
     """Sign an `InventoryRequest` (design doc §8.8, issues #106/#124) with the
     requester's own current operational signing key -- the same "always
@@ -2529,6 +2742,7 @@ def sign_inventory_request(
         file_areas,
         not_carried,
         page,
+        communities,
     )
     envelope = build_envelope(INVENTORY_REQUEST_OBJECT_TYPE, payload)
     return signing_identity.sign(canonical_bytes(envelope))
@@ -2547,6 +2761,7 @@ def verify_inventory_request(
     signing_verify_key: nacl.signing.VerifyKey,
     not_carried: dict[str, tuple[str, ...]] | None = None,
     page: tuple[int, int] | None = None,
+    communities: dict[str, tuple[str, ...]] | None = None,
 ) -> bool:
     """Verify an `InventoryRequest`'s signature against the claimed
     requester's *current signing key* -- resolving which key that
@@ -2565,6 +2780,7 @@ def verify_inventory_request(
         file_areas,
         not_carried,
         page,
+        communities,
     )
     envelope = build_envelope(INVENTORY_REQUEST_OBJECT_TYPE, payload)
     return verify_signature(signing_verify_key, canonical_bytes(envelope), signature)

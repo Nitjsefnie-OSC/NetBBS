@@ -287,13 +287,17 @@ def update_channel(
             UPDATE channels
             SET name = ?, description = ?, min_level = ?, category_id = ?, pinned = ?,
                 hidden = ?, members_only = ?, allow_member_invites = ?,
-                min_age = ?, name_requirement = ?, community_id = ?
+                min_age = ?, name_requirement = ?,
+                -- Issue #1308: a SysOp who changes the Community has placed it;
+                -- a Link Community's membership list never moves it again.
+                community_placed_locally = CASE WHEN community_id IS ? THEN community_placed_locally ELSE 1 END,
+                community_id = ?
             WHERE id = ?
             """,
             (
                 name, description, min_level, category_id, int(pinned),
                 int(hidden), int(members_only), int(allow_member_invites),
-                min_age, name_requirement, community_id, channel.id,
+                min_age, name_requirement, community_id, community_id, channel.id,
             ),
         )
         if age_requirement is not UNCHANGED:

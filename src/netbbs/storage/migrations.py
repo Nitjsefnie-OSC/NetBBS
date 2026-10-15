@@ -4405,4 +4405,49 @@ MIGRATIONS = [
         );
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1310 (design #1308): Link Communities. On `communities`: `link_id`, the "
+            "content-addressed Community id on the wire; `link_genesis_json`, its signed "
+            "`community_genesis` (the Link marker: promoted here, or a carried copy); "
+            "`link_origin_fingerprint`, the origin that signed it; `link_members_json`, the "
+            "origin's own latest `community_members` (NULL on a copy); `link_closure_json`, the "
+            "`community_closure` once there is one (a closed copy is a plain local Community "
+            "marked closed at its origin). `link_events.community_id` files the three community "
+            "event types as `board_id` files a board's. `community_placed_locally` on boards, "
+            "channels and file areas records that a SysOp chose the resource's Community, so a "
+            "membership list never moves it again. `link_carry_decisions` is rebuilt to accept "
+            "the `communities` kind (its CHECK cannot be altered in place); nothing references "
+            "it, and every row is copied."
+        ),
+        sql="""
+        ALTER TABLE communities ADD COLUMN link_id TEXT;
+        ALTER TABLE communities ADD COLUMN link_genesis_json TEXT;
+        ALTER TABLE communities ADD COLUMN link_origin_fingerprint TEXT;
+        ALTER TABLE communities ADD COLUMN link_members_json TEXT;
+        ALTER TABLE communities ADD COLUMN link_closure_json TEXT;
+        CREATE UNIQUE INDEX idx_communities_link_id ON communities(link_id) WHERE link_id IS NOT NULL;
+
+        ALTER TABLE link_events ADD COLUMN community_id TEXT;
+        CREATE INDEX idx_link_events_community_id ON link_events(community_id);
+
+        ALTER TABLE boards ADD COLUMN community_placed_locally INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE channels ADD COLUMN community_placed_locally INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE file_areas ADD COLUMN community_placed_locally INTEGER NOT NULL DEFAULT 0;
+
+        CREATE TABLE link_carry_decisions_1310 (
+            kind          TEXT NOT NULL CHECK (kind IN ('boards', 'channels', 'file_areas', 'communities')),
+            resource_id   TEXT NOT NULL,
+            state         TEXT NOT NULL CHECK (state IN ('offered', 'excluded')),
+            reason        TEXT NOT NULL,
+            decided_at    TEXT NOT NULL,
+            actor_user_id INTEGER,
+            PRIMARY KEY (kind, resource_id)
+        );
+        INSERT INTO link_carry_decisions_1310 (kind, resource_id, state, reason, decided_at, actor_user_id)
+            SELECT kind, resource_id, state, reason, decided_at, actor_user_id FROM link_carry_decisions;
+        DROP TABLE link_carry_decisions;
+        ALTER TABLE link_carry_decisions_1310 RENAME TO link_carry_decisions;
+        """,
+    ),
 ]

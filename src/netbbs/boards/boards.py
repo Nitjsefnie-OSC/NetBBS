@@ -432,13 +432,17 @@ def update_board(
             UPDATE boards
             SET name = ?, description = ?, min_read_level = ?, min_write_level = ?,
                 category_id = ?, pinned = ?, moderated = ?, max_post_age_days = ?,
-                min_age = ?, name_requirement = ?, community_id = ?, allow_color = ?
+                min_age = ?, name_requirement = ?,
+                -- Issue #1308: a SysOp who changes the Community has placed it;
+                -- a Link Community's membership list never moves it again.
+                community_placed_locally = CASE WHEN community_id IS ? THEN community_placed_locally ELSE 1 END,
+                community_id = ?, allow_color = ?
             WHERE id = ?
             """,
             (
                 name, description, min_read_level, min_write_level,
                 category_id, int(pinned), int(moderated), max_post_age_days,
-                min_age, name_requirement, community_id, int(allow_color), board.id,
+                min_age, name_requirement, community_id, community_id, int(allow_color), board.id,
             ),
         )
         if age_requirement is not UNCHANGED:
