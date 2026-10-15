@@ -790,7 +790,7 @@ def _community_link_state(link) -> str:
         return "Linked, origin here"
     if link.closed:
         return "closed at its origin"
-    return "left" if link.left else "Linked"
+    return "Linked"
 
 
 def _community_link_rows(link, link_context: LinkContext) -> list[Field | Note]:
@@ -961,7 +961,7 @@ async def _delete_community_screen(
         await lane.run(_leave)
     else:
         await lane.run(delete_community, community, deleted_by=actor)
-    _announce_line(session, f"{community.name!r} deleted.")
+    _announce_line(session, f"{community.name!r} deleted; you left that Community." if subscribed else f"{community.name!r} deleted.")
     return True
 
 

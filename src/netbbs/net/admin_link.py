@@ -918,6 +918,10 @@ async def _carry_decisions_screen(
                         session,
                         f"Subscribed to {selected.name!r}; its members are filed under it as they are carried.",
                     )
+                    if mrc_bridge is not None:
+                        # It may have taken chat channels in, as accepting
+                        # one directly does.
+                        await mrc_bridge.refresh_channel_mappings()
                     if not await lane.run(list_carry_decisions, state):
                         return
             elif choice == "a":

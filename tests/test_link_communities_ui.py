@@ -157,6 +157,7 @@ def test_removing_a_subscribed_copy_leaves_the_community(db, lane, sysop):
 
     text = " ".join(_visible(_written_text(session)).split())
     assert "Subscribed" in text and "removing it leaves it" in text
+    assert "you left that Community" in text
     assert list_communities(db) == []
     assert carry_decision_state(db, "communities", link_id) == EXCLUDED
     assert db.connection.execute("SELECT 1 FROM boards WHERE board_id = ?", (BOARD_ID,)).fetchone() is not None
@@ -176,3 +177,23 @@ def test_both_community_lists_mark_a_linked_one(db, lane, sysop):
     text = _visible(_written_text(session))
     assert f"Pen Talk{LINKED_MARKER}" in text
     assert f"Local Only{LINKED_MARKER}" not in text
+
+
+def test_subscribing_refreshes_the_mrc_bridge(db, lane, sysop):
+    """Review of #1340: a subscription can carry chat channels in, as
+    accepting one directly does, so the running bridge re-reads its rooms."""
+    from netbbs.net.admin_link import _carry_decisions_screen
+
+    class _Bridge:
+        refreshed = 0
+
+        async def refresh_channel_mappings(self):
+            _Bridge.refreshed += 1
+
+    origin = bootstrap_node_identity("ui-origin")
+    _offered_community(db, origin, boards=())
+    session = FakeSession(["1", "\r", "a"])
+    asyncio.run(_carry_decisions_screen(
+        session, lane, sysop, link_context=_link_context(), state=OFFERED, mrc_bridge=_Bridge(),
+    ))
+    assert _Bridge.refreshed == 1
