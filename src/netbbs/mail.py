@@ -316,9 +316,17 @@ def blocks_local_sender(db: Database, recipient: User, sender: User) -> bool:
 
 
 def blocks_link_sender(db: Database, recipient: User, address: str) -> bool:
-    return db.connection.execute(
-        "SELECT 1 FROM mail_blocks WHERE user_id = ? AND blocked_address = ?", (recipient.id, address)
-    ).fetchone() is not None
+    """Whether `recipient` blocks the Link sender `address`. A block made
+    against a user's old address covers the name their node renamed them to
+    (issue #1306, design doc §16 #1111 Decision 4), and the other way round."""
+    from netbbs.link.user_renames import addresses_of_same_user
+
+    return any(
+        db.connection.execute(
+            "SELECT 1 FROM mail_blocks WHERE user_id = ? AND blocked_address = ?", (recipient.id, same)
+        ).fetchone() is not None
+        for same in addresses_of_same_user(db, address)
+    )
 
 
 def mail_sender_refusal_detail(db: Database, recipient: User, *, sender: User) -> MailRefusal | None:

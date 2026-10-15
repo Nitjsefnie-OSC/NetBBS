@@ -522,6 +522,7 @@ def build_endpoint_descriptor(
     software_version: str | None = None,
     public_boards: list[dict] | tuple[dict, ...] | None = None,
     tagline: str | None = None,
+    user_renames: list[dict] | tuple[dict, ...] | None = None,
 ) -> EndpointDescriptor:
     """
     Build and sign one `endpoint_descriptor` event, per design doc §12
@@ -604,6 +605,13 @@ def build_endpoint_descriptor(
         # Issue #1172: the SysOp's one line of free text for its page,
         # validated by `netbbs.link.node_page` on both sides.
         payload["tagline"] = tagline
+    if user_renames:
+        # Issue #1306 (design doc §16 #1111 Decision 4): this node's recent
+        # renames, `{from, to, at}`, newest first, at most 64 and none older
+        # than 400 days (`netbbs.auth.renames.announced_renames`). Read by
+        # `netbbs.link.user_renames`, which validates every entry and never
+        # refuses a descriptor over them.
+        payload["user_renames"] = [dict(entry) for entry in user_renames]
 
     envelope = build_envelope(ENDPOINT_DESCRIPTOR_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))

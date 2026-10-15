@@ -6,9 +6,10 @@ import time
 
 import pytest
 
+from netbbs.auth.users import get_user_by_username
 from netbbs.boards.boards import create_board
 from netbbs.boards.posts import create_post, approve_post, edit_post, tombstone_post
-from netbbs.files.areas import create_file_area
+from netbbs.files.areas import create_file_area, get_file_area_by_name
 from netbbs.files.entries import upload_file, approve_file
 from netbbs.bots.registry import BotError, save_bot, publish, get_bot
 from netbbs.bots.runtime import BotRuntime, _Worker
@@ -16,6 +17,7 @@ from netbbs.bots.sources import source_event, source_head, source_batch
 from netbbs.chat.hub import ParticipantId
 from netbbs.chat.scrollback import get_scrollback
 from netbbs.communities import create_community
+from netbbs.storage.database import Database
 from tests.test_bot_runtime import (  # noqa: F401
     db, lane, hub, sysop, alice, channel, install, eventually, next_line,
 )
@@ -96,6 +98,38 @@ def test_approval_events_are_transactional_and_edits_do_not_reannounce(db, sysop
     db.connection.execute("UPDATE files SET status='approved' WHERE file_id=?", (file.file_id,))
     db.connection.rollback()
     assert len(source_batch(db, bot.id, 0)[0]) == 2
+
+
+@pytest.mark.parametrize("boundary", [1, 2])
+def test_source_batch_never_skips_an_event_committed_while_it_reads(db, sysop, alice, channel, boundary):
+    # Issue #1326: the bot's lane reads the journal on its own connection
+    # while callers' uploads commit on theirs. An upload that commits
+    # between two of the batch's statements must still be announced, not
+    # stepped over by the cursor.
+    _, area, bot = setup_sources(db, sysop, channel)
+    other = Database(db.path)
+    seen, statements = [], []
+
+    def commit_upload_between_statements(sql):
+        statements.append(sql)
+        if len(statements) == boundary + 1:
+            upload_file(other, get_file_area_by_name(other, area.name), get_user_by_username(other, alice.username),
+                        "racing.txt", b"racing")
+
+    try:
+        cursor = source_head(db)
+        db.connection.set_trace_callback(commit_upload_between_statements)
+        rows, cursor, _ = source_batch(db, bot.id, cursor)
+        db.connection.set_trace_callback(None)
+        assert len(statements) > boundary, "the batch no longer has this statement boundary"
+        seen += rows
+        for _ in range(3):
+            rows, cursor, _ = source_batch(db, bot.id, cursor)
+            seen += rows
+        assert [source_event(db, bot.id, r)["title"] for r in seen] == ["racing.txt"]
+    finally:
+        db.connection.set_trace_callback(None)
+        other.close()
 
 
 def test_restricted_or_withdrawn_source_is_refused_at_publication_without_rate_debit(db, sysop, alice, channel):

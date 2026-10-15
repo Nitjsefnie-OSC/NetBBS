@@ -2545,6 +2545,7 @@ class LinkNode:
         software_version: str | None = None,
         public_boards: list[dict] | tuple[dict, ...] | None = None,
         tagline: str | None = None,
+        user_renames: list[dict] | tuple[dict, ...] | None = None,
     ) -> HelloMessage:
         """Build this node's own hello bundle. `addresses`/
         `outgoing_only`/`created_at` are the caller's to supply (node
@@ -2572,6 +2573,7 @@ class LinkNode:
             software_version=software_version,
             public_boards=public_boards,
             tagline=tagline,
+            user_renames=user_renames,
         )
         return HelloMessage(
             root_public_key=bytes(self.identity.root.verify_key),

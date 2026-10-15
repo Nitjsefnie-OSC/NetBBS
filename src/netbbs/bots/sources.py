@@ -53,16 +53,26 @@ def source_head(db):
     return db.connection.execute("SELECT COALESCE(MAX(id), 0) FROM bot_source_events").fetchone()[0]
 
 
+BATCH_LIMIT = 32
+
+
 def source_batch(db, bot_id, cursor):
+    # Each statement here reads its own snapshot, and other connections
+    # commit uploads and posts in between (issue #1326). The head is read
+    # first and bounds the scan, so the cursor only ever moves past events
+    # this batch has actually looked at; an event that commits later has a
+    # higher id and is picked up by the next batch.
+    head = source_head(db)
     rows = [dict(r) for r in db.connection.execute(
-        "SELECT e.* FROM bot_source_events e WHERE e.id > ? AND ("
+        "SELECT e.* FROM bot_source_events e WHERE e.id > ? AND e.id <= ? AND ("
         "(e.kind='post' AND EXISTS (SELECT 1 FROM bot_board_sources s WHERE s.bot_id=? AND s.board_id=e.source_id)) OR "
         "(e.kind='file' AND EXISTS (SELECT 1 FROM bot_file_sources s WHERE s.bot_id=? AND s.area_id=e.source_id))) "
-        "ORDER BY e.id LIMIT 32", (cursor, bot_id, bot_id),
+        "ORDER BY e.id LIMIT ?", (cursor, head, bot_id, bot_id, BATCH_LIMIT),
     )]
     first = db.connection.execute("SELECT MIN(id) FROM bot_source_events").fetchone()[0]
     advanced = first is not None and cursor < first - 1
-    return rows, rows[-1]["id"] if rows else source_head(db), advanced
+    # A full batch may have more matching events before the head.
+    return rows, rows[-1]["id"] if len(rows) == BATCH_LIMIT else max(cursor, head), advanced
 
 
 def source_event(db, bot_id, reference):

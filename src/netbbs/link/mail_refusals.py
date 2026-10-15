@@ -60,6 +60,7 @@ _REASON_TEXT = {
     "link_policy_user_quarantined": "the sender is quarantined here",
     "link_policy_user_probationary_approval_required": "the sender is still on probation here",
     "link_policy_probation_budget_exceeded": "its node sent more than a node on probation may",
+    "link_policy_retired_identity": "it was signed with a name its node had renamed away from",
     "unknown_recipient": "it was addressed to no account here",
     "mailbox_full": "the recipient's mailbox was full of unread mail",
     "malformed": "it was not a valid letter (sender name, subject or body)",

@@ -2076,6 +2076,14 @@ def _block_target(db: Database, reader: User, message: MailMessage) -> BlockTarg
 _link_sender_name = link_address_display_label
 
 
+def address_with_current_name(db: Database, address: str) -> str:
+    """`netbbs.link.user_renames.address_with_current_name`, for an FTN
+    address too (which is never renamed and comes back unchanged)."""
+    from netbbs.link.user_renames import address_with_current_name as current
+
+    return current(db, address)
+
+
 def is_blocked(db: Database, reader: User, target: BlockTarget) -> bool:
     """Whether `reader` blocks `target` (mail and live messages alike)."""
     if target.user_id is not None:
@@ -2132,7 +2140,12 @@ def _load_blocked_rows(db: Database, user: User) -> list[_BlockedRow]:
                 where = f"on this BBS; blocked {since}"
         else:
             assert block.blocked_address is not None
-            name = _link_sender_name(db, block.blocked_address)
+            # Issue #1306: a sender their node renamed is shown by the name
+            # they go by now, with the one the block was made against.
+            current = address_with_current_name(db, block.blocked_address)
+            name = _link_sender_name(db, current)
+            if current != block.blocked_address:
+                name += f" (formerly {block.blocked_address.rpartition('@')[0]})"
             network = "FidoNet-style netmail" if is_ftn_recipient(block.blocked_address) else "a linked BBS"
             where = f"on {network}; blocked {since}"
         rows.append(_BlockedRow(block=block, name=name, where=where))
