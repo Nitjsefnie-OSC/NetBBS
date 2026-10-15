@@ -60,6 +60,7 @@ from netbbs.storage.execution import DatabaseLane
 from tests.test_shutdown import _hold_registered
 from netbbs.net import admin_ui
 from netbbs.net import admin_maintenance
+from netbbs.net import admin_trust
 
 # Sentinel strings in FakeSession's single scripted-input queue that
 # read_editor_key maps to
@@ -614,12 +615,12 @@ def test_trust_override_reconfirms_when_identity_warning_changes_during_prompt(
             return True
         return False
 
-    monkeypatch.setattr(admin_flow, "prompt_yes_no", confirm)
+    monkeypatch.setattr(admin_trust, "prompt_yes_no", confirm)
     # Dimension (01) -> resource, State (02) -> blocked, Reason (03), [S]ave; the
     # declined re-confirmation leaves the draft, so [B]ack + "y" discards.
     session = FakeSession(["0", "1", "r", "0", "2", "d", "0", "3", "identity changed again", "s", "b", "y"])
 
-    asyncio.run(admin_flow._set_trust_override_screen(session, lane, sysop, subject))
+    asyncio.run(admin_trust._set_trust_override_screen(session, lane, sysop, subject))
 
     state = get_effective_trust_state(db, subject, TrustDimension.RESOURCE_BEHAVIOR)
     assert confirmations == 2
@@ -11026,7 +11027,7 @@ def test_published_identity_says_per_recipient_what_was_delivered(db, lane, syso
     assert "retracting" in text  # the row may wrap onto the next page
     # The fourth row is on the next page; its state, as the table shows it.
     from netbbs.link.attestation_delivery import list_attestation_delivery_status
-    from netbbs.net.admin_flow import _delivery_state
+    from netbbs.net.admin_trust import _delivery_state
     [older] = [s for s in list_attestation_delivery_status(db) if s.recipient_fingerprint == "d" * 32]
     assert older.route is None and not older.current
     assert _delivery_state(older)[0] == "needs a newer NetBBS to receive this"

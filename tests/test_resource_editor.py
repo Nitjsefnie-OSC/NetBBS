@@ -1932,7 +1932,7 @@ def test_number_enter_and_space_use_the_same_field_position(activate):
 
 @pytest.mark.parametrize("kind", ["age", "level", "integer", "float", "optional_text"])
 def test_numeric_and_optional_fields_use_their_displayed_row(kind):
-    from netbbs.net.admin_flow import _float_field
+    from netbbs.net.admin_trust import _float_field
     from netbbs.net.admin_fields import (
         _min_age_field,
         _optional_int_field,

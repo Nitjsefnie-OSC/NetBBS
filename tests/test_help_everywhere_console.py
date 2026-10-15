@@ -23,6 +23,7 @@ from netbbs.link.trust import (
     register_subject,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_trust
 from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu, staff_menu
 from netbbs.net.char_input import HELP_KEY
@@ -209,7 +210,7 @@ def test_the_mrc_blocklist_has_help(db, lane, sysop):
 
 def test_the_trust_dimension_choice_has_help(db, lane, sysop):
     session = FakeSession([H, " ", "r"])
-    chosen = asyncio.run(admin_flow._pick_trust_dimension(session, allow_all=False))
+    chosen = asyncio.run(admin_trust._pick_trust_dimension(session, allow_all=False))
     text = _visible(_written_text(session))
     _assert_help_then_redraw(text, "Trust dimension help", "three areas", "Dimension:")
     assert chosen is TrustDimension.RESOURCE_BEHAVIOR
