@@ -1490,6 +1490,12 @@ def _all_board_events(db: Database, board_id: str) -> dict[str, dict]:
         raw = json.loads(row["link_event_json"])
         events[event_content_id(raw["envelope"])] = raw
 
+    # Issue #1299: this node's own callers' votes on the board's polls.
+    from netbbs.link.polls import own_vote_events
+
+    for vote in own_vote_events(db, board_local_id=board_row["id"]):
+        events[vote.content_id] = vote.to_dict()
+
     for row in db.connection.execute(
         "SELECT content_id, envelope_json FROM link_events WHERE board_id = ? ORDER BY received_at ASC", (board_id,)
     ):

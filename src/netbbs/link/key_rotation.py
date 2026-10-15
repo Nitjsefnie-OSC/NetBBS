@@ -70,6 +70,8 @@ _OWN_SIGNED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("files", "link_event_json"),
     ("mail_messages", "link_event_json"),
     ("link_mail_acknowledgements", "ack_event_json"),
+    # Issue #1299: this node's callers' votes on Linked polls.
+    ("board_poll_votes", "event_json"),
 )
 
 

@@ -81,6 +81,7 @@ from netbbs.link.events import (
     BOARD_CLOSURE_OBJECT_TYPE,
     BOARD_POSTING_MODES,
     BOARD_POSTING_OBJECT_TYPE,
+    BOARD_POLL_VOTE_OBJECT_TYPE,
     BOARD_GENESIS_OBJECT_TYPE,
     BOARD_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
     BOARD_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE,
@@ -102,6 +103,7 @@ from netbbs.link.events import (
     NETBBS_PROTOCOL_VERSION,
     BoardClosure,
     BoardPosting,
+    BoardPollVote,
     BoardGenesis,
     BoardOriginTransferAccepted,
     BoardOriginTransferOffer,
@@ -128,6 +130,7 @@ from netbbs.link.events import (
     community_members_problem,
     verify_board_closure,
     verify_board_posting,
+    verify_board_poll_vote,
     verify_board_genesis,
     verify_board_origin_transfer_accepted,
     verify_board_origin_transfer_offer,
@@ -165,7 +168,7 @@ from netbbs.link.equivocation import (
     subject_keys_from_record,
 )
 from netbbs.link.trust_wire import TrustPullRequest
-from netbbs.timeutil import utc_now_iso
+from netbbs.timeutil import parse_utc_iso, utc_now_iso
 
 # Bounds on remotely-influenced peer-list state (design doc's own
 # "every remotely influenced ... collection needs an explicit
@@ -1882,6 +1885,7 @@ KNOWN_EVENT_OBJECT_TYPES = frozenset({
     BOARD_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
     BOARD_CLOSURE_OBJECT_TYPE,
     BOARD_POSTING_OBJECT_TYPE,
+    BOARD_POLL_VOTE_OBJECT_TYPE,
     CHANNEL_GENESIS_OBJECT_TYPE,
     CHANNEL_MESSAGE_OBJECT_TYPE,
     FILE_AREA_GENESIS_OBJECT_TYPE,
@@ -1893,6 +1897,12 @@ KNOWN_EVENT_OBJECT_TYPES = frozenset({
     COMMUNITY_MEMBERS_OBJECT_TYPE,
     COMMUNITY_CLOSURE_OBJECT_TYPE,
 })
+# Issue #1299: the most a `board_post`'s or an edit's `"poll"` field may
+# take, as JSON. Ten answers of at most 200 bytes and the settings fit with
+# room to spare; the field's contents are judged where the poll is stored.
+_MAX_BOARD_POLL_FIELD_BYTES = 8 * 1024
+# A vote names at most this many answers: a poll has at most ten.
+_MAX_BOARD_POLL_VOTE_CHOICES = 10
 # The largest opaque event kept, as canonical-ish JSON.
 OPAQUE_EVENT_MAX_BYTES = 64 * 1024
 
@@ -3887,6 +3897,37 @@ class LinkNode:
                 f"{sender_fingerprint} sent a {kind} with a {body_bytes}-byte body, more than "
                 f"the {_MAX_BOARD_POST_BODY_BYTES} bytes this node accepts -- refusing"
             )
+        if "poll" in payload:
+            # Issue #1299: a poll travels inside its post; a malformed one is
+            # shown as a plain post, an oversized one is refused here.
+            poll_bytes = len(json.dumps(payload["poll"]).encode("utf-8"))
+            if poll_bytes > _MAX_BOARD_POLL_FIELD_BYTES:
+                raise LinkProtocolError(
+                    f"{sender_fingerprint} sent a {kind} with a {poll_bytes}-byte poll, more than "
+                    f"the {_MAX_BOARD_POLL_FIELD_BYTES} bytes this node accepts -- refusing"
+                )
+
+    def _check_board_poll_vote_shape(self, payload: dict, sender_fingerprint: str) -> None:
+        """A `board_poll_vote` names a poll and one to ten distinct answer
+        positions, and is dated (issue #1299). Whether those answers exist,
+        and how many the poll allows, is judged where the vote is counted."""
+        choices = payload.get("choices")
+        if (
+            not isinstance(payload.get("root_post_id"), str)
+            or not isinstance(choices, list)
+            or not 1 <= len(choices) <= _MAX_BOARD_POLL_VOTE_CHOICES
+            or any(not isinstance(c, int) or isinstance(c, bool) or c < 0 for c in choices)
+            or len(set(choices)) != len(choices)
+            or not isinstance(payload.get("nonce"), str)
+        ):
+            raise LinkProtocolError(f"{sender_fingerprint} sent a malformed board_poll_vote -- refusing")
+        created_at = payload.get("created_at")
+        try:
+            parse_utc_iso(created_at)
+        except (TypeError, ValueError) as exc:
+            raise LinkProtocolError(
+                f"{sender_fingerprint} sent a board_poll_vote with an unreadable date -- refusing"
+            ) from exc
 
     def _check_file_descriptor_content_size(self, payload: dict, sender_fingerprint: str) -> None:
         """Design doc §11.2, issue #89: `file_descriptor` has no local
@@ -5042,6 +5083,48 @@ class LinkNode:
                 community_id = self._accept_community_event(object_type, raw)
                 if community_id is not None:
                     accepted.append(community_id)
+            elif object_type == BOARD_POLL_VOTE_OBJECT_TYPE:
+                # Issue #1299: a vote on a poll on a Linked board, signed by
+                # the voter's home node like a post. Only the board's genesis
+                # is a dependency: the poll's own post may arrive later (and
+                # is never in `self.events` on the node that posted it), so
+                # the vote is kept and counted once its poll is here.
+                vote = BoardPollVote.from_dict(raw)
+                if vote.content_id in self.known_event_ids:
+                    continue
+
+                board_id = vote.payload.get("board_id")
+                if self.board_events.genesis_for(board_id) is None:
+                    raise MissingDependency(
+                        f"received a board_poll_vote for board_id {board_id!r}, which has no verified "
+                        "board_genesis on file -- refusing (no relay from a stranger yet)"
+                    )
+                self._check_board_poll_vote_shape(vote.payload, sender_fingerprint)
+                author = vote.payload.get("author", {})
+                if not isinstance(author, dict) or author.get("kind") != "node_vouched_user":
+                    raise LinkProtocolError("board_poll_vote author kind is not node_vouched_user -- refusing")
+                home_node_fingerprint = author.get("home_node_fingerprint")
+                if not isinstance(author.get("local_user_id"), str) or not author.get("local_user_id"):
+                    raise LinkProtocolError("board_poll_vote names no voter -- refusing")
+                voter_peer = self.known_identity(home_node_fingerprint)
+                if voter_peer is None:
+                    raise MissingDependency(
+                        f"received a board_poll_vote vouched for by {home_node_fingerprint}, which has "
+                        "no completed hello with this node -- refusing (no relay from a stranger)",
+                        missing_identity=home_node_fingerprint,
+                    )
+                signing_verify_keys = self._resolve_sender_content_keys(
+                    voter_peer, home_node_fingerprint, "board_poll_vote"
+                )
+                if not any(verify_board_poll_vote(vote, key) for key in signing_verify_keys):
+                    raise LinkProtocolError(
+                        f"board_poll_vote from home node {home_node_fingerprint} does not verify "
+                        "against its signing keys"
+                    )
+
+                self.known_event_ids.add(vote.content_id)
+                self.events[vote.content_id] = raw
+                accepted.append(vote.content_id)
 
             else:
                 # Issue #1022 (design doc §7.5): a type this node does not

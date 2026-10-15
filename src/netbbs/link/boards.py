@@ -69,6 +69,16 @@ from netbbs.link.events import (
     event_content_id,
 )
 from netbbs.link.local_names import free_local_name
+from netbbs.link.polls import (
+    apply_carried_closing_without_commit,
+    closing_field,
+    mark_linked_without_commit,
+    own_vote_events,
+    poll_field,
+    project_retained_votes_without_commit,
+    write_carried_poll_without_commit,
+)
+from netbbs.boards.polls import close_poll_for_removal_without_commit, get_poll
 from netbbs.link.node_identity import NodeIdentity, resolve_current_operational_key
 from netbbs.link.protocol import LinkNode, PeerRecord
 from netbbs.link.remote_attestation import (
@@ -595,6 +605,12 @@ def materialize_carried_post(
         # Issue #1298: copies of one cross-post this node carries on several
         # boards are tied together here, as the author's node ties its own.
         db.connection.execute("UPDATE posts SET crosspost_group = ? WHERE post_id = ?", (group, post.content_id))
+    if "poll" in payload and parent_post_id is None and payload.get("parent_post_id") is None:
+        # Issue #1299: the poll travels with its post. One this node cannot
+        # read is left off, and the post shows as a plain post. Votes that
+        # came before it are counted now.
+        if write_carried_poll_without_commit(db, post.content_id, payload["poll"]):
+            project_retained_votes_without_commit(db, post.content_id, payload["board_id"])
     reindex_post(db, board_local_id, post.content_id)
     db.connection.commit()
 
@@ -754,6 +770,12 @@ def materialize_carried_post_edit(
             payload["root_post_id"], payload["previous_event_id"],
         ),
     )
+    # Issue #1299: an edit of a poll's post carries its closing date, and a
+    # withdrawal closes the poll.
+    if "poll" in payload:
+        apply_carried_closing_without_commit(db, payload["root_post_id"], payload["poll"])
+    if withdrawal:
+        close_poll_for_removal_without_commit(db, payload["root_post_id"])
     reindex_post(db, board_local_id, payload["root_post_id"])
     db.connection.commit()
 
@@ -958,6 +980,9 @@ def materialize_carried_board_post_moderator_edit(
             payload["root_post_id"], payload["previous_event_id"],
         ),
     )
+    if "poll" in payload:
+        # Issue #1299: the origin's moderator changed a poll's closing date.
+        apply_carried_closing_without_commit(db, payload["root_post_id"], payload["poll"])
     reindex_post(db, root_row["board_id"], payload["root_post_id"])
     db.connection.commit()
 
@@ -1029,6 +1054,8 @@ def materialize_carried_board_post_tombstone(
             payload["root_post_id"], payload["previous_event_id"], payload["created_at"],
         ),
     )
+    # Issue #1299: a takedown closes the poll and hides its totals.
+    close_poll_for_removal_without_commit(db, payload["root_post_id"])
     reindex_post(db, root_row["board_id"], payload["root_post_id"])
     db.connection.commit()
 
@@ -1566,6 +1593,7 @@ def queue_board_post_if_linked(
             # reply to a post from another node went out as a new thread.
             link_parent_post_id = post.parent_post_id
 
+    poll = get_poll(db, post.root_post_id) if post.parent_post_id is None else None
     board_post = build_board_post(
         signing_identity=node_identity.signing_key,
         home_node_fingerprint=node_identity.fingerprint,
@@ -1579,12 +1607,16 @@ def queue_board_post_if_linked(
         parent_post_id=link_parent_post_id,
         layout=post.layout if post.layout != "prose" else None,
         crosspost=_own_crosspost_group(db, post),
+        # Issue #1299: a poll travels with its post.
+        poll=poll_field(poll) if poll is not None else None,
     )
 
     db.connection.execute(
         "UPDATE posts SET link_event_json = ? WHERE post_id = ?",
         (json.dumps(board_post.to_dict()), post.post_id),
     )
+    if poll is not None:
+        mark_linked_without_commit(db, post.post_id, board_post.content_id)
     db.connection.commit()
 
     return board_post
@@ -1778,6 +1810,7 @@ def queue_board_post_edit_if_linked(
         body=carried_post_body(db, edited_post),
         created_at=edited_post.created_at,
         withdrawn=edited_post.withdrawn,
+        poll=_poll_closing(db, edited_post),
     )
 
     db.connection.execute(
@@ -1909,6 +1942,7 @@ def queue_board_post_moderator_edit_if_linked(
         subject=edited_post.subject,
         body=carried_post_body(db, edited_post),
         created_at=edited_post.created_at,
+        poll=_poll_closing(db, edited_post),
     )
 
     db.connection.execute(
@@ -1918,6 +1952,15 @@ def queue_board_post_moderator_edit_if_linked(
     db.connection.commit()
 
     return edit
+
+
+def _poll_closing(db: Database, revision: Post) -> dict | None:
+    """The `"poll"` field an edit of `revision`'s post carries: the poll's
+    closing date, for a poll that travels (issue #1299)."""
+    poll = get_poll(db, revision.root_post_id)
+    if poll is None or poll.link_root_id is None:
+        return None
+    return closing_field(poll)
 
 
 def queue_board_post_tombstone_if_linked(
@@ -2058,4 +2101,6 @@ def load_own_board_events(db: Database, own_fingerprint: str) -> list[_OwnBoardE
             events.append(BoardPostTombstone.from_dict(raw))
         else:
             events.append(BoardPost.from_dict(raw))
+    # Issue #1299: this node's callers' votes on Linked polls.
+    events.extend(own_vote_events(db))
     return events
