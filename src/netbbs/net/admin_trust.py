@@ -45,6 +45,7 @@ from netbbs.link.remote_attestation import (
     set_remote_attestation_override,
 )
 from netbbs.link.store import introduced_by
+from netbbs.link.user_renames import current_user_name, former_user_names
 from netbbs.link.trust_carriage import relays_refusing_trust_deposits
 from netbbs.link.onboarding import link_has_ever_run, link_is_outgoing_only
 from netbbs.link.store import load_peer_last_contact
@@ -304,11 +305,30 @@ async def _trust_menu(
             await session.write(reject_unhandled_key(choice))
 
 
-def _trust_subject_name(subject: TrustSubject, node_label: str | None = None) -> str:
+def _trust_subject_name(
+    subject: TrustSubject, node_label: str | None = None, formerly: Sequence[str] = (),
+) -> str:
     node = node_label or "Unknown linked node"
     if subject.kind == "node":
         return f"node:{node}"
-    return f"user:{subject.opaque_user_id}@{node}"
+    # Issue #1306: a user their node renamed, with the names they went by.
+    former = f" (formerly {', '.join(formerly)})" if formerly else ""
+    return f"user:{subject.opaque_user_id}@{node}{former}"
+
+
+def _former_names(db: Database, subject: TrustSubject) -> list[str]:
+    if subject.kind != "user" or subject.opaque_user_id is None:
+        return []
+    return former_user_names(db, subject.node_fingerprint, subject.opaque_user_id)
+
+
+def _current_subject(db: Database, subject: TrustSubject) -> TrustSubject:
+    """`subject` under its current name: a screen reached from an old name
+    (a letter refused before the rename) shows the user as they are now."""
+    if subject.kind != "user" or subject.opaque_user_id is None:
+        return subject
+    name = current_user_name(db, subject.node_fingerprint, subject.opaque_user_id)
+    return subject if name == subject.opaque_user_id else TrustSubject.user(subject.node_fingerprint, name)
 
 
 _TRUST_STATE_TONE = {
@@ -653,9 +673,12 @@ async def _trust_subjects_screen(
         subject.node_fingerprint: (await lane.run(identity_for_fingerprint, subject.node_fingerprint)).label
         for subject in subjects
     }
+    former = {subject: await lane.run(_former_names, subject) for subject in subjects}
     selected = await pick_item(
         session, subjects,
-        name_of=lambda subject: _trust_subject_name(subject, labels.get(subject.node_fingerprint)),
+        name_of=lambda subject: _trust_subject_name(
+            subject, labels.get(subject.node_fingerprint), former.get(subject, ()),
+        ),
         stable_id_of=_trust_subject_stable_id,
         description_of=lambda subject: subject.kind,
         title="Trust subjects", own=True,
@@ -691,7 +714,8 @@ async def _trust_subject_screen(
     map, a refused letter's sender. One screen, so an action is never built
     twice."""
     label = (await lane.run(identity_for_fingerprint, selected.node_fingerprint)).label
-    subject_name = _trust_subject_name(selected, label)
+    selected = await lane.run(_current_subject, selected)
+    subject_name = _trust_subject_name(selected, label, await lane.run(_former_names, selected))
     with entered(session, sanitize_text(subject_name)):
         listing = _Listing()
         while True:
@@ -2857,8 +2881,17 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
         retired = await lane.run(list_retired_usernames)
         held: list[Field | Note | Table] = (
             [Table(
-                ("Username", "Retired"),
-                [[(entry.username, ACCENT_COLOR), (entry.retired_at[:10], DATE_COLOR)] for entry in retired],
+                ("Username", "Retired", "Held for"),
+                [
+                    [
+                        (entry.username, ACCENT_COLOR), (entry.retired_at[:10], DATE_COLOR),
+                        # Issue #1306: a renamed account still receives mail
+                        # written to its old name.
+                        (f"renamed to {entry.renamed_to}", VALUE_COLOR) if entry.renamed_to
+                        else ("deleted account", MUTED_COLOR),
+                    ]
+                    for entry in retired
+                ],
             )]
             if retired else [Note("None.", color=SUCCESS_COLOR)]
         )
@@ -2866,7 +2899,8 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
             "On NetBBS Link a username is the account's identity, so on a node that has run "
             "Link the name of a deleted account is held: whoever registered it next would "
             "inherit the old account's Link mail address, the authorship of its carried "
-            "posts, and what other nodes recorded about it."
+            "posts, and what other nodes recorded about it. A renamed account's old name is "
+            "held the same way, and mail written to it still reaches that account."
             if await lane.run(link_has_ever_run)
             else "This node has never run NetBBS Link, so deleting an account frees its "
             "username at once and nothing is held here."
@@ -2878,7 +2912,7 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
             session,
             title=_detail_title(
                 session, chrome, "Held names", own=True,
-                subtitle="Names held for deleted accounts so nobody inherits their Link identity.",
+                subtitle="Names held for deleted and renamed accounts so nobody inherits their Link identity.",
             ),
             sections=[Section("Why names are held", [why]), Section("Held usernames", held)],
             actions=actions, page=page, message=message,
@@ -2896,7 +2930,10 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
             session, retired,
             name_of=lambda entry: entry.username,
             stable_id_of=lambda entry: _stable_id_for(entry.username.lower()),
-            description_of=lambda entry: f"retired {entry.retired_at[:10]}",
+            description_of=lambda entry: (
+                f"retired {entry.retired_at[:10]}"
+                + (f", renamed to {entry.renamed_to}" if entry.renamed_to else "")
+            ),
             title="Release which username?", empty_message="No usernames are retired.",
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style, collapsed=chrome.collapsed,
             accent_color=chrome.accent_color,

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from enum import Enum
 
+from netbbs.auth.renames import get_recipient_by_name
 from netbbs.auth.users import AuthError, User, get_user_by_username
 from netbbs.chat import ChatHub, MessageMailbox, PresenceRegistry
 from netbbs.chat.channels import list_channels
@@ -305,7 +306,9 @@ def build_direct_message_deliverer(
     async def deliver(message: IncomingDirectMessage) -> bool:
         def _lookup(db: Database):
             try:
-                target = get_user_by_username(db, message.to_user_id)
+                # A peer's `/msg` to a name renamed away from reaches the
+                # renamed account (issue #1306).
+                target = get_recipient_by_name(db, message.to_user_id)
             except AuthError:
                 return None, [], "linked node", None
             sender_address = f"{message.from_user_id}@{message.from_node_fingerprint}"

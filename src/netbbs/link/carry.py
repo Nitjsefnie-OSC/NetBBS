@@ -49,6 +49,8 @@ from netbbs.link.events import (
     BOARD_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
     CHANNEL_GENESIS_OBJECT_TYPE,
     CHANNEL_MESSAGE_OBJECT_TYPE,
+    COMMUNITY_GENESIS_OBJECT_TYPE,
+    COMMUNITY_MEMBERS_OBJECT_TYPE,
     FILE_AREA_GENESIS_OBJECT_TYPE,
     FILE_DESCRIPTOR_OBJECT_TYPE,
     BoardClosure,
@@ -80,17 +82,27 @@ from netbbs.timeutil import utc_now_iso
 OFFERED = "offered"
 EXCLUDED = "excluded"
 
-KINDS = ("boards", "channels", "file_areas")
+KINDS = ("boards", "channels", "file_areas", "communities")
+"""Every carry-decision kind. `communities` (issue #1308) is a Link
+Community: offered on arrival, never carried automatically, and accepted by
+subscribing (`netbbs.link.communities.subscribe_community`)."""
 
-KIND_LABELS = {"boards": "message board", "channels": "chat channel", "file_areas": "file area"}
+KIND_LABELS = {
+    "boards": "message board", "channels": "chat channel", "file_areas": "file area", "communities": "Community",
+}
 
 _GENESIS_TYPES = {
     "boards": BOARD_GENESIS_OBJECT_TYPE,
     "channels": CHANNEL_GENESIS_OBJECT_TYPE,
     "file_areas": FILE_AREA_GENESIS_OBJECT_TYPE,
+    "communities": COMMUNITY_GENESIS_OBJECT_TYPE,
 }
-_EVENT_COLUMNS = {"boards": "board_id", "channels": "channel_id", "file_areas": "file_area_id"}
-_KIND_OF_GENESIS_TYPE = {object_type: kind for kind, object_type in _GENESIS_TYPES.items()}
+_EVENT_COLUMNS = {"boards": "board_id", "channels": "channel_id", "file_areas": "file_area_id", "communities": "community_id"}
+# A Community's genesis is not carried on arrival like the other three, so it
+# has no automatic-intake kind (see `netbbs.link.communities`).
+_KIND_OF_GENESIS_TYPE = {
+    object_type: kind for kind, object_type in _GENESIS_TYPES.items() if kind != "communities"
+}
 
 
 class CarryDecisionError(Exception):
@@ -110,6 +122,8 @@ class CarryDecision:
     origin_fingerprint: str
     ref: int = 0
     hidden: bool = False
+    member_count: int | None = None
+    """Issue #1308: for a Community, how many members its list names."""
     """Issue #683: the resource's local row is kept, hidden (so Purge applies)."""
     """A small, stable number for the SysOp's picker (the row's rowid)."""
 
@@ -190,6 +204,8 @@ _CARRIED_ROW = """(
     (d.kind = 'boards' AND d.resource_id IN (SELECT board_id FROM boards WHERE link_genesis_json IS NOT NULL AND link_hidden_at IS NULL))
     OR (d.kind = 'channels' AND d.resource_id IN (SELECT channel_id FROM channels WHERE link_genesis_json IS NOT NULL AND link_hidden_at IS NULL))
     OR (d.kind = 'file_areas' AND d.resource_id IN (SELECT area_id FROM file_areas WHERE link_genesis_json IS NOT NULL AND link_hidden_at IS NULL))
+    OR (d.kind = 'communities' AND d.state = 'offered'
+        AND d.resource_id IN (SELECT link_id FROM communities WHERE link_genesis_json IS NOT NULL))
 )"""
 
 
@@ -202,9 +218,11 @@ def list_carry_decisions(db: Database, state: str, *, limit: int = MAX_LISTED_DE
                    (SELECT e.envelope_json FROM link_events AS e
                      WHERE e.object_type = CASE d.kind WHEN 'boards' THEN 'board_genesis'
                                                        WHEN 'channels' THEN 'channel_genesis'
+                                                       WHEN 'communities' THEN 'community_genesis'
                                                        ELSE 'file_area_genesis' END
                        AND CASE d.kind WHEN 'boards' THEN e.board_id
                                        WHEN 'channels' THEN e.channel_id
+                                       WHEN 'communities' THEN e.community_id
                                        ELSE e.file_area_id END = d.resource_id
                      ORDER BY e.received_at LIMIT 1) AS genesis_json,
                    CASE d.kind
@@ -212,6 +230,7 @@ def list_carry_decisions(db: Database, state: str, *, limit: int = MAX_LISTED_DE
                                                  WHERE board_id = d.resource_id AND link_hidden_at IS NOT NULL)
                      WHEN 'channels' THEN EXISTS (SELECT 1 FROM channels
                                                    WHERE channel_id = d.resource_id AND link_hidden_at IS NOT NULL)
+                     WHEN 'communities' THEN 0
                      ELSE EXISTS (SELECT 1 FROM file_areas
                                    WHERE area_id = d.resource_id AND link_hidden_at IS NOT NULL)
                    END AS hidden,
@@ -220,11 +239,13 @@ def list_carry_decisions(db: Database, state: str, *, limit: int = MAX_LISTED_DE
                    CASE d.kind
                      WHEN 'boards' THEN (SELECT name FROM boards WHERE board_id = d.resource_id)
                      WHEN 'channels' THEN (SELECT name FROM channels WHERE channel_id = d.resource_id)
+                     WHEN 'communities' THEN (SELECT name FROM communities WHERE link_id = d.resource_id)
                      ELSE (SELECT name FROM file_areas WHERE area_id = d.resource_id)
                    END AS local_name,
                    CASE d.kind
                      WHEN 'boards' THEN (SELECT description FROM boards WHERE board_id = d.resource_id)
                      WHEN 'channels' THEN (SELECT description FROM channels WHERE channel_id = d.resource_id)
+                     WHEN 'communities' THEN (SELECT description FROM communities WHERE link_id = d.resource_id)
                      ELSE (SELECT description FROM file_areas WHERE area_id = d.resource_id)
                    END AS local_description
               FROM link_carry_decisions AS d
@@ -243,8 +264,15 @@ def list_carry_decisions(db: Database, state: str, *, limit: int = MAX_LISTED_DE
             origin_fingerprint=str(payload.get("origin_fingerprint") or ""),
             ref=row["ref"],
             hidden=bool(row["hidden"]),
+            member_count=_member_count(db, row["resource_id"]) if row["kind"] == "communities" else None,
         ))
     return decisions
+
+
+def _member_count(db: Database, link_id: str) -> int:
+    from netbbs.link.communities import members_in_force
+
+    return sum(len(ids) for ids in members_in_force(db, link_id).values())
 
 
 def _materialize(db: Database, kind: str, envelope: dict, *, own_fingerprint: str | None, cap: int | None):
@@ -360,7 +388,7 @@ def _id_field(kind: str) -> str:
     return {"boards": "board_id", "channels": "channel_id", "file_areas": "area_id"}[kind]
 
 
-_OBJECT_TYPES = {"boards": "board", "channels": "channel", "file_areas": "file_area"}
+_OBJECT_TYPES = {"boards": "board", "channels": "channel", "file_areas": "file_area", "communities": "community"}
 
 
 def _audit_detail(envelope: dict | None, resource_id: str) -> str:
@@ -400,6 +428,8 @@ def accept_offer(
     and clear the offer, in one transaction with its moderation-log entry. The
     next sync pass declares it as carried and pulls its content like any newly
     carried resource."""
+    if kind == "communities":
+        raise CarryDecisionError("a Community is subscribed to (netbbs.link.communities), not accepted here")
     db.connection.execute("BEGIN IMMEDIATE")
     try:
         row = db.connection.execute(
@@ -440,12 +470,17 @@ def accept_offer(
 
 
 def _finish_acceptance(db: Database, kind: str, resource_id: str, *, max_remote_files_per_area: int | None) -> None:
+    from netbbs.link.communities import place_listed_member
+
     reproject_stored_content(db, kind, resource_id, max_remote_files_per_area=max_remote_files_per_area)
     db.connection.execute(
         "DELETE FROM link_carry_decisions WHERE kind = ? AND resource_id = ? AND reason = 'accepting'",
         (kind, resource_id),
     )
     db.connection.commit()
+    # Issue #1308: a resource a subscribed Link Community lists goes into its
+    # copy however it came to be carried.
+    place_listed_member(db, kind, resource_id)
 
 
 def finish_pending_acceptances(db: Database, *, max_remote_files_per_area: int | None = None) -> int:
@@ -631,6 +666,8 @@ def restore_excluded(
     was; one with no local row (declined while offered, or purged) is taken on
     from its genesis like an accepted offer. Either way the next sync pass
     declares it carried again and pulls what arrived meanwhile."""
+    if kind == "communities":
+        raise CarryDecisionError("a Community is taken back by subscribing to it again (netbbs.link.communities)")
     table, column = _LOCAL[kind]
     db.connection.execute("BEGIN IMMEDIATE")
     reproject = False
@@ -674,6 +711,10 @@ def restore_excluded(
     db.connection.commit()
     if reproject:
         _finish_acceptance(db, kind, resource_id, max_remote_files_per_area=max_remote_files_per_area)
+    else:
+        from netbbs.link.communities import place_listed_member
+
+        place_listed_member(db, kind, resource_id)
 
 
 def remove_linked_or_local(

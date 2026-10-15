@@ -184,6 +184,7 @@ from netbbs.net.admin_files import _area_menu
 from netbbs.net.admin_chat import _channel_menu
 from netbbs.net.admin_doors import _door_menu
 from netbbs.net.admin_users import _pick_and_edit_user, _users_menu
+from netbbs.auth.renames import count_open_username_requests
 
 # Design doc -- node management, Thiesi's own request: an operator
 # watching this node's own stdout/journal should see a shutdown/drain
@@ -247,6 +248,9 @@ def _carry_attention_pairs(state: dict[str, object]) -> list[tuple[str, int]]:
     """The dashboard's Link attention counts (issue #681), only when there
     is something to attend to: a node with nothing new draws as before."""
     pairs = []
+    # Issue #1306: callers asking for a new username, under Users.
+    if state.get("name_requests"):
+        pairs.append(("Name requests", state["name_requests"]))
     if state.get("carried_to_review"):
         pairs.append(("Newly carried", state["carried_to_review"]))
     if state.get("carry_offers"):
@@ -811,6 +815,7 @@ async def _draw_admin_menu(
             "pending_users": pending_users,
             "pending_posts": pending_posts,
             "pending_files": pending_files,
+            "name_requests": count_open_username_requests(db),
             # Dogfood follow-up: the dashboard previously showed only
             # *pending* counts (always 0 on a quiet node) with no sense
             # of overall node scale at all -- a SysOp glancing at the
@@ -1654,7 +1659,7 @@ async def _content_menu(
             await _draw_content_menu(session, stats=stats)
         elif choice == "t":
             await session.write_line("")
-            await _community_menu(session, lane, actor)
+            await _community_menu(session, lane, actor, link_context=link_context)
             stats = await lane.run(_load_stats)
             await _draw_content_menu(session, stats=stats)
         elif choice == "g":

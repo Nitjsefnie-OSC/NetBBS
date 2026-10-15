@@ -449,10 +449,11 @@ validators, and fixtures pin the current wire format.
 
 The implemented protocol supports linked message boards, channel messages,
 file catalogues/on-demand chunks, ordinary home-node-encrypted mail, trust
-signals, and real-time chat/presence. Board origin transfer and origin-authorized
-post moderation exist. Do not infer channel/file-area origin succession,
-delegated Link moderation, Link Communities, client-side mail decryption, or
-cross-node `/dm` invites from a generic event envelope.
+signals, real-time chat/presence, and Link Communities (design reference
+§6.5). Board origin transfer and origin-authorized post moderation exist. Do
+not infer channel/file-area origin succession, Community origin transfer,
+delegated Link moderation, client-side mail decryption, or cross-node `/dm`
+invites from a generic event envelope.
 
 ### Canonical bytes and signed identities
 

@@ -375,6 +375,15 @@ lane would have read the shared account's stored values instead. The
 context is copied, so a context variable *set* inside a lane job does not
 reach the caller.
 
+**Two reads in one job are two snapshots (issue #1326).** Outside a
+transaction each SELECT sees whatever other connections have committed by
+then, so a write can land between two statements of one lane job. A cursor
+over an append-only journal must therefore read the head *first* and bound
+its scan by it (`netbbs.bots.sources.source_batch`). Scanning first and then
+jumping the cursor to `MAX(id)` stepped over an upload committed in between,
+and Baud never announced that file. The test injects a commit between the
+statements with `set_trace_callback` rather than hoping a timing window opens.
+
 ### Session-scoped preferences reach only the session's own reads (issue #1073)
 
 For a session that signed in without a credential, `run_authenticated_session`
@@ -692,7 +701,42 @@ Community-blanket grants fit between per-object and local-blanket fallback:
 3. local-blanket.
 
 Node carry policy, user follow state, and resource membership are distinct
-concepts when Link Communities arrive.
+concepts.
+
+### Link Communities (issue #1310)
+
+`netbbs.link.communities` owns the rules (design doc §6.5). Invariants that are
+easy to break:
+
+- **Own Community or carried copy is told apart by `link_members_json`.** The
+  origin always keeps its own latest list on the row; a copy never does (its
+  lists live in `link_events`). `subscribed_copy` relies on this, so placement
+  can never move this node's own resources into its own promoted Community.
+- **One membership list per Community is stored.** `store_received_members`
+  deletes the superseded list in the same transaction as it saves the newer
+  one; `_all_community_events` therefore serves at most three events per
+  Community. An older list arriving later is accepted in memory (so it is not
+  refetched every pass) and stored nowhere.
+- **Members are accepted only when new to a list or at subscription start**
+  (`accept_listed_members` with the difference against the previous list). A
+  member already offered to the SysOp and passed over by the cap must not be
+  taken silently on a later pass (#561 Decision 4). Placement
+  (`place_members`) is idempotent and runs on every apply, after every carried
+  genesis, after every accepted offer (`carry._finish_acceptance`, restore) and
+  after a board origin change.
+- **The level-0 drop happens only when a member moves into a copy.** Running it
+  on every placement would undo a SysOp's later explicit 0.
+- **`community_placed_locally` is set by `update_board`/`update_channel`/
+  `update_file_area` when the Community changes**, in SQL (`CASE WHEN
+  community_id IS ? ...`, which reads the old value). A new path that moves a
+  resource between Communities must set it too, or a membership list will
+  move it back.
+- **The origin's list is refreshed every sync pass**
+  (`refresh_own_community_members`), not hooked into each screen that links,
+  unlinks or moves a resource; a new such path needs nothing.
+- **`handle_events` branches on `object_type == ...` comparisons**, which
+  `tests/test_link_opaque_events.py` reads with an AST scan; a branch written
+  as `object_type in (...)` is invisible to it.
 
 ---
 
@@ -3242,9 +3286,12 @@ proves an account never had a session.
 `UsernameRetiredError` stringifies exactly as a taken username does, because
 both self-service registration paths print the exception to a remote caller;
 a SysOp surface has to reach for `sysop_detail` and, in a draft editor,
-re-raise it as the editor's `error_type` so the draft survives. A rename, if
-one is ever built, frees a name the same way a deletion does and must retire
-it the same way. Any new path that inserts into `users` without going through
+re-raise it as the editor's `error_type` so the draft survives. A rename
+(issue #1306, `netbbs.auth.renames`) retires the old name through the same
+predicate, inside its own transaction, and records the account in
+`retired_usernames.user_id`; delivery by name goes through
+`get_recipient_by_name`, never `get_user_by_username`, wherever a name can come
+from outside (Link mail, netmail, `/msg`). Any new path that inserts into `users` without going through
 `_create_user_with_password_hash` bypasses the hold. Because `create_user` now
 reads `retired_usernames`, a migration test that opens a schema truncated
 before that table cannot call it; `tests/legacy_schema.py` inserts the account
@@ -3252,6 +3299,22 @@ the way every schema has stored one. "Has this node ever run Link" is a sticky
 `node_config` marker, seeded once by the migration from every artifact Link
 leaves behind, because stored peers alone miss a node that originated a linked
 board without ever storing one.
+
+**A peer's view of a renamed user goes through `_canonical` (issue #1306).**
+`link_user_aliases` maps `(node, old) -> new`, learned in `save_peer` and
+`save_introduced_identity` from the stored descriptor. The trust writers and
+`get_effective_trust_state` resolve a user subject through it first, and
+learning an alias moves the old subject's rows to the new one
+(`merge_renamed_user_subject`), inside `learn_user_renames`' own transaction.
+SQL that reads a trust table by a subject id built from a wire name, outside
+those functions, does not see the alias: route it through them. A received
+remote attestation keeps naming the old subject (its issuer reissues it), so
+the old subject row is deleted only when nothing in
+`link_remote_attestation*` still names it.
+`channel_messages.author_user_id` is NULL for a line no account wrote and 0 for
+an older line whose author could not be told apart from a later holder of the
+name; `_resolve_message_author` resolves NULL by label and 0 to nobody, so a
+new code path that records a caller's line must pass `author_user_id`.
 
 **A node's own trust objects are stored with the ones it carries (issue
 #589).** `trust_issuance.reconcile_issued_vouches` signs a vouch and writes it

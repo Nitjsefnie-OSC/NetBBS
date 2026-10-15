@@ -1621,7 +1621,54 @@ confirmed and audited action. Self-service registration refuses a retired
 name in the words it uses for a taken one; a SysOp surface says why and where
 to release it.
 
+**Renaming an account** (issue #1111). A caller asks for a new username from
+their Profile; the request is checked exactly as self-registration checks a
+name and waits beside pending registrations, where the SysOp approves it or
+refuses it with a reason the caller sees at their next login. A SysOp can also
+rename an account directly from its detail screen. Approving, refusing and
+renaming are a SysOp's alone, as deletion is. One open request per account,
+one approved rename per account per 30 days (a SysOp's direct rename is not
+limited, and counts as the latest), and each step is audited
+(`request_username_change`, `refuse_username_change`, `rename_user`).
+
+- **One transaction.** The username changes and the account id, with
+  everything keyed on it, stays. Under the retirement rule above the old name
+  is retired in the same transaction, and the retired row records the account
+  it now belongs to; Link mail, FTN netmail and `/msg` to the old name reach
+  that account. A name retired by deletion records no account and bounces. A
+  later deletion of the renamed account clears the account from its old names,
+  which stay held.
+- **History keeps its name.** Posts, files and sent mail keep the author name
+  they were stored and signed under; this node's copy never disagrees with a
+  peer's. What looks an account up live follows it. Chat scrollback records
+  the writing account's id on every line, so a line resolves to its author
+  after a rename and never to a later holder of the name; a line from before
+  that id existed resolves to its author only if the account holding the name
+  existed when the line was written, and otherwise to nobody.
+- **Live sessions end.** A rename ends the account's live sessions with a line
+  naming the new username; they log in with it. Presence, chat and MRC state
+  follow from there. The remote attestations this node issued about the
+  account are revoked and reissued under the new name. An RLogin remote door
+  keyed on the handle sees a new player, and the confirmation says so.
+- **On the Link** the rename is announced in the node's endpoint descriptor
+  (§4.4) and peers carry the user's state over to the new name (§12.4).
+
 ### 4.4 Human-facing Link addresses
+
+**A renamed user's address** (issue #1111). A node lists its recent username
+renames in its signed endpoint descriptor as `user_renames`: `{from, to, at}`
+entries, at most 64, none older than 400 days, newest first. A reader
+validates each entry and skips what does not validate; it never refuses a
+hello or an introduction over the list. A peer keeps what it learns, keyed by
+node fingerprint and old name, and does not re-read it, since entries age out
+of the list. From then on `new@node` is the same user as `old@node`: chains
+(`A -> B -> C`) resolve to the current name, a letter to the old address is
+sent to the new one (a reply to an old letter is the usual case), and a mail
+block recorded against either address covers both. A peer's views of the
+user -- a trust screen, a block list -- show the current name with "formerly"
+and the old one. Content signed before the rename keeps showing the name it
+was signed under. A peer that has not heard from the node within 400 days of
+the rename meets the new name as a new user.
 
 The normal human-facing cross-node address is:
 
@@ -4170,14 +4217,67 @@ event, not a separate table or local type.
 Two same-named Link Communities from different origins remain distinct.
 Existing local Communities may be promoted into Link scope.
 
-Carrying a Link Community is intended to carry its present and future member
-resources by default, while retaining visible per-resource and whole-Community
-local exclusions. Origin defaults are recommendations; carrying-node overrides
-win locally.
+Carrying a Link Community carries its present and future member resources,
+while retaining visible per-resource and whole-Community local exclusions.
+Origin defaults are recommendations; carrying-node overrides win locally. The
+rationale is §16, "Issue #1308 — Link Communities"; the rules are these.
 
-The event schemas, signed membership changes, subscription and placement
-rules are decided in §16, "Issue #1308 — Link Communities", and not yet built.
-Advanced governance stays Phase 6 work.
+- **Members.** A Link Community lists only its origin's own linked boards,
+  chat channels and file areas: those whose *current* origin is the node that
+  signs the Community. Doors are not linked. A member whose origin moves away
+  (§9.4) drops out on every carrier.
+- **Events.** `community_genesis` (`origin_fingerprint`, `community_id`,
+  `name`, `created_at`, optional `description` and `default_min_read_level`,
+  `default_min_write_level`, `default_min_age`, `default_name_requirement`,
+  `default_age_requirement`); `community_members` (`community_id`,
+  `origin_fingerprint`, `members` -- exactly `boards`, `channels` and
+  `file_areas`, each at most 500 distinct ids -- `created_at`, `nonce`); and a
+  terminal `community_closure`. All three are signed by the origin's current
+  signing key and verified against the origin, so a carrier relays them but
+  never authors them. `community_id` is content-addressed from the origin, the
+  name and the time, and a receiver refuses a genesis it does not match. A
+  membership list replaces the whole membership and is not chained: the newest
+  `created_at` (ties by content id) wins, and superseded lists are not kept. A
+  list or closure for a Community whose genesis has not arrived waits for it,
+  and a member id whose own genesis names another origin is ignored.
+- **Promotion.** A local Community is promoted from its SysOp screen. The
+  genesis carries its name, description and defaults, with a membership list
+  of the members that are already linked and originate here: promotion links
+  nothing, so filing a private board under a Link Community never publishes
+  it. Linking, unlinking or moving such a member, by any path, is answered by
+  a new list on the next sync pass. Unlinking or deleting the Community signs
+  its closure; the origin keeps serving the genesis, last list and closure so
+  the closure reaches every carrier, and the Community is local again.
+- **Subscription.** A received genesis is always *offered* (§9.3), with its
+  origin and member count, whatever the node-wide intake does for boards:
+  subscribing is a standing rule a person makes. Accepting the offer is the
+  subscription. From then on each member the Community lists -- when the
+  subscription starts, and each one new to a later list -- is accepted as if
+  the SysOp had accepted its offer, within the per-type carry caps; one past a
+  cap waits offered with reason `cap`, and an offer already in front of the
+  SysOp is not silently taken later (§16, issue #561, Decision 4). Excluding a
+  member keeps it out. Deleting the copy is leaving the Community: it is
+  recorded as excluded, accepts nothing more, sheds no member, and Restore
+  subscribes again.
+- **The local copy.** The subscription materializes a `communities` row marked
+  as Link, with its origin, under the genesis name or, if a local Community has
+  it, #671's suffixed one. Screens show the linked marker (§3.5, issue #1104)
+  and the origin's label. The origin's defaults are stored on the copy and its
+  SysOp may edit them; an edit is local. Carried members go into the copy as
+  they are carried, and already-carried members with no Community move in when
+  the subscription starts. A member a SysOp files under a Community has been
+  placed locally (`community_placed_locally`), and no later membership list
+  moves it, in or out. A member moving in drops the explicit level 0 a carried
+  board or file area is given when its genesis names no level, so it inherits
+  the Community's defaults. A member the origin removes moves back out and
+  stays carried.
+- **Closure.** A carrier keeps every member. Its copy becomes a plain local
+  Community, marked as closed at its origin, which its SysOp may keep or
+  delete; an offer of a closed Community is withdrawn.
+
+Transfer of a Community's origin, Link-blanket and Community-blanket moderator
+grants, following a Community, and linking doors remain unbuilt (§16, issue
+#1308, "Not done").
 
 ### 6.6 Activity, unread state, follows, and search (issue #56)
 
@@ -4850,6 +4950,13 @@ NFC normalization every string field receives — never case-folded the way
 local login/uniqueness lookups are, since a signed event fixes one exact
 string forever, not a case-insensitive equivalence class.
 
+`local_user_id` is immutable *per event*, not per account: a home node may
+rename an account (§4.3, issue #1111). An event keeps the name it was signed
+under. Once a peer has learned `old -> new` for a node (§4.4), an event newly
+signed as `old@node` -- its `created_at` at or after the rename -- is refused as
+a retired identity (`link_policy_retired_identity`) and logged for the SysOp;
+names are retired at home, so an honest node never signs one.
+
 ### 7.4 Immutable content and state-changing chains
 
 There are two event classes.
@@ -4966,9 +5073,11 @@ A descriptor also lists `capabilities`: the optional Link behaviours the
 signing node's code understands (issue #669). A peer uses such a behaviour only
 with a node that advertises it; a descriptor without the list advertises
 nothing. It describes the software, not a setting, so every descriptor a given
-version signs carries the same list. Two exist: `inventory_not_carried` (issue
-#669) and `inventory_pages` (issue #685), both for signed `InventoryRequest`
-fields (§8.8).
+version signs carries the same list. Among them are `inventory_not_carried`
+(issue #669) and `inventory_pages` (issue #685), both for signed
+`InventoryRequest` fields (§8.8), and `link_communities` (issue #1308): the node
+understands Link Communities (§6.5) -- their three event types and the
+request's `communities` map -- and is the only kind of peer they are sent to.
 
 A descriptor may also carry `dial_in`: up to four URLs at which a *caller*
 reaches the signing board, as opposed to the Link `addresses` a node dials
@@ -5174,7 +5283,8 @@ InventoryRequest {
   channels: { channel_id: [known_content_id, ...], ... },
   file_areas: { area_id: [known_content_id, ...], ... },
   not_carried?: { kind: [resource_id, ...], ... },   // issue #669
-  page?: { index: int, count: int }                  // issue #685
+  page?: { index: int, count: int },                 // issue #685
+  communities?: { community_id: [known_content_id, ...], ... }  // issue #1308
 }
 ```
 
@@ -5191,6 +5301,26 @@ carries (bounded by its own `max_carried_boards` quota, §13.9) mapped
 to that board's full set of content IDs the requester already has for it.
 `channels`/`file_areas` (§9.6, §11) are the identical shape for linked
 channels and linked file-area catalogues respectively.
+
+**Link Communities are a fourth kind (issue #1308, §6.5).** `communities` maps
+every Link Community the requester holds -- promoted there, or a copy it
+subscribes to -- to the community events it has for it: at most a genesis, the
+membership list in force and a closure. It is sent only to a responder
+advertising `link_communities` (§8.2), and is then present even when empty:
+its presence is what tells the responder that the requester understands
+community events, and a responder answers with them only to a request that
+carries it. The responder answers for every Community it promoted or carries,
+and for one whose closure it holds without a copy, so a closure keeps
+travelling; it walks Communities before boards, since they are a few events
+each and must not wait behind a board backlog. `not_carried` gains the kind
+`communities` (an offered, left or deleted Community, or a closed one with no
+copy), named only to the same responders, and `wanted` covers declared
+community events with the usual rule: a Community seen and not carried wants
+nothing, one never seen wants everything. The requester pushes its own
+community events only to a peer advertising the capability. The map is paged
+with the rest. An older node never relays community events (§7.5 relays an
+unknown type only under a board it carries), so a node's Communities reach its
+upgraded peers and theirs.
 
 **A declaration too large for one request is sent in pages (issue #685).** The
 quotas bound the keys, not the history under them. At about 30,000 held content
@@ -6458,6 +6588,14 @@ all characters of its own id, whichever is free first (issue #671); the SysOp
 can rename it like any carried resource, and peers keep seeing the genesis
 name. Only with every candidate taken is it refused, as the cap refuses.
 
+A Link Community (§6.5, issue #1308) is a fourth carry-decision kind with one
+difference: its genesis is always offered, never carried on arrival, since
+subscribing is a standing rule about future content. Accepting the offer
+subscribes, and the subscription then accepts the members its lists name
+within these same caps, as described in §6.5. Leaving a Community -- deleting
+its copy -- records it excluded like any resource; there is nothing to hide,
+since a Community holds no content of its own.
+
 Origin recommendations never override the carrying node’s local access,
 moderation, retention, or legal policy. Two origin settings are not
 recommendations but authority, binding on every carrying node: closure
@@ -7453,6 +7591,32 @@ reporter; establishing an identity locally is an override. A node does not
 vouch for itself or for its own users: the home node is the one party that
 cannot be independent of them, and what such a statement should mean is not
 decided.
+
+**A renamed user** (issue #1111). When a peer learns from a node's descriptor
+that the node renamed `old` to `new` (§4.4), `new@node` takes the old
+subject's state: overrides, quarantine and block states, signals, vouches,
+local observations, activity days and probation age. A rename neither launders
+a block nor resets probation. Whatever is recorded or asked about the old name
+afterwards is the new name's. A peer accepts a rename only when it grants the
+home node nothing it does not already have -- a home node speaks for its users
+-- and refuses two kinds, each logged for the SysOp and never shown to callers:
+
+- **A merge.** An entry whose new name this node already holds as a separate
+  subject with history from *before* the entry's `at` would merge two users.
+  History from `at` onwards is the renamed user's own (the same home node signs
+  it, and it can arrive before the notice does), so an honest rename noticed
+  late is never refused for it.
+- **A rename back** to a name the same node renamed away from earlier: names
+  are retired at home, so an honest node never does this. Together with the
+  first rule this keeps chains acyclic.
+
+A node could backdate `at` to slip past the merge test, so when both names
+already carry state the stricter of each kind stays: of two active overrides
+on a dimension the stricter is kept and the other cleared, a quarantine or
+block on either side stays, and a quarantine in its recovery hold keeps its
+hold. A rename can never lift a restriction. Attestations a peer received
+about the old name are not moved; the issuer revokes them and issues them
+again under the new name.
 
 ### 12.5 Evidence classes and attribution
 

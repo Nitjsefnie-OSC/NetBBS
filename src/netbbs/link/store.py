@@ -44,6 +44,9 @@ from netbbs.link.events import (
     BOARD_POST_MODERATOR_EDIT_OBJECT_TYPE,
     BOARD_POST_TOMBSTONE_OBJECT_TYPE,
     CHANNEL_GENESIS_OBJECT_TYPE,
+    COMMUNITY_CLOSURE_OBJECT_TYPE,
+    COMMUNITY_GENESIS_OBJECT_TYPE,
+    COMMUNITY_MEMBERS_OBJECT_TYPE,
     FILE_AREA_GENESIS_OBJECT_TYPE,
     KEY_TRANSITION_OBJECT_TYPE,
     BoardClosure,
@@ -56,6 +59,8 @@ from netbbs.link.events import (
     BoardPostTombstone,
     ChannelGenesis,
     ChannelMessage,
+    CommunityClosure,
+    CommunityGenesis,
     EndpointDescriptor,
     FileAreaGenesis,
     FileDescriptor,
@@ -267,6 +272,15 @@ def load_link_node(db: Database, identity: NodeIdentity) -> LinkNode:
             # unconditionally above for every row regardless of type.
             file_area_genesis = FileAreaGenesis.from_dict(envelope)
             node.file_areas[file_area_genesis.payload["area_id"]] = file_area_genesis
+        elif row["object_type"] == COMMUNITY_GENESIS_OBJECT_TYPE:
+            # Issue #1308: a Link Community this node has heard of, carried
+            # or only offered -- what its membership lists and closure are
+            # checked against.
+            community_genesis = CommunityGenesis.from_dict(envelope)
+            node.community_events.record_genesis(community_genesis)
+        elif row["object_type"] == COMMUNITY_CLOSURE_OBJECT_TYPE:
+            community_closure = CommunityClosure.from_dict(envelope)
+            node.community_events.closures[community_closure.payload["community_id"]] = community_closure
 
     for row in db.connection.execute(
         "SELECT link_genesis_json FROM boards WHERE link_genesis_json IS NOT NULL"
@@ -291,6 +305,26 @@ def load_link_node(db: Database, identity: NodeIdentity) -> LinkNode:
     ):
         file_area_genesis = FileAreaGenesis.from_dict(json.loads(row["link_genesis_json"]))
         node.file_areas[file_area_genesis.payload["area_id"]] = file_area_genesis
+
+    # Issue #1308: Communities promoted here (or carried) keep their genesis,
+    # this node's own latest membership list and a closure on the row.
+    for row in db.connection.execute(
+        "SELECT link_genesis_json, link_members_json, link_closure_json FROM communities "
+        "WHERE link_genesis_json IS NOT NULL"
+    ):
+        community_genesis = CommunityGenesis.from_dict(json.loads(row["link_genesis_json"]))
+        node.community_events.record_genesis(community_genesis)
+        node.known_event_ids.add(community_genesis.content_id)
+        node.events[community_genesis.content_id] = community_genesis.to_dict()
+        if row["link_members_json"] is not None:
+            raw = json.loads(row["link_members_json"])
+            node.known_event_ids.add(event_content_id(raw["envelope"]))
+            node.events[event_content_id(raw["envelope"])] = raw
+        if row["link_closure_json"] is not None:
+            community_closure = CommunityClosure.from_dict(json.loads(row["link_closure_json"]))
+            node.community_events.closures[community_closure.payload["community_id"]] = community_closure
+            node.known_event_ids.add(community_closure.content_id)
+            node.events[community_closure.content_id] = community_closure.to_dict()
 
     for row in db.connection.execute(
         "SELECT link_event_json FROM posts "
@@ -515,6 +549,10 @@ def save_peer(db: Database, peer: PeerRecord, *, direct_contact: bool = True) ->
     from netbbs.link.node_profiles import recheck_introduced_identities_against
 
     recheck_introduced_identities_against(db, peer)
+    # Issue #1306: the renames its verified descriptor announces.
+    from netbbs.link.user_renames import learn_user_renames
+
+    learn_user_renames(db, peer.fingerprint, peer.descriptor.payload)
 
 
 def introduced_by(db: Database, fingerprint: str) -> str | None:
@@ -576,6 +614,11 @@ def save_introduced_identity(db: Database, record: PeerRecord, *, introduced_by:
     db.connection.commit()
     ensure_node_subject(db, record.fingerprint)
     _displace_oldest_introduced_identities(db)
+    # Issue #1306: an introduction carries the node's descriptor, and with it
+    # the renames it announces.
+    from netbbs.link.user_renames import learn_user_renames
+
+    learn_user_renames(db, record.fingerprint, record.descriptor.payload)
 
 
 def _displace_oldest_introduced_identities(db: Database) -> None:
@@ -649,6 +692,11 @@ _BOARD_SCOPED_OBJECT_TYPES = frozenset(
 )
 
 
+_COMMUNITY_OBJECT_TYPES = frozenset(
+    {COMMUNITY_GENESIS_OBJECT_TYPE, COMMUNITY_MEMBERS_OBJECT_TYPE, COMMUNITY_CLOSURE_OBJECT_TYPE}
+)
+
+
 def save_event(
     db: Database, *, sender_fingerprint: str, content_id: str, object_type: str, envelope: dict,
     commit: bool = True,
@@ -700,16 +748,23 @@ def save_event(
     file_area_id = (
         envelope["envelope"]["payload"].get("area_id") if object_type == FILE_AREA_GENESIS_OBJECT_TYPE else None
     )
+    # Issue #1308: the three community event types are filed by Community.
+    community_id = (
+        envelope["envelope"]["payload"].get("community_id") if object_type in _COMMUNITY_OBJECT_TYPES else None
+    )
     now = utc_now_iso()
     db.connection.execute(
         """
         INSERT INTO link_events
             (content_id, sender_fingerprint, object_type, envelope_json, received_at,
-             board_id, channel_id, file_area_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             board_id, channel_id, file_area_id, community_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(content_id) DO NOTHING
         """,
-        (content_id, sender_fingerprint, object_type, json.dumps(envelope), now, board_id, channel_id, file_area_id),
+        (
+            content_id, sender_fingerprint, object_type, json.dumps(envelope), now, board_id, channel_id,
+            file_area_id, community_id,
+        ),
     )
     # Issue #683: `commit=False` lets `netbbs.link.carry` write this and the
     # carry decision it belongs with in one transaction.
@@ -853,6 +908,13 @@ def uncarried_resource_ids(db: Database) -> dict[str, tuple[str, ...]]:
          "SELECT area_id FROM file_areas WHERE link_genesis_json IS NOT NULL AND link_hidden_at IS NULL"),
     )
     result: dict[str, tuple[str, ...]] = {}
+    # Issue #1308: a Link Community held without a local copy -- offered,
+    # excluded (left), or deleted here -- is not carried either. A closed one
+    # this node has no copy of stays declared too: nothing more can come for it.
+    queries += (
+        ("communities", "community_id", COMMUNITY_GENESIS_OBJECT_TYPE,
+         "SELECT link_id FROM communities WHERE link_id IS NOT NULL AND link_genesis_json IS NOT NULL"),
+    )
     for kind, column, object_type, local_ids in queries:
         rows = db.connection.execute(
             f"""SELECT DISTINCT {column} AS resource_id FROM link_events
@@ -1094,6 +1156,7 @@ def build_inventory_request(
     declare_not_carried: bool = False,
     paged: bool = False,
     page_cursor: int = 0,
+    include_communities: bool = False,
 ) -> InventoryRequest:
     """
     This node's own `InventoryRequest` to send as requester (design doc
@@ -1165,17 +1228,33 @@ def build_inventory_request(
     # and refused on every pass. A responder walks the union of what is
     # requested and what it carries, so a resource it has never heard of costs
     # it nothing.
+    # Issue #1308: the Link Communities this node holds, only for a responder
+    # advertising `LINK_COMMUNITIES_CAPABILITY` -- the map, even empty, is what
+    # tells it this node understands community events.
+    communities: dict[str, tuple[str, ...]] | None = (
+        {community_id: tuple(i for i in _all_community_events(db, community_id) if i not in stale)
+         for community_id in served_community_ids(db)}
+        if include_inventory and include_communities else ({} if include_communities else None)
+    )
     if include_inventory:
-        for kind, mapping in (("boards", boards), ("channels", channels), ("file_areas", file_areas)):
+        kinds = [("boards", boards), ("channels", channels), ("file_areas", file_areas)]
+        if communities is not None:
+            kinds.append(("communities", communities))
+        for kind, mapping in kinds:
             for resource_id, content_ids in (also_declare or {}).get(kind, {}).items():
                 mapping[resource_id] = tuple(
                     dict.fromkeys([*mapping.get(resource_id, ()), *sorted(content_ids)])
                 )
     not_carried = uncarried_resource_ids(db) if include_inventory and declare_not_carried else {}
+    if communities is None:
+        # Never named to a responder that would refuse the unknown kind.
+        not_carried.pop("communities", None)
     created_at = utc_now_iso()
     nonce = secrets.token_hex(16)
     page: tuple[int, int] | None = None
-    count = inventory_page_count(boards, channels, file_areas, not_carried if paged else {})
+    count = inventory_page_count(
+        boards, channels, file_areas, not_carried if paged else {}, communities=communities or {},
+    )
     if paged:
         # Enough pages that each one's share of `not_carried` stays well under
         # the sampling cap: then every page declares its whole share, and the
@@ -1189,6 +1268,11 @@ def build_inventory_request(
              for resource_id, ids in mapping.items()}
             for mapping in (boards, channels, file_areas)
         )
+        if communities is not None:
+            communities = {
+                community_id: tuple(i for i in ids if inventory_page(i, count, nonce) == index)
+                for community_id, ids in communities.items()
+            }
         if paged:
             page = (index, count)
             not_carried = {
@@ -1205,6 +1289,7 @@ def build_inventory_request(
         boards=boards, channels=channels, file_areas=file_areas,
         not_carried=not_carried,
         page=page,
+        communities=communities,
     )
     return InventoryRequest(
         requester_fingerprint=requester_fingerprint,
@@ -1215,6 +1300,7 @@ def build_inventory_request(
         boards=boards, channels=channels, file_areas=file_areas,
         not_carried=not_carried,
         page=page,
+        communities=communities,
     )
 
 
@@ -1232,13 +1318,14 @@ def inventory_page_count(
     not_carried: dict[str, tuple[str, ...]],
     *,
     budget: int | None = None,
+    communities: dict[str, tuple[str, ...]] | None = None,
 ) -> int:
     """How many pages a declaration needs to stay inside `budget` bytes each:
     every ID as it is serialized, quoted and comma-separated."""
     budget = budget or INVENTORY_DECLARATION_BUDGET_BYTES
     size = sum(
         len(i) + 4
-        for mapping in (boards, channels, file_areas, not_carried)
+        for mapping in (boards, channels, file_areas, not_carried, communities or {})
         for ids in mapping.values()
         for i in ids
     )
@@ -1274,14 +1361,15 @@ def record_stale_copy_changes(db: Database, *, marked: dict[str, str], refreshed
             (json.dumps(raw), content_id),
         )
         envelope = raw["envelope"]
-        for object_type, table, key in (
-            (BOARD_GENESIS_OBJECT_TYPE, "boards", "board_id"),
-            (CHANNEL_GENESIS_OBJECT_TYPE, "channels", "channel_id"),
-            (FILE_AREA_GENESIS_OBJECT_TYPE, "file_areas", "area_id"),
+        for object_type, table, column, key in (
+            (BOARD_GENESIS_OBJECT_TYPE, "boards", "board_id", "board_id"),
+            (CHANNEL_GENESIS_OBJECT_TYPE, "channels", "channel_id", "channel_id"),
+            (FILE_AREA_GENESIS_OBJECT_TYPE, "file_areas", "area_id", "area_id"),
+            (COMMUNITY_GENESIS_OBJECT_TYPE, "communities", "link_id", "community_id"),
         ):
             if envelope.get("object_type") == object_type:
                 db.connection.execute(
-                    f"UPDATE {table} SET link_genesis_json = ? WHERE {key} = ? AND link_genesis_json IS NOT NULL",
+                    f"UPDATE {table} SET link_genesis_json = ? WHERE {column} = ? AND link_genesis_json IS NOT NULL",
                     (json.dumps(raw), envelope["payload"][key]),
                 )
     db.connection.commit()
@@ -1626,6 +1714,100 @@ def file_area_event_diff(
         limit=limit, not_carried=not_carried, page=page, page_salt=page_salt,
         withheld=stale_content_ids(db),
     )
+
+
+def served_community_ids(db: Database) -> list[str]:
+    """Issue #1308: every Link Community this node answers for in inventory:
+    one it promoted or carries a copy of, and one whose closure it holds
+    without a copy (an origin that unlinked or deleted its Community, or a
+    carrier that let a closed copy go), so a closure keeps travelling."""
+    ids = {
+        row["link_id"]
+        for row in db.connection.execute(
+            "SELECT link_id FROM communities WHERE link_id IS NOT NULL AND link_genesis_json IS NOT NULL"
+        )
+    }
+    ids |= {
+        row["community_id"]
+        for row in db.connection.execute(
+            "SELECT DISTINCT community_id FROM link_events WHERE object_type = ? AND community_id IS NOT NULL",
+            (COMMUNITY_CLOSURE_OBJECT_TYPE,),
+        )
+    }
+    return sorted(ids)
+
+
+def _all_community_events(db: Database, community_id: str) -> dict[str, dict]:
+    """Issue #1308: every community event this node holds for
+    `community_id`: the genesis, the membership list in force and a closure --
+    from the Community's row (its own, when promoted here) and from
+    `link_events` (received). Superseded membership lists are not kept
+    (`netbbs.link.communities.store_received_members`), so this is at most
+    three events, plus the copies a row and `link_events` share."""
+    events: dict[str, dict] = {}
+    row = db.connection.execute(
+        "SELECT link_genesis_json, link_members_json, link_closure_json FROM communities WHERE link_id = ?",
+        (community_id,),
+    ).fetchone()
+    if row is not None:
+        for column in ("link_genesis_json", "link_members_json", "link_closure_json"):
+            if row[column] is not None:
+                raw = json.loads(row[column])
+                events[event_content_id(raw["envelope"])] = raw
+    for event_row in db.connection.execute(
+        "SELECT content_id, envelope_json FROM link_events WHERE community_id = ? ORDER BY received_at ASC",
+        (community_id,),
+    ):
+        events.setdefault(event_row["content_id"], json.loads(event_row["envelope_json"]))
+    return events
+
+
+def community_event_diff(
+    db: Database,
+    requested_communities: dict[str, list[str]],
+    *,
+    limit: int,
+    not_carried: tuple[str, ...] = (),
+    page: tuple[int, int] | None = None,
+    page_salt: str = "",
+) -> tuple[list[dict], bool]:
+    """Issue #1308: `board_event_diff` for Link Communities -- the community
+    events this node holds that the requester did not declare, for every
+    Community this node answers for (`served_community_ids`) and every one the
+    requester declared, less what it declared as not carried. An absent
+    Community is one the requester has never seen, so it is sent whole: that
+    is how a Community reaches the offered list. Only ever called for a
+    request carrying the `communities` map."""
+    served = served_community_ids(db)
+    served_set = set(served)
+    return _resource_event_diff(
+        requested_communities, served,
+        lambda community_id: _all_community_events(db, community_id) if community_id in served_set else {},
+        limit=limit, not_carried=not_carried, page=page, page_salt=page_salt,
+        withheld=stale_content_ids(db),
+    )
+
+
+def community_wanted_ids(db: Database, requested_communities: dict[str, list[str]]) -> list[str]:
+    """Issue #1308: the community events the requester declared that this
+    node does not hold -- `inventory_wanted_ids` for the fourth kind, with the
+    same rule: a Community seen and not carried here (offered, left, deleted)
+    wants nothing; one never seen wants everything declared for it, which is
+    how an origin's push delivers a Community to a peer that never dials it."""
+    wanted: list[str] = []
+    served = set(served_community_ids(db))
+    stale = stale_content_ids(db)
+    for community_id in sorted(requested_communities):
+        if community_id in served:
+            held = set(_all_community_events(db, community_id)) - stale
+        else:
+            if _accepted_ids_for_resource(db, "community_id", community_id):
+                continue  # Seen and not carried.
+            held = set()
+        for content_id in requested_communities[community_id]:
+            if content_id not in held and content_id not in wanted:
+                wanted.append(content_id)
+    return wanted
 
 
 def inventory_wanted_ids(

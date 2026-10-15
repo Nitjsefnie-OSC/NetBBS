@@ -214,6 +214,12 @@ def create_board(
                 community_id,
             ),
         )
+        if community_id is not None:
+            # Issue #1310: filed by whoever created it, so a Link Community's
+            # membership list never moves it.
+            db.connection.execute(
+                "UPDATE boards SET community_placed_locally = 1 WHERE board_id = ?", (board_id,)
+            )
         if allow_color:
             # Set apart from the INSERT, which stays valid on every schema
             # a board can be created on.
@@ -433,13 +439,17 @@ def update_board(
             UPDATE boards
             SET name = ?, description = ?, min_read_level = ?, min_write_level = ?,
                 category_id = ?, pinned = ?, moderated = ?, max_post_age_days = ?,
-                min_age = ?, name_requirement = ?, community_id = ?, allow_color = ?
+                min_age = ?, name_requirement = ?,
+                -- Issue #1308: a SysOp who changes the Community has placed it;
+                -- a Link Community's membership list never moves it again.
+                community_placed_locally = CASE WHEN community_id IS ? THEN community_placed_locally ELSE 1 END,
+                community_id = ?, allow_color = ?
             WHERE id = ?
             """,
             (
                 name, description, min_read_level, min_write_level,
                 category_id, int(pinned), int(moderated), max_post_age_days,
-                min_age, name_requirement, community_id, int(allow_color), board.id,
+                min_age, name_requirement, community_id, community_id, int(allow_color), board.id,
             ),
         )
         if age_requirement is not UNCHANGED:

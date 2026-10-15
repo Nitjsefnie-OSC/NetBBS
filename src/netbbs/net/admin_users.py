@@ -181,6 +181,8 @@ from netbbs.net.admin_fields import (
     _resolve_redraw_preference,
 )
 from netbbs.net.admin_trust import _retired_usernames_screen
+from netbbs.net.admin_renames import rename_account_directly, username_requests_screen
+from netbbs.auth.renames import count_open_username_requests, open_username_request, username_history
 from netbbs.net.admin_sessions import _request_live_access_recheck, _revoke_live_sessions
 from netbbs.net.admin_boards import _board_detail_screen
 from netbbs.net.admin_files import _area_detail_screen
@@ -251,6 +253,7 @@ async def _users_menu(
             "total": total,
             "active": active,
             "pending": pending,
+            "name_requests": count_open_username_requests(db),
             "disabled": disabled,
             "sysops": sysops,
             "description_level": menu_description_level(db, actor),
@@ -313,11 +316,19 @@ async def _users_menu(
             await _retired_usernames_screen(session, lane, actor)
             stats = await lane.run(_load_stats)
             await _draw_users_menu(session, stats=stats)
+        elif choice == "n":
+            # Issue #1306: callers' requests for a new username, beside the
+            # pending registrations.
+            await session.write_line("")
+            await username_requests_screen(session, lane, actor, node_controls)
+            stats = await lane.run(_load_stats)
+            await _draw_users_menu(session, stats=stats)
         elif choice == HELP_KEY:
             await show_menu_help(
                 session, "Users help", _users_menu_entries(),
                 about="Every action on user accounts: creating and finding them, their levels, "
-                      "who may sign up, and the names deleted accounts still hold.",
+                      "who may sign up, callers' requests for a new username, and the names "
+                      "deleted and renamed accounts still hold.",
                 header_color=stats["header_color"], unicode_style=stats["unicode_style"],
             )
             await _draw_users_menu(session, stats=stats)
@@ -336,7 +347,8 @@ def _users_menu_entries() -> list[MenuEntry]:
         MenuEntry(label=menu_key("A", "uto-promotion rules"), brief="Raise new accounts automatically"),
         MenuEntry(label=menu_key("E", "nable/disable"), brief="Toggle account access"),
         MenuEntry(label=menu_key("D", "elete user"), brief="Permanently remove a user"),
-        MenuEntry(label=menu_key("H", "eld names"), brief="Names held for deleted accounts"),
+        MenuEntry(label=menu_key("N", "ame requests"), brief="Callers asking for a new username"),
+        MenuEntry(label=menu_key("H", "eld names"), brief="Names held after delete or rename"),
         MenuEntry(label=menu_key("B", "ack"), brief="Return to the SysOp console"),
     ]
 
@@ -792,6 +804,13 @@ async def _promotion_rules_screen(session: Session, lane: DatabaseLane, actor: U
             start = rule.from_level
 
 
+def _name_request_sentence(count: int, unicode_style: bool) -> str:
+    """The Users panel's line for callers waiting on a new username (issue
+    #1306), beside the registrations awaiting review."""
+    prefix = "⚠ " if unicode_style else "! "
+    return f"{prefix}{count} name request{'s' if count != 1 else ''} awaiting review ([N]ame requests)"
+
+
 async def _draw_users_menu(session: Session, *, stats: dict[str, Any]) -> None:
     unicode_style = stats["unicode_style"]
     collapsed = stats["collapsed"]
@@ -857,6 +876,14 @@ async def _draw_users_menu(session: Session, *, stats: dict[str, Any]) -> None:
                     prefix="  ", width=box_inner_width, unicode_style=unicode_style,
                 )
                 panel.extend("  " + colored(line, fg_color=WARNING_COLOR, bold=True) for line in warning_lines)
+            if stats.get("name_requests"):
+                panel.extend(
+                    "  " + colored(line, fg_color=WARNING_COLOR, bold=True)
+                    for line in _wrap_panel_sentence(
+                        _name_request_sentence(stats["name_requests"], unicode_style),
+                        prefix="  ", width=box_inner_width, unicode_style=unicode_style,
+                    )
+                )
         else:
             panel = [
                 colored("ACCOUNTS", fg_color=LABEL_COLOR, bold=True),
@@ -883,6 +910,12 @@ async def _draw_users_menu(session: Session, *, stats: dict[str, Any]) -> None:
                         f"{warning_prefix}{stats['pending']} registration{'s' if stats['pending'] != 1 else ''} awaiting review",
                         fg_color=WARNING_COLOR,
                         bold=True,
+                    )
+                )
+            if stats.get("name_requests"):
+                panel.append(
+                    "  " + colored(
+                        _name_request_sentence(stats["name_requests"], unicode_style), fg_color=WARNING_COLOR, bold=True,
                     )
                 )
 
@@ -1516,6 +1549,23 @@ async def _draw_user_detail(
         ),
         _grants_field(await lane.run(_grant_summaries, target)),
     ], paired=True))
+    # Issue #1306: the names this account went by, and the one it asks for.
+    # Only when there is something to say, so the usual screen keeps its rows.
+    former = await lane.run(username_history, target)
+    asking = await lane.run(open_username_request, target)
+    if former or asking is not None:
+        renames: list[Field] = []
+        if former:
+            renames.append(Field(
+                "Formerly", ", ".join(sanitize_text(change.old_username) for change in former),
+                color=METADATA_COLOR,
+            ))
+        if asking is not None:
+            renames.append(Field(
+                "Asks to be renamed", f"to {sanitize_text(asking.requested_username)} (Users > Name requests)",
+                color=WARNING_COLOR,
+            ))
+        sections.append(Section(None, renames, paired=True))
     # Issue #835 (F072): what the caller said when signing up, for whoever
     # decides on the account. Typed by an unauthenticated caller, so
     # sanitized like any other remote text. Read-only, so below the fields.
@@ -1539,6 +1589,8 @@ async def _draw_user_detail(
         options.append(MenuEntry(label=menu_key("T", "oggle enable/disabled"), brief="Enable or disable this account"))
     if "n" in offered:
         options.append(MenuEntry(label=menu_key("N", "ame"), brief="Correct or clear the display name"))
+    if "c" in offered:
+        options.append(MenuEntry(label=menu_key("C", "hange username"), brief="Rename this account"))
     if "w" in offered:
         options.append(MenuEntry(label=menu_key("W", "hen born"), brief="Correct or clear the birthdate"))
     if "e" in offered:
@@ -1590,8 +1642,10 @@ async def _draw_user_detail(
 _USER_DETAIL_FIELD_ORDER = ("l", "t", "r", "n", "w", "k", "p", "s", "i", "u")
 
 
-#: Every action key on the account detail -- what a SysOp gets.
-_ALL_USER_DETAIL_KEYS = frozenset("alutrnwkpsihdve")
+#: Every action key on the account detail -- what a SysOp gets. `c`,
+#: renaming the account (issue #1306), is a SysOp's alone, as deleting is:
+#: both retire a name.
+_ALL_USER_DETAIL_KEYS = frozenset("alutrnwkpsihdvec")
 
 
 def _auto_promotion_label(target: User, kept: str | None) -> str:
@@ -2244,6 +2298,13 @@ async def _user_detail_screen(
                 blocked = await _redraw()
             elif choice in ("n", "w"):
                 await _edit_account_detail(session, lane, actor, target, choice, run_read=_edit_in_place(choice))
+                blocked = await _redraw()
+            elif choice == "c":
+                # Issue #1306 (design doc §16 #1111 Decision 1): for what does
+                # not start with the caller -- a name chosen to offend, a
+                # support request by mail.
+                await session.write_line("")
+                target = await rename_account_directly(session, lane, actor, target, node_controls)
                 blocked = await _redraw()
             elif choice == "v":
                 await session.write_line("")
