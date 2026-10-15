@@ -84,7 +84,7 @@ def test_unlink_closes_it_and_keeps_it_local(db, lane, sysop):
     (genesis, _members) = promote_community(db, community.id, node_identity=link_context.node_identity)
     link_id = genesis["envelope"]["payload"]["community_id"]
 
-    session = FakeSession(["m", "t", "l", "0", "1", "l", "y", "b", "b", "b", "b", "b"])
+    session = FakeSession(["m", "t", "l", "0", "1", "c", "y", "b", "b", "b", "b", "b"])
     asyncio.run(admin_menu(session, lane, sysop, link_context=link_context))
 
     assert "'Pen Talk' unlinked" in _written_text(session)

@@ -693,7 +693,7 @@ async def _community_screen(
                 ))
             elif link.own and not link.closed:
                 actions.append(DetailAction(
-                    "l", menu_key("l", "ink", prefix="Un"), _unlink, brief="Close it on every node that carries it",
+                    "c", menu_key("C", "lose on Link"), _unlink, brief="Ends it on every carrying node",
                 ))
         header = colored(" · ".join(header_bits), fg_color=MUTED_COLOR)
         return DetailState(

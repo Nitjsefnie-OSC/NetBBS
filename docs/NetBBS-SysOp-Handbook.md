@@ -1585,7 +1585,7 @@ one. Open it under **Content ▸ Topics ▸ List** and press
 - The Community's screen shows its **NetBBS Link** section: whether it is
   Linked and how many members it lists.
 
-<kbd>L</kbd> **Unlink** closes it on every node that carries it, for good.
+<kbd>C</kbd> **Close on Link** closes it on every node that carries it, for good.
 They keep every board, channel and file area they carry from it; their copy
 becomes an ordinary Community there. It stays here as a local Community, and you
 can link it again later as a new one. <kbd>R</kbd> **Remove** on a Linked
