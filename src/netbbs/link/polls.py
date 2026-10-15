@@ -48,6 +48,7 @@ from netbbs.link.events import (
     build_board_poll_vote,
 )
 from netbbs.link.node_identity import NodeIdentity
+from netbbs.link.user_renames import current_user_name, former_user_names, is_retired_identity
 from netbbs.storage.database import Database
 from netbbs.timeutil import parse_utc_iso, utc_now_iso
 
@@ -209,12 +210,26 @@ def _project_without_commit(db: Database, vote: BoardPollVote, root_post_id: str
     whether the vote's signed bytes are kept."""
     payload = vote.payload
     author = payload["author"]
-    home, voter = author["home_node_fingerprint"], author["local_user_id"]
-    existing = db.connection.execute(
-        "SELECT id, voted_at, event_id FROM board_poll_votes "
-        "WHERE root_post_id = ? AND home_node_fingerprint = ? AND remote_user_id = ?",
-        (root_post_id, home, voter),
-    ).fetchone()
+    home = author["home_node_fingerprint"]
+    # Issue #1306: a voter renamed on their home node is one person. Their
+    # vote is kept under the name they go by now, replacing one kept under a
+    # former name, so the latest wins across both.
+    voter = current_user_name(db, home, author["local_user_id"])
+    names = [voter, *former_user_names(db, home, voter)]
+    marks = ",".join("?" * len(names))
+    same_voter = db.connection.execute(
+        f"SELECT id, voted_at, event_id FROM board_poll_votes "
+        f"WHERE root_post_id = ? AND home_node_fingerprint = ? AND remote_user_id IN ({marks}) ORDER BY id",
+        (root_post_id, home, *names),
+    ).fetchall()
+    existing = None
+    for row in same_voter:
+        if existing is None or _row_order(row) > _row_order(existing):
+            if existing is not None:
+                _drop_row_without_commit(db, existing)
+            existing = row
+        else:
+            _drop_row_without_commit(db, row)
     choices = json.dumps(sorted(payload["choices"]))
     if existing is not None:
         if existing["event_id"] == vote.content_id:
@@ -231,8 +246,8 @@ def _project_without_commit(db: Database, vote: BoardPollVote, root_post_id: str
             db.connection.execute("DELETE FROM link_events WHERE content_id = ?", (vote.content_id,))
             return False
         db.connection.execute(
-            "UPDATE board_poll_votes SET choices = ?, voted_at = ?, event_id = ? WHERE id = ?",
-            (choices, payload["created_at"], vote.content_id, existing["id"]),
+            "UPDATE board_poll_votes SET choices = ?, voted_at = ?, event_id = ?, remote_user_id = ? WHERE id = ?",
+            (choices, payload["created_at"], vote.content_id, voter, existing["id"]),
         )
         if existing["event_id"]:
             db.connection.execute("DELETE FROM link_events WHERE content_id = ?", (existing["event_id"],))
@@ -254,6 +269,21 @@ def _project_without_commit(db: Database, vote: BoardPollVote, root_post_id: str
         )
     _keep_event_without_commit(db, vote, sender_fingerprint)
     return True
+
+
+def _row_order(row) -> tuple:
+    try:
+        return parse_utc_iso(row["voted_at"]), row["event_id"] or ""
+    except ValueError:
+        return parse_utc_iso("1970-01-01T00:00:00Z"), row["event_id"] or ""
+
+
+def _drop_row_without_commit(db: Database, row) -> None:
+    """A voter's older vote under another of their names goes, with its
+    signed bytes, as a replaced vote's do."""
+    db.connection.execute("DELETE FROM board_poll_votes WHERE id = ?", (row["id"],))
+    if row["event_id"]:
+        db.connection.execute("DELETE FROM link_events WHERE content_id = ?", (row["event_id"],))
 
 
 def _poll_for_link_root(db: Database, link_root_id: str) -> str | None:
@@ -282,6 +312,11 @@ def materialize_carried_board_poll_vote(
     if own_fingerprint is not None and payload["author"]["home_node_fingerprint"] == own_fingerprint:
         return False
     if not _posting_allows(db, board_row, payload, is_reply=True):
+        return False
+    author = payload["author"]
+    if is_retired_identity(db, author["home_node_fingerprint"], author["local_user_id"], payload.get("created_at")):
+        # Issue #1306: signed under a name its home node had already renamed
+        # away from -- refused as any new content under a retired name is.
         return False
     root_post_id = _poll_for_link_root(db, payload["root_post_id"])
     if root_post_id is None:

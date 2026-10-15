@@ -437,3 +437,76 @@ def test_a_linked_poll_tells_the_caller_their_vote_is_shared(net):
 
     assert "Your vote is shared with every BBS that carries this board." in " ".join(session.visible().split())
     assert "[N]ew poll" in session.screens()[0]
+
+
+# -- a voter renamed on their home node (issue #1306) -------------------------------
+
+
+def _ago(**delta):
+    from datetime import datetime, timedelta, timezone
+
+    from netbbs.timeutil import utc_iso
+
+    return utc_iso(datetime.now(timezone.utc) - timedelta(**delta))
+
+
+def _learn_rename(net, old, new, *, at):
+    from netbbs.link.user_renames import learn_user_renames
+
+    learned = learn_user_renames(
+        net.origin.db, net.carrier.fingerprint, {"user_renames": [{"from": old, "to": new, "at": at}]},
+    )
+    assert learned
+
+
+def test_a_renamed_voter_keeps_one_vote_the_latest(net):
+    old = net.remote_vote("bob", [0], created_at=_ago(hours=2))
+    net.to_origin(old)
+    _learn_rename(net, "bob", "robert", at=_ago(hours=1))
+    new = net.remote_vote("robert", [1], created_at=_ago(minutes=5))
+
+    net.to_origin(new)
+
+    result = net.origin_tally()
+    assert result.voters == 1 and result.counts == (0, 1) and result.not_counted == 0
+    kept = {row[0] for row in net.origin.db.connection.execute("SELECT content_id FROM link_events")}
+    assert new.content_id in kept and old.content_id not in kept
+
+
+def test_votes_under_both_names_count_once_when_the_rename_is_learned_later(net):
+    net.to_origin(
+        net.remote_vote("bob", [0], created_at=_ago(hours=3)),
+        net.remote_vote("robert", [1], created_at=_ago(minutes=30)),
+    )
+    assert net.origin_tally().voters == 2
+
+    _learn_rename(net, "bob", "robert", at=_ago(hours=2))
+
+    result = net.origin_tally()
+    assert result.voters == 1 and result.counts == (0, 1)
+
+
+def test_the_per_node_cap_counts_a_renamed_voter_once(net):
+    net.to_origin(*[net.remote_vote(f"user{i}", [0]) for i in range(49)])
+    net.to_origin(
+        net.remote_vote("bob", [0], created_at=_ago(hours=3)),
+        net.remote_vote("robert", [1], created_at=_ago(minutes=30)),
+    )
+    _learn_rename(net, "bob", "robert", at=_ago(hours=2))
+
+    result = net.origin_tally()
+    assert result.voters == 50 and result.not_counted == 0
+
+
+def test_a_vote_signed_under_a_name_renamed_away_is_refused(net):
+    _learn_rename(net, "bob", "robert", at=_ago(hours=1))
+    late = net.remote_vote("bob", [0], created_at=_ago(minutes=5))
+
+    accepted = net.o.handle_events(net.carrier.fingerprint, [late.to_dict()])
+    assert not materialize_carried_board_poll_vote(
+        net.origin.db, BoardPollVote.from_dict(late.to_dict()), sender_fingerprint=net.carrier.fingerprint,
+        own_fingerprint=net.origin.fingerprint,
+    )
+    assert accepted == [late.content_id]
+    assert net.origin_tally().voters == 0
+    assert net.origin.db.connection.execute("SELECT COUNT(*) FROM board_poll_votes").fetchone()[0] == 0
