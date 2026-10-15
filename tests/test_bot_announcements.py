@@ -191,7 +191,7 @@ def test_carried_file_arrival_announces_metadata_once_and_download_is_not_a_new_
 
 def test_editor_saves_explicit_source_grants_and_separate_baud_abilities(db, lane, sysop, channel, monkeypatch):
     from netbbs.net import bot_flow
-    from netbbs.net.admin_flow import _load_chrome
+    from netbbs.net.admin_ui import _load_chrome
     from tests.test_bot_runtime import FakeSession
     board = create_board(db, "Public", creator=sysop)
     area = create_file_area(db, "Uploads", creator=sysop)

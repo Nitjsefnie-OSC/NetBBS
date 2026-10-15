@@ -228,7 +228,7 @@ def test_a_refused_mail_is_reported_on_the_review_screen_it_returns_to(db, alice
 
 
 def test_a_flow_given_the_consoles_stand_in_announces_to_the_real_session(db, alice):
-    from netbbs.net.admin_flow import _TrailingOutput, _take_notices
+    from netbbs.net.admin_ui import _TrailingOutput, _take_notices
 
     real = FakeSession([])
     announce(_TrailingOutput(real), "Sent 'game.zip'.")

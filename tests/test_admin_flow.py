@@ -58,6 +58,7 @@ from netbbs.rendering.width import display_width
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
 from tests.test_shutdown import _hold_registered
+from netbbs.net import admin_ui
 
 # Sentinel strings in FakeSession's single scripted-input queue that
 # read_editor_key maps to
@@ -139,7 +140,7 @@ def _announced_text(session: FakeSession) -> str:
     screen, so it reads the queue instead."""
     from netbbs.net import admin_flow
 
-    return _visible("\r\n".join(admin_flow._take_notices(session)))
+    return _visible("\r\n".join(admin_ui._take_notices(session)))
 
 
 def _last_render(text: str, marker: str) -> str:
@@ -1111,7 +1112,7 @@ def test_user_detail_edits_the_level_where_it_is_drawn(db, lane, sysop):
     """With redraw-in-place on, `[L]evel` puts the cursor in the level's value
     and the hint on the `Choice:` row, as a Create/Edit screen does -- no
     "New level for" prompt below the screen (maintainer request)."""
-    from netbbs.net.admin_flow import _EDIT_HINT
+    from netbbs.net.admin_fields import _EDIT_HINT
     from netbbs.net.redraw_preference import set_redraw_in_place_enabled
 
     create_user(db, "alice", password="hunter2", user_level=10)

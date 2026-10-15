@@ -26,6 +26,7 @@ from netbbs.net.redraw_preference import set_redraw_in_place_enabled
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
 from tests.test_detail_view import ScriptedSession, _Exhausted
+from netbbs.net import admin_ui
 
 
 @pytest.fixture
@@ -134,8 +135,8 @@ def test_an_unstyled_outcome_is_coloured_by_what_it_reports():
 
     session = ScriptedSession([])
     for text in ("'General' deleted.", "Cancelled.", "Error: post is locked", "Could not start the service: ENOENT"):
-        admin_flow._announce_line(session, text)
-    deleted, cancelled, error, could_not = admin_flow._take_notices(session)
+        admin_ui._announce_line(session, text)
+    deleted, cancelled, error, could_not = admin_ui._take_notices(session)
     assert fg(SUCCESS_COLOR) in deleted
     assert fg(MUTED_COLOR) in cancelled
     assert fg(ERROR_COLOR) in error and fg(SUCCESS_COLOR) not in error
@@ -146,10 +147,10 @@ def test_an_outcome_never_reaches_another_sessions_console(db, lane, sysop):
     from netbbs.net import admin_flow
 
     first, second = ScriptedSession([]), ScriptedSession([])
-    admin_flow._announce(first, "Created 'Retro'.")
-    assert admin_flow._take_notices(second) == []
-    assert len(admin_flow._take_notices(first)) == 1
-    assert admin_flow._take_notices(first) == []
+    admin_ui._announce(first, "Created 'Retro'.")
+    assert admin_ui._take_notices(second) == []
+    assert len(admin_ui._take_notices(first)) == 1
+    assert admin_ui._take_notices(first) == []
 
 
 # -- found by review of the first cut --------------------------------------------
@@ -175,7 +176,7 @@ def test_a_captured_flow_announces_its_outcome_not_the_screen_it_drew_on_the_way
     from netbbs.rendering import ERROR_COLOR, clear_screen, colored
 
     session = ScriptedSession([])
-    flow = admin_flow._TrailingOutput(session)
+    flow = admin_ui._TrailingOutput(session)
 
     async def failing_download():
         await flow.write_line("\r\n" + clear_screen() + "Node / Files / Uploads / Download")
@@ -184,7 +185,7 @@ def test_a_captured_flow_announces_its_outcome_not_the_screen_it_drew_on_the_way
 
     asyncio.run(failing_download())
     flow.announce_rest()
-    notices = admin_flow._take_notices(session)
+    notices = admin_ui._take_notices(session)
     assert len(notices) == 1 and "Download failed: blob is missing" in notices[0]
     assert clear_screen() not in "".join(notices)
     assert session.written == []  # nothing was written behind the console's back either
@@ -194,7 +195,7 @@ def test_a_captured_flow_still_writes_what_it_said_before_asking_something():
     from netbbs.net import admin_flow
 
     session = ScriptedSession(["y"])
-    flow = admin_flow._TrailingOutput(session)
+    flow = admin_ui._TrailingOutput(session)
 
     async def asks():
         await flow.write_line("Releasing a name starts a cooldown.")
@@ -204,7 +205,7 @@ def test_a_captured_flow_still_writes_what_it_said_before_asking_something():
     asyncio.run(asks())
     assert "Releasing a name starts a cooldown." in "".join(session.written)
     flow.announce_rest()
-    (notice,) = admin_flow._take_notices(session)
+    (notice,) = admin_ui._take_notices(session)
     assert "Released (y)." in notice
 
 

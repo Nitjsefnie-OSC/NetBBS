@@ -13,7 +13,7 @@ from netbbs.chat.channels import create_channel
 from netbbs.link.channels import link_channel
 from netbbs.link.node_identity import bootstrap_node_identity
 from netbbs.net import bot_flow, bot_model_flow
-from netbbs.net.admin_flow import _load_chrome
+from netbbs.net.admin_ui import _load_chrome
 from netbbs.net.chat_flow import _bot_notice_line
 from netbbs.rendering import LINKED_COLOR, MUTED_COLOR, WARNING_COLOR, colored, fg
 from tests.test_bot_runtime import db, lane, sysop, channel  # noqa: F401

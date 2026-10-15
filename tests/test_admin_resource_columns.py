@@ -18,16 +18,18 @@ from netbbs.communities import create_community
 from netbbs.files.areas import create_file_area
 from netbbs.net.admin_flow import (
     _AREA_COLUMNS,
-    _effective_for,
     _BOARD_COLUMNS,
     _CHANNEL_COLUMNS,
     _COMMUNITY_COLUMNS,
-    _area_columns,
     _area_description,
     _board_description,
     _channel_description,
     _community_description,
     _board_columns,
+)
+from netbbs.net.admin_resources import (
+    _effective_for,
+    _area_columns,
     _channel_columns,
     _community_columns,
     _gate_cell,

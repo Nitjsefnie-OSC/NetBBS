@@ -1932,7 +1932,13 @@ def test_number_enter_and_space_use_the_same_field_position(activate):
 
 @pytest.mark.parametrize("kind", ["age", "level", "integer", "float", "optional_text"])
 def test_numeric_and_optional_fields_use_their_displayed_row(kind):
-    from netbbs.net.admin_flow import _min_age_field, _optional_int_field, _int_field, _float_field, _optional_text_field
+    from netbbs.net.admin_flow import _float_field
+    from netbbs.net.admin_fields import (
+        _min_age_field,
+        _optional_int_field,
+        _int_field,
+        _optional_text_field,
+    )
     prompts = {"age": _min_age_field("value"), "level": _optional_int_field("value", "Level"),
                "integer": _int_field("value", "Number"), "float": _float_field("value", label="Weight"),
                "optional_text": _optional_text_field("value")}
@@ -2038,7 +2044,7 @@ def test_off_page_number_draws_its_field_before_reading_even_when_the_form_overf
 
 
 def test_invalid_inline_age_remains_visible_after_redraw_and_does_not_change_the_draft():
-    from netbbs.net.admin_flow import _min_age_field
+    from netbbs.net.admin_fields import _min_age_field
     session = InlineSession(["0", "1", "s"], script=b"\x7f\x7f999\r")
     result = asyncio.run(edit_resource_draft(
         session, None, title="Edit", fields=[FieldSpec("value", "Value", lambda d: str(d["value"]), _min_age_field("value"))],

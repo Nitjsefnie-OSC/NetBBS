@@ -23,6 +23,7 @@ from netbbs.link.trust import (
     register_subject,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu, staff_menu
 from netbbs.net.char_input import HELP_KEY
 from tests.test_admin_flow import FakeSession, _node_controls, _visible, _written_text, db, lane, sysop  # noqa: F401 -- fixtures
@@ -143,7 +144,7 @@ def test_the_pending_file_screen_has_help(db, lane, sysop):
     asyncio.run(admin_flow._file_action_screen(session, lane, sysop, entry, area))
     text = _visible(_written_text(session))
     _assert_help_then_redraw(text, "Pending file help", "waiting for approval", "Publish this pending file")
-    assert "Approved." in _visible("\r\n".join(admin_flow._take_notices(session)))
+    assert "Approved." in _visible("\r\n".join(admin_ui._take_notices(session)))
 
 
 def test_the_expired_file_screen_has_help(db, lane, sysop):

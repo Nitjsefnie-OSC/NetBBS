@@ -14,6 +14,7 @@ from netbbs.auth.users import SYSOP_LEVEL, create_user, set_user_level  # noqa: 
 from netbbs.doors.registry import custom_doors_dir  # noqa: E402
 from netbbs.moderation.log import list_recent_actions  # noqa: E402
 from netbbs.net import admin_flow, zmodem  # noqa: E402
+from netbbs.net import admin_ui
 from netbbs.net.file_transfer import TransferGrants  # noqa: E402
 from netbbs.net.welcome_banner import MAX_BANNER_SIZE_BYTES, banner_path, welcome_banner_status  # noqa: E402
 from netbbs.sysop_uploads import (  # noqa: E402
@@ -240,7 +241,7 @@ def test_a_sysop_link_refuses_more_than_the_target_allows(node, tmp_path):
 def _browser_console(session, *, base_url="https://bbs.example.org") -> TransferGrants:
     session.supports_zmodem = False
     grants = TransferGrants(base_url=base_url)
-    admin_flow._console_transfers[session] = grants
+    admin_ui._console_transfers[session] = grants
     return grants
 
 
@@ -281,7 +282,7 @@ def test_banner_upload_asks_before_replacing_and_no_means_no_link(db, lane, syso
 def test_upload_without_zmodem_or_a_web_listener_says_why(db, lane, sysop):
     session = FakeSession([])
     session.supports_zmodem = False
-    admin_flow._console_transfers.pop(session, None)
+    admin_ui._console_transfers.pop(session, None)
 
     asyncio.run(admin_flow._upload_banner_piece(
         session, lane, sysop, path_of=banner_path, label="the welcome banner",

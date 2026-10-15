@@ -55,12 +55,10 @@ import hashlib
 import json
 import logging
 import math
-import re
 import shlex
 import sqlite3
 import sys
 import threading
-import weakref
 from pathlib import Path
 import dataclasses
 from dataclasses import asdict, dataclass
@@ -86,7 +84,6 @@ from netbbs.access_map import (
     level_ladder,
     list_gates,
 )
-from netbbs.age_requirement import VERIFIED as VERIFIED_AGE
 from netbbs.attestation import (
     AttestationError,
     ProfileFieldError,
@@ -227,11 +224,6 @@ from netbbs.communities import (
     delete_community,
     move_community,
     get_community,
-    get_effective_age_requirement,
-    get_effective_min_age,
-    get_effective_min_read_level,
-    get_effective_min_write_level,
-    get_effective_name_requirement,
     list_communities,
     meets_read_gate,
     update_community,
@@ -260,7 +252,6 @@ from netbbs.config import (
     set_node_display_name,
     set_registration_mode,
 )
-from netbbs.digits import is_ascii_number
 from netbbs.level_names import LevelNameError, get_level_names, level_label, parse_level, set_level_name
 from netbbs.promotion import (
     PromotionRule,
@@ -420,7 +411,6 @@ from netbbs.link.carry import (
     count_carry_decisions,
     mark_carried_reviewed,
     hide_carried_resource,
-    remove_linked_or_local,
     purge_excluded,
     restore_excluded,
     exclude_offer,
@@ -448,7 +438,7 @@ from netbbs.link.node_map import (
 )
 from netbbs.net.node_map_flow import NODE_MAP_COLUMNS, all_carried_names
 from netbbs.net.node_map_flow import exchange_sections as node_map_exchange_sections
-from netbbs.net.node_map_flow import own_content_at_peer, probation_rows
+from netbbs.net.node_map_flow import probation_rows
 from netbbs.net.node_map_flow import utc_now as node_map_now
 from netbbs.net.node_map_flow import map_title as node_map_title
 from netbbs.net.node_map_flow import node_sections as node_map_sections
@@ -596,7 +586,6 @@ from netbbs.moderation.roles import (
     grant_permissions,
     has_permission,
     list_grants_for_community,
-    list_grants_for_object,
     list_grants_for_user,
     revoke_permissions,
 )
@@ -612,12 +601,9 @@ from netbbs.net.char_input import (
 )
 from netbbs.net.confirm import prompt_yes_no
 from netbbs.config import get_max_upload_bytes
-from netbbs.files.storage import new_incoming_temp_path
-from netbbs.net.file_transfer import UPLOAD, install_and_record
 from netbbs.sysop_uploads import (
     BANNER as SYSOP_UPLOAD_BANNER,
     DOOR_FILE as SYSOP_UPLOAD_DOOR_FILE,
-    SysOpUploadError,
     SysOpUploadTarget,
     destination_problem,
     door_filename_error,
@@ -629,7 +615,6 @@ from netbbs.net.picker import ListColumn, pick_item as _pick_item
 from netbbs.net.resource_editor import (
     editing_in_place,
     inline_field,
-    read_field_line,
     write_field_prompt,
     write_field_message,
     FieldSpec,
@@ -640,14 +625,12 @@ from netbbs.net.resource_editor import (
     DetailAction,
     DetailMode,
     DetailState,
-    edit_resource_draft as _edit_resource_draft,
     text_field,
 )
 from netbbs.net.session import (
     Session, physical_terminal_width, post_body_width, write_preformatted_line, write_prompt,
 )
 from netbbs.rendering.charset import ASCII, ellipsis_for
-from netbbs.net.session_activity import records_activity
 from netbbs.net.session_registry import SessionSummary
 from netbbs.net.shutdown import (
     NodeControls,
@@ -669,7 +652,6 @@ from netbbs.net.menu_description_preference import menu_description_level
 from netbbs.net.redraw_preference import (
     start_new_account_redrawing_in_place,
     redraw_in_place_enabled,
-    redraw_in_place_ever_set,
 )
 from netbbs.net.breadcrumb_preference import breadcrumb_collapsed_enabled
 from netbbs.net.color_depth_preference import effective_truecolor
@@ -847,7 +829,6 @@ from netbbs.net.chat_channel_picker_banner import (
     load_chat_channel_picker_banner,
     set_chat_channel_picker_banner_enabled,
 )
-from netbbs.net.detail_view import show_detail as _show_detail_view
 from netbbs.permissions.levels import meets_level
 from netbbs.rendering import (
     ACCENT_COLOR,
@@ -857,7 +838,6 @@ from netbbs.rendering import (
     DATE_COLOR,
     EMPHASIS_COLOR,
     ERROR_COLOR,
-    GATE_COLOR,
     HEADER_COLOR,
     LABEL_COLOR,
     MENU_KEY_COLOR,
@@ -878,7 +858,6 @@ from netbbs.rendering import (
     display_width,
     GRADIENTS,
     decode_banner_bytes,
-    double_frame,
     gradient_text,
     highlight_hotkeys,
     highlight_report,
@@ -892,13 +871,12 @@ from netbbs.rendering import (
     screen_title,
     status_badge,
     status_mark,
-    status_result,
     telemetry_gauge,
     truncate,
     visible_width,
     wrap_to_width,
 )
-from netbbs.rendering.detail import Field, Note, Section, Styled, Table, render_sections
+from netbbs.rendering.detail import Field, Note, Section, Styled, Table
 from netbbs.file_refs import open_ref, post_refs
 from netbbs.net.file_ref_view import ref_rows
 from netbbs.rendering.post_body import post_body_mode, post_body_rows
@@ -933,46 +911,91 @@ from netbbs.timeutil import (
     set_display_timezone,
     utc_now_iso,
 )
+from netbbs.net.admin_ui import (
+    _BACK_ACTION,
+    _Chrome,
+    _TrailingOutput,
+    _announce,
+    _announce_line,
+    _announce_styled,
+    _choice_prompt,
+    _confirmation_refused,
+    _console_transfers,
+    _degrade_description_level,
+    _detail_title,
+    _fitted_menu,
+    _format_bytes,
+    _load_chrome,
+    _menu_row,
+    _pending_notice_rows,
+    _receive_sysop_upload,
+    _remove_file_entry,
+    _show_report,
+    _upload_unavailable_reason,
+    _wrap_counts_panel,
+    _wrap_panel_sentence,
+    _write_panel,
+    _write_sections,
+    _write_wrapped_subtitle,
+    _yes_no,
+    edit_resource_draft,
+    pick_item,
+    show_detail,
+)
+from netbbs.net.admin_fields import (
+    _CLEAR_HINT,
+    _EDIT_HINT,
+    _LINK_RECOMMENDATION_VALUES,
+    _NAME_REQUIREMENT_HELP,
+    _VERIFIED_AGE_HELP,
+    _community_default_label,
+    _int_field,
+    _link_recommendation_label,
+    _min_age_field,
+    _min_age_label,
+    _name_requirement_field,
+    _name_requirement_label,
+    _name_requirement_step,
+    _optional_int_field,
+    _optional_int_label,
+    _optional_text_field,
+    _plain_level_label,
+    _read_seeded_line,
+    _resolve_redraw_preference,
+    _resource_level_label,
+    _seconds_text,
+    _setting_level_label,
+)
+from netbbs.net.admin_resources import (
+    _BOARD_STATUS_COLUMN,
+    _Effective,
+    _GATES_COLUMN,
+    _LEVEL_COLUMNS,
+    _area_columns,
+    _channel_columns,
+    _community_columns,
+    _count_cell,
+    _describe_resource,
+    _effective_by_id,
+    _gate_cell,
+    _hide_carried_screen,
+    _level_cell,
+    _linked_announcement,
+    _linked_node_label,
+    _listing_status,
+    _moderator_lines,
+    _peer_reach_rows,
+    _place_label,
+    _remove_resource,
+    _sections_text,
+    _warn_about_changed_node_identity,
+)
 
 # Design doc -- node management, Thiesi's own request: an operator
 # watching this node's own stdout/journal should see a shutdown/drain
 # being scheduled (or maintenance mode toggled) as it happens, not only
 # via the DB-backed moderation log (`record_action`, queried separately).
 _logger = logging.getLogger(__name__)
-
-
-def _menu_row(
-    entries: list[MenuEntry], description_level: str, *, width: int, height: int, degraded: bool = False
-) -> str:
-    """Shared off/on branch for every hotkey-row menu in this module
-    (issue #160's rollout, commit 1b1da33's own established pattern):
-    `menu_grid` always renders one entry per line, even with
-    descriptions off, so it isn't a byte-for-byte substitute for
-    `action_bar`'s packed row at that level -- keep `action_bar` there
-    so no screen's height changes for a caller who hasn't opted into
-    descriptions, and only switch to `menu_grid` once they have.
-
-    `degraded=True` means the caller (`_degrade_description_level`)
-    already forced `description_level` to `"off"` before it ever reached
-    here, because its own telemetry panel ate into the available height
-    -- a real degrade of the SysOp's actual preference, not the level
-    they asked for. `menu_grid` has its own notice for exactly this
-    situation (`descriptions_collapsed`), but only when *it* detects the
-    squeeze; since `description_level == "off"` takes the `action_bar`
-    branch instead and never reaches `menu_grid` at all, that notice is
-    unreachable here and the degrade would otherwise happen silently
-    (PR #197 review). Append the equivalent notice ourselves, styled the
-    same way `menu_grid` styles its own."""
-    if description_level == "off":
-        result = action_bar([e.label for e in entries], width=width, height=height)
-        if degraded:
-            notice_lines = [
-                colored(wrapped, fg_color=MUTED_COLOR)
-                for wrapped in wrap_to_width("Descriptions hidden -- terminal too short to show them.", width)
-            ]
-            result = f"{result}\r\n\r\n" + "\r\n".join(notice_lines)
-        return result
-    return menu_grid([("", entries)], width=width, height=height, description_level=description_level)
 
 
 def _link_health_snapshot(db: Database, link_context: LinkContext | None) -> dict[str, int]:
@@ -1028,40 +1051,6 @@ def _own_linked_genesis(link_context: LinkContext) -> list:
     ]
 
 
-_MAX_REACH_ROWS = 6
-
-
-async def _peer_reach_rows(lane: DatabaseLane, link_context: LinkContext, genesis) -> list[Field | Note]:
-    """Where one of this node's own linked resources has got to (issue
-    #844): per verified peer, whether it holds it, refused it, or is not
-    sent it while on probation here. Nothing for a resource another node
-    originated -- its origin pushes it, not this node."""
-    if genesis is None or genesis.payload.get("origin_fingerprint") != link_context.node_identity.fingerprint:
-        return []
-    node = link_context.link_node
-    peers = list(node.peers)
-    if not peers:
-        return [Field("At peers", "no verified peers yet", color=MUTED_COLOR)]
-    states = await lane.run(lambda db: {fp: node_transport_state(db, fp).value for fp in peers})
-    labelled = sorted(((_linked_node_label(link_context, fp), fp) for fp in peers), key=lambda item: item[0].casefold())
-    rows: list[Field | Note] = []
-    for label, fingerprint in labelled[:_MAX_REACH_ROWS]:
-        text, color = own_content_at_peer(states[fingerprint], node.peer_exchange.get(fingerprint), genesis.content_id)
-        rows.append(Field(f"At {sanitize_text(label)}", text, color=color))
-    if len(labelled) > _MAX_REACH_ROWS:
-        rows.append(Note(f"... and {len(labelled) - _MAX_REACH_ROWS} more; Link status -> Peers shows each node."))
-    return rows
-
-
-def _linked_announcement(name: str) -> str:
-    """What `[L]ink` says once saved (issue #844): who gets it, and where
-    to look later, since the push itself happens on a later sync pass."""
-    return (
-        f"Linked {name!r}. Peers you have established get it on the next sync pass; "
-        "its NetBBS Link rows here show which ones hold it."
-    )
-
-
 async def _with_fresh_carry_counts(lane: DatabaseLane, state: dict[str, object]) -> dict[str, object]:
     """`state` with its carry attention counts read again: a sub-console
     that leads to Link status may have decided offers there (Codex review
@@ -1084,43 +1073,6 @@ def _carry_attention_pairs(state: dict[str, object]) -> list[tuple[str, int]]:
     return pairs
 
 
-def _wrap_counts_panel(label: str, pairs: Sequence[tuple[str, int]], *, width: int, continuation: str = "  ") -> list[str]:
-    """Split a `label` + `counts_row(pairs)` telemetry summary across as
-    many lines as the frame's real `width` needs. `counts_row` renders
-    every pair onto a single unconditional line, and `double_frame`
-    never truncates or wraps its input -- callers own pre-fitting their
-    own content (see that function's own docstring) -- so a compact
-    sub-console panel with several fields silently ran the box's right
-    border open on real narrow-but-supported terminals until this
-    existed. `continuation` prefixes every line after the first (the
-    label itself only ever appears once)."""
-    segments = [counts_row([pair]) for pair in pairs]
-    if not segments:
-        return [label]
-    lines: list[str] = []
-    prefix = label
-    current: list[str] = []
-    current_width = visible_width(prefix)
-    for segment in segments:
-        seg_width = visible_width(segment)
-        sep_width = 2 if current else 0
-        # No `current and ...` guard here: the label alone can already
-        # be wide enough (a status badge, e.g.) that even the *first*
-        # segment on an otherwise-empty line doesn't fit -- omitting
-        # this check for that case was the original bug, since it let a
-        # single wide-labeled line through unwrapped every time.
-        if current_width + sep_width + seg_width > width:
-            lines.append(prefix + "  ".join(current))
-            prefix = continuation
-            current = []
-            current_width = visible_width(prefix)
-            sep_width = 0
-        current.append(segment)
-        current_width += sep_width + seg_width
-    lines.append(prefix + "  ".join(current))
-    return lines
-
-
 def _offline_console_note(node_running: bool) -> str:
     """What the health panel says when this console has no live node behind
     it -- `python -m netbbs.admin`, run on the node's machine (issue #834).
@@ -1132,44 +1084,6 @@ def _offline_console_note(node_running: bool) -> str:
             "the node and open the SysOp menu there."
         )
     return "The node isn't running, so there are no live controls. Start the node to get them."
-
-
-def _wrap_panel_sentence(text: str, *, prefix: str, width: int, unicode_style: bool) -> list[str]:
-    """Word-wrap a plain-text panel sentence (not a `counts_row` pair --
-    see `_wrap_counts_panel` for those, and `_fit` above for the one
-    case -- an arbitrary-length backup/update-check message -- where a
-    hard cut is the right call instead) across as many lines as a boxed
-    panel's real `width` can hold, `prefix` (e.g. two leading spaces)
-    budgeted on every line so a multi-line sentence stays indented
-    consistently with its own first line. Wrapping, not cutting,
-    because these are short, fixed, known-in-advance phrases -- chopping
-    one off mid-word to fit a 40-column terminal would lose real
-    information for no reason a cut on unpredictable external text
-    doesn't have. An unboxed ASCII-fallback panel has no width
-    constraint to wrap against, so `text` passes through as a single
-    line unchanged there."""
-    if not unicode_style:
-        return [text]
-    budget = max(1, width - visible_width(prefix))
-    return wrap_to_width(text, budget) or [text]
-
-
-async def _write_panel(
-    session: Session, panel: list[str], *, unicode_style: bool, header_color: int | tuple[int, int, int]
-) -> None:
-    """Box `panel` in a `double_frame` when the terminal is wide enough
-    to hold one, else print its lines flat and unboxed -- the same
-    fallback already used when `unicode_style` is off. `double_frame`
-    itself raises below width 4, but `netbbs.net.session.
-    clamp_terminal_size` only floors a client-reported `terminal_width`
-    at 1, so a client legitimately reporting width 1-3 must not reach
-    that call at all."""
-    frame_width = min(session.terminal_width, 78)
-    if unicode_style and frame_width >= 4:
-        await session.write_line(double_frame(panel, width=frame_width, header_color=header_color))
-    else:
-        for line in panel:
-            await session.write_line(line)
 
 
 def _get_display_backup_summary(db: Database) -> tuple[str | None, str | None]:
@@ -1200,35 +1114,6 @@ def _get_display_next_backup(db: Database) -> str | None:
 # console screen is drawn next shows it directly above its prompt --
 # `_choice_prompt` for a screen that draws itself, `show_detail` for a paged
 # one.
-
-
-def _announce(session: Session, text: str, *, error: bool = False, color: int | None = None) -> None:
-    """Queue one outcome line for the next console screen drawn on `session`."""
-    _notices.announce(session, text, tone="error" if error else "success", color=color)
-
-
-_CLEAR_SEQUENCE = "\x1b[2J"
-_LEADING_BREAK = re.compile(r"^((?:\x1b\[[0-9;]*m)*)(?:\r\n)+")
-def _announce_line(session: Session, line: str) -> None:
-    """Queue a line exactly as an action would have written it; shared with
-    the caller's screens (`notices.announce_line`, issue #1124)."""
-    _notices.announce_line(session, line)
-
-
-def _confirmation_refused(session: Session, typed: str, expected: str, *, kept: str = "Nothing was deleted.") -> None:
-    """The outcome of a type-the-name confirmation that did not match (issue
-    #1119). An empty answer is a plain cancel, as the prompt offers. Anything
-    else was most likely an attempt to confirm that went wrong, so it is a
-    warning that says what was typed and that nothing happened -- a muted
-    "Cancelled." under a screen that just redrew read as if nothing had."""
-    typed = typed.strip()
-    if not typed:
-        _announce_line(session, "Cancelled.")
-        return
-    _notices.announce_styled(
-        session,
-        status_result(f"Cancelled: {sanitize_text(typed)!r} is not {sanitize_text(expected)!r}. {kept}", "warning"),
-    )
 
 
 def _can_verify_label(target: User) -> str:
@@ -1277,294 +1162,6 @@ def _announce_saved(session: Session, lead: str, path: object, tail: str) -> Non
         session,
         status_mark("success") + lead + colored(str(path), fg_color=VALUE_COLOR) + highlight_hotkeys(tail),
     )
-
-
-def _announce_styled(session: Session, line: str) -> None:
-    """Queue a line that is already sanitized and styled (a badge, a captured row)."""
-    _notices.announce_styled(session, line)
-
-
-def _pending_notice_rows(session: Session) -> int:
-    return _notices.pending_notice_rows(session)
-
-
-def _take_notices(session: Session) -> list[str]:
-    return _notices.take_notices(session)
-
-
-class _TrailingOutput:
-    """A stand-in session for a flow that lives in another module and writes
-    its own outcome -- `netbbs.net.managed_dns_flow`'s register, release, rename
-    and cancel, which first-run onboarding also calls and which therefore
-    cannot `_announce`.
-
-    Lines are held rather than written. Anything else the flow does with the
-    session -- a prompt, a read -- writes the held lines first, in order, so
-    what the SysOp is asked is still asked under the text that explains it.
-    Whatever is still held when the flow returns was written after its last
-    question: that is its outcome, and `announce_rest` queues it for the screen
-    the console draws next instead of letting that screen's clear erase it.
-    Login uses it the same way for first-run onboarding and the character-set
-    question, whose outcome the first main menu shows (issue #923).
-
-    Only ever handed to a flow that uses the session to read and write. It is
-    not the session: a flow that compares sessions by identity (the node
-    controls' registry does) must be given the real one."""
-
-    def __init__(self, session: Session) -> None:
-        self._session = session
-        self._held: list[str] = []
-        # A flow that announces its outcome (`netbbs.net.notices`) instead
-        # of writing it reaches the real session's queue through this.
-        self.notice_session = session
-
-    def __getattr__(self, name: str):
-        attribute = getattr(self._session, name)
-        if name == "read_editor_key":
-            # Only there when the real session has it: flows probe for it
-            # (`getattr(session, "read_editor_key", None)`) and fall back to
-            # line input without it, as some session adapters need.
-            async def read_editor_key(*args, **kwargs):
-                await self._release()
-                return await attribute(*args, **kwargs)
-
-            return read_editor_key
-        return attribute
-
-    # `__getattr__` forwards reads only. A flow's activity trail (issue #762)
-    # must land on the real session, where the monitor looks for it.
-    @property
-    def activity(self) -> tuple[str, ...]:
-        return self._session.activity
-
-    @activity.setter
-    def activity(self, value: tuple[str, ...]) -> None:
-        self._session.activity = value
-
-    async def write_line(self, text: str = "") -> None:
-        self._held.append(text)
-
-    async def _release(self) -> None:
-        held, self._held = self._held, []
-        for text in held:
-            await self._session.write_line(text)
-
-    async def write(self, text: str) -> None:
-        await self._release()
-        await self._session.write(text)
-
-    async def read_line(self, *args, **kwargs) -> str:
-        await self._release()
-        return await self._session.read_line(*args, **kwargs)
-
-    async def read_key(self, *args, **kwargs) -> str:
-        await self._release()
-        return await self._session.read_key(*args, **kwargs)
-
-    async def read_any_key(self, *args, **kwargs) -> str:
-        await self._release()
-        return await self._session.read_any_key(*args, **kwargs)
-
-    # A Zmodem send talks to the terminal in raw bytes: "Starting Zmodem send
-    # ..." has to be on screen before the first of them, not after the last.
-    async def write_raw(self, data: bytes) -> None:
-        await self._release()
-        await self._session.write_raw(data)
-
-    async def read_byte(self):
-        await self._release()
-        return await self._session.read_byte()
-
-    def announce_rest(self, *, last_paragraph: bool = True) -> None:
-        """Queue the flow's outcome: the last paragraph of what is still held,
-        or all of it with `last_paragraph=False` -- for login's first-run
-        questions, whose closing lines can be two paragraphs ("Node name set
-        to ...", then "(Saved. ...)") and write no screen title (issue #923).
-
-        Not everything still held is an outcome. `send_file_to_caller` writes a
-        screen title (with its clear) and "Starting Zmodem send..." and only
-        then touches the terminal in raw bytes -- so when it fails before the
-        first of them (the blob is gone from disk), all three lines are still
-        here. Announced, that title's clear erased the screen the console had
-        just redrawn, leaving the error over a bare prompt. These flows open
-        their outcome with a blank row (a leading CR LF on the line), so the
-        outcome is what follows the last such break; and a line that clears
-        the terminal is never one."""
-        held, self._held = self._held, []
-        start = 0
-        for index, text in enumerate(held):
-            if last_paragraph and (not text.strip() or _LEADING_BREAK.match(text)):
-                start = index
-        for text in held[start:]:
-            if text.strip() and _CLEAR_SEQUENCE not in text:
-                _announce_line(self._session, text)
-
-
-async def _choice_prompt(session: Session) -> None:
-    """A self-drawn console screen's prompt: any pending outcome, then `Choice:`."""
-    for line in _take_notices(session):
-        await session.write_line(line)
-    await write_prompt(session, "Choice: ")
-
-
-async def pick_item(session: Session, items, *, masthead="", **kwargs):
-    """`picker.pick_item`, for the console. A picker is as likely as a menu
-    to be the next screen drawn (lifting one chat restriction returns to the
-    list of the rest); it shows whatever the console's last action announced
-    above its own prompt, on the first draw, and it is gone once a key has
-    redrawn the list."""
-    # The picker's own answer to an empty list that nothing can change is to
-    # print `empty_message` and return -- straight into the console menu whose
-    # redraw erases it. Announced instead, it is on that menu when it draws.
-    if not items and kwargs.get("refresh") is None and kwargs.get("on_create") is None:
-        _announce(session, kwargs["empty_message"], color=MUTED_COLOR)
-        return None
-    return await _pick_item(session, items, masthead=masthead, **kwargs)
-
-
-async def edit_resource_draft(session: Session, lane: DatabaseLane, **kwargs):
-    """`resource_editor.edit_resource_draft`, shown whatever a field's prompt or
-    the console's last action announced (see `_announce`)."""
-    return await _edit_resource_draft(session, lane, notices=lambda: _take_notices(session), **kwargs)
-
-
-async def show_detail(session: Session, *, message: str | None = None, **kwargs) -> tuple[str, int]:
-    """`detail_view.show_detail`, with whatever the SysOp's last action announced
-    shown ahead of the screen's own `message`."""
-    lines = [*_take_notices(session), *([message] if message else [])]
-    return await _show_detail_view(session, message="\r\n".join(lines) or None, **kwargs)
-
-
-@dataclass(frozen=True)
-class _Chrome:
-    """The display preferences every titled screen resolves before it draws,
-    fetched in one lane round trip instead of four."""
-
-    redraw_in_place: bool
-    unicode_style: bool
-    collapsed: bool
-    header_color: int | tuple[int, int, int]
-    accent_color: int | tuple[int, int, int]
-
-
-async def _load_chrome(lane: DatabaseLane, actor: User) -> _Chrome:
-    def _load(db: Database) -> _Chrome:
-        return _Chrome(
-            redraw_in_place=redraw_in_place_enabled(db, actor),
-            unicode_style=unicode_style_enabled(db, actor),
-            collapsed=breadcrumb_collapsed_enabled(db, actor),
-            header_color=effective_header_color_256(db),
-            accent_color=effective_accent_color_256(db),
-        )
-
-    return await lane.run(_load)
-
-
-def _detail_title(
-    session: Session, chrome: _Chrome, title: str, *, own: bool = False, subtitle: str | None = None
-) -> str:
-    """A `screen_title` block for `show_detail`, which owns the clear itself
-    (so that turning a page redraws in place too). The breadcrumb is where
-    the session is; `own` for the frame of a screen that named itself
-    (`netbbs.net.location`)."""
-    return screen_title(
-        title,
-        breadcrumb=crumbs(session, own=own),
-        subtitle=subtitle,
-        width=session.terminal_width,
-        clear=False,
-        unicode_style=chrome.unicode_style, collapsed=chrome.collapsed,
-        header_color=chrome.header_color,
-        node_name_gradient=session.node_name_gradient,
-    )
-
-
-_BACK_ACTION = ("b", menu_key("B", "ack"))
-
-
-async def _show_report(
-    session: Session, lane: DatabaseLane, actor: User, title: str, *,
-    sections: Sequence[Section], subtitle: str | None = None, own: bool = False,
-    message: str | None = None, help_title: str, help_about: str,
-) -> None:
-    """Hold a finished action's result on screen until the SysOp leaves it.
-
-    A result that was printed and returned from was wiped by the parent
-    menu's clear-and-redraw before it could be read; this is the one way a
-    SysOp screen reports an outcome it has nothing further to offer on.
-    `own` as for `_detail_title`."""
-    chrome = await _load_chrome(lane, actor)
-    await show_detail(
-        session,
-        title=_detail_title(session, chrome, title, own=own, subtitle=subtitle),
-        sections=sections, actions=[_BACK_ACTION], message=message,
-        redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
-        help_title=help_title, help_about=help_about,
-    )
-
-
-async def _write_sections(
-    session: Session, sections: Sequence[Section], *, unicode_style: bool, joined: int = 0,
-    places: dict[int, tuple[int, int, int]] | None = None,
-) -> int:
-    """Write a grouped label/value panel for a screen that keeps its own menu
-    and key loop below it, a blank row between groups. Returns the rows
-    written, so the caller can budget its menu against what is left of the
-    terminal instead of pushing the panel's top off it.
-
-    The first `joined` sections after the first continue it: no blank row
-    before them. Give them no title, or they read as a group of their own.
-
-    `places`, if given, receives where each one-to-a-row field's value was
-    drawn, keyed by `id()` of the `Field`: its first row as a 0-based offset
-    into the panel, the 0-based column it starts at, and its rows -- what an
-    in-place edit needs (`editing_in_place`)."""
-    rows = 0
-    block_places: dict[int, tuple[int, tuple[int, int, int]]] | None = {} if places is not None else None
-    blocks = render_sections(
-        sections, width=session.terminal_width, unicode_style=unicode_style, places=block_places,
-    )
-    starts: list[int] = []
-    for index, block in enumerate(blocks):
-        if not 0 < index <= joined:
-            # Led by a blank row, the first group included: what sits above a
-            # panel is a title rule or a status line, and the panel is a new
-            # paragraph either way.
-            await session.write_line("")
-            rows += 1
-        starts.append(rows + (1 if block.heading is not None else 0))
-        for line in block.lines:
-            await session.write_line(line)
-        rows += len(block.lines)
-    if places is not None and block_places:
-        for key, (block_index, (offset, column, value_rows)) in block_places.items():
-            places[key] = (starts[block_index] + offset, column, value_rows)
-    return rows
-
-
-def _fitted_menu(options: list[MenuEntry], description_level: str, *, session: Session, used_rows: int) -> str:
-    """The menu under a detail panel, as descriptive as the rows left allow.
-
-    `_menu_row` alone budgets a menu against the whole terminal, as if
-    nothing were drawn above it -- so on a screen that leads with a panel,
-    the described form pushed the panel's own top row off a 24-row terminal.
-    Measured here instead, the way `edit_resource_draft` measures its own:
-    the described grid if it fits under what is already on screen, else the
-    bar with its hotkeys aligned in columns if that fits, else the packed
-    bar, the fewest rows."""
-    def fits(menu: str) -> bool:
-        return used_rows + _pending_notice_rows(session) + menu.count("\r\n") + 2 <= session.terminal_height
-
-    if description_level != "off":
-        described = menu_grid(
-            [("", options)], width=session.terminal_width, height=session.terminal_height,
-            description_level=description_level,
-        )
-        if fits(described):
-            return described
-    labels = [entry.label for entry in options]
-    aligned = action_bar(labels, width=session.terminal_width, height=session.terminal_height)
-    return aligned if fits(aligned) else action_bar(labels, width=session.terminal_width, height=None)
 
 
 async def _write_counted(session: Session, text: str) -> int:
@@ -1734,58 +1331,6 @@ def _banner_sauce(status) -> Sauce | None:
         return split_sauce(status.path.read_bytes())[1]
     except OSError:
         return None
-
-
-def _yes_no(value: bool) -> str:
-    return "yes" if value else "no"
-
-
-# `netbbs.rendering.layout`'s floor below which `menu_grid` hides
-# descriptions under entries.
-_MIN_MENU_HEIGHT_FOR_DESCRIPTIONS = 15
-
-
-def _degrade_description_level(
-    *,
-    panel: list[str],
-    unicode_style: bool,
-    description_level: str,
-    entry_count: int,
-    terminal_width: int,
-    terminal_height: int,
-) -> tuple[str, int, bool]:
-    """Shrink a sub-console's description verbosity -- never its listed
-    entries -- when a framed telemetry panel above the menu would
-    otherwise push it past the terminal's visible height. Identical
-    height-reservation math the three telemetry-panel sub-consoles
-    (Users/Operations/Content) each need; factored out so a future fix
-    to it lands in one place instead of three. Returns `(effective_
-    description_level, available_menu_height, degraded)` -- `degraded`
-    is True only when a non-"off" request was forced to "off" here, so
-    `_menu_row` can still show the caller a "Descriptions hidden" notice
-    even though this degrade happens before `menu_grid`'s own equivalent
-    check ever runs (PR #197 review)."""
-    panel_height = (len(panel) + 2) if (panel and unicode_style) else len(panel)
-    reserved = panel_height + 4
-    available_menu_height = max(1, terminal_height - reserved)
-
-    effective_desc_level = description_level
-    degraded = False
-    if effective_desc_level != "off":
-        columns = 2 if terminal_width >= 72 else 1
-        rows_per_entry_row = -(-entry_count // columns)
-        # `menu_grid` hides descriptions under its own height floor, so a
-        # menu below it takes the one-line form too (review on #872).
-        if rows_per_entry_row * 2 > available_menu_height or available_menu_height < _MIN_MENU_HEIGHT_FOR_DESCRIPTIONS:
-            # Each description on its entry's own line before none at all
-            # (issue #840): at 80x24 a first-time SysOp lost them exactly
-            # where one-word entries needed them.
-            if rows_per_entry_row <= available_menu_height:
-                effective_desc_level = "inline"
-            else:
-                effective_desc_level = "off"
-                degraded = True
-    return effective_desc_level, available_menu_height, degraded
 
 
 @located("SysOp")
@@ -11083,32 +10628,6 @@ def _mrc_state_line(status: MrcStatus, *, unicode_style: bool) -> str:
     return line
 
 
-def _optional_text_field(key: str) -> Callable[[Session, DatabaseLane, dict], Awaitable[None]]:
-    """`text_field`'s own convention (`_CLEAR_HINT`, issue #557) for the
-    INFO fields -- the only free-text settings on the node a SysOp may
-    legitimately want empty.
-
-    This used to be a third spelling of the same idea: blank kept the
-    value and a typed `-` cleared it, on a screen whose other text
-    fields clear by emptying the line. `-` is still accepted, for the
-    muscle memory it already built and because it is the only way to
-    clear a field whose current value is too long to seed inline.
-    """
-
-    @inline_field
-    async def prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
-        current = draft.get(key) or ""
-        await write_field_prompt(session, colored(f"({_CLEAR_HINT}):", fg_color=MUTED_COLOR), hint=_CLEAR_HINT)
-        try:
-            raw = (await _read_seeded_line(session, initial=current)).strip()
-        except InputCancelled:
-            await session.write_line("")
-            return
-        draft[key] = "" if raw == "-" else raw
-
-    return prompt
-
-
 @located("Inter-BBS chat (MRC)")
 async def _mrc_settings_screen(
     session: Session, lane: DatabaseLane, actor: User, *, node_controls: NodeControls | None
@@ -15071,27 +14590,6 @@ async def _banners_and_mastheads_menu(
             await session.write(reject_unhandled_key(choice))
 
 
-async def _write_wrapped_subtitle(
-    session: Session, text: str, *, color: int | tuple[int, int, int] = MUTED_COLOR, bold: bool = False
-) -> int:
-    """Word-wrap a screen's plain-text descriptive subtitle to the real
-    terminal width before coloring it, one wrapped physical line at a
-    time -- coloring the whole sentence first and relying on the
-    terminal's own soft-wrap (dogfood report) let it run past the right
-    edge unpredictably on anything narrower than the text itself.
-
-    `bold` (dogfood report: `[S]hutdown`/`[D]rain`'s own alert-colored
-    warning lines had this exact same unwrapped-raw-`colored()` bug,
-    just with `bold=True` on top) -- passed straight through to
-    `colored()` for a caller that needs its wrapped lines bold too.
-
-    Returns the rows written, for a screen that fits its menu under them."""
-    lines = wrap_to_width(text, session.terminal_width) or [text]
-    for wrapped in lines:
-        await session.write_line(colored(wrapped, fg_color=color, bold=bold))
-    return len(lines)
-
-
 async def _draw_banners_and_mastheads_menu(
     session: Session, lane: DatabaseLane, description_level: str, redraw_in_place: bool,
     unicode_style: bool, collapsed: bool, header_color: int | tuple[int, int, int],
@@ -15551,90 +15049,6 @@ async def _welcome_banner_gallery_screen(
         return
 
 
-# Issue #728: the file-transfer grants of the node a console session runs on,
-# for the screens deep inside it that offer an upload link. Registered by
-# `admin_menu` rather than threaded through every banner menu's signature;
-# weakly keyed, so a finished session takes its entry with it. Absent in the
-# standalone `python -m netbbs.admin` console, which has no web listener.
-_console_transfers: "weakref.WeakKeyDictionary[Session, Any]" = weakref.WeakKeyDictionary()
-
-
-def _session_transfers(session: Session) -> Any:
-    return _console_transfers.get(getattr(session, "notice_session", session))
-
-
-def _upload_unavailable_reason(session: Session) -> str | None:
-    """Why this console cannot receive a file at all, before anything is
-    asked -- the same two routes a file area offers (issue #475)."""
-    from netbbs.net.file_flow import supports_zmodem
-
-    if supports_zmodem(session):
-        return None
-    transfers = _session_transfers(session)
-    # A link needs somewhere to go: an absolute URL, or this session's own
-    # browser page. Checked here, before a filename or a replacement is
-    # asked for, rather than only when the link is minted.
-    if transfers is not None and (
-        transfers.base_url is not None or getattr(session, "offer_transfer", None) is not None
-    ):
-        return None
-    return (
-        "This connection cannot carry a Zmodem transfer, and this node has no browser "
-        "transfer configured. Enable the web listener and its public_url, or connect with "
-        "a Zmodem-capable terminal, to upload from here."
-    )
-
-
-@records_activity("Uploading")
-async def _receive_sysop_upload(
-    session: Session, lane: DatabaseLane, actor: User, target: SysOpUploadTarget, *, then: str,
-) -> None:
-    """Receive one file for `target` over Zmodem where the terminal can, or
-    hand out a single-use browser link where it cannot -- the file area's
-    own choice between the two (`netbbs.net.file_flow._handle_upload`)."""
-    from netbbs.net import zmodem
-    from netbbs.net.file_flow import offer_grant, supports_zmodem
-
-    if supports_zmodem(session):
-        await session.write_line(
-            f"Your terminal should offer its Zmodem upload now; if it doesn't, start its Zmodem send (sz). "
-            f"The file is saved as {target.destination.name}, whatever it is called on your side. "
-            f"Ctrl-X five times cancels."
-        )
-        temp_path = await lane.run(new_incoming_temp_path)
-        try:
-            received = await zmodem.receive_file(session, max_bytes=target.max_bytes, dest_path=temp_path)
-        except (zmodem.ZmodemError, NotImplementedError) as exc:
-            _announce(session, f"Upload failed: {exc}", error=True)
-            return
-        try:
-            size = await install_and_record(lane, actor, target, temp_path, sent_as=received.filename)
-        except SysOpUploadError as exc:
-            _announce(session, f"Upload failed: {exc}", error=True)
-            return
-        except OSError as exc:
-            _announce(session, f"Could not write {target.destination}: {exc.strerror or exc}", error=True)
-            return
-        _announce(session, f"Uploaded {size} bytes to {target.destination}. {then}")
-        return
-
-    transfers = _session_transfers(session)
-    if transfers is None:  # `_upload_unavailable_reason` is checked first; kept for safety
-        _announce(session, _upload_unavailable_reason(session) or "No transfer route.", error=True)
-        return
-    if not await offer_grant(
-        session, transfers,
-        mint=lambda: transfers.issue_sysop_upload(user=actor, target=target),
-        direction=UPLOAD, what=f"upload {target.label}",
-    ):
-        return
-    _announce(
-        session,
-        f"Whatever you send is saved as {target.destination}, up to {target.max_bytes} bytes. {then}",
-        color=MUTED_COLOR,
-    )
-
-
 _BANNER_FILE_SUFFIX_OF: dict[Callable[[Database], Path], Callable[[str], str]] = {
     banner_path: lambda stem: f"{stem}_welcome_banner.ans",
     main_menu_banner_path: lambda stem: f"{stem}_main_menu_banner.ans",
@@ -15645,14 +15059,6 @@ _BANNER_FILE_SUFFIX_OF: dict[Callable[[Database], Path], Callable[[str], str]] =
     file_area_banner_path: lambda stem: f"{stem}_file_area_banner.ans",
     chat_channel_picker_banner_path: lambda stem: f"{stem}_chat_channel_picker_banner.ans",
 }
-
-
-def _remove_file_entry(status) -> list[MenuEntry]:
-    """`[R]emove file` (issue #1119), offered only while a file is saved:
-    with nothing to delete there is nothing to offer."""
-    if not status.exists:
-        return []
-    return [MenuEntry(label=menu_key("R", "emove file"), brief="Delete the saved .ans file")]
 
 
 async def _remove_banner_file(
@@ -19042,227 +18448,6 @@ async def _draw_content_menu(session: Session, *, stats: dict[str, Any]) -> None
     await _choice_prompt(session)
 
 
-async def _read_int(session: Session, *, default: int) -> int | None:
-    """Reads a line opening on `default`: Enter saves what is shown, Esc
-    leaves it alone, a valid integer replaces it, anything else shows a
-    cancellation message and returns `None` -- callers should treat
-    `None` as "abort the current screen". See `_EDIT_HINT` (issue #557)
-    for why this no longer asks for a value against an empty line."""
-    try:
-        raw = (await _read_seeded_line(session, initial=str(default))).strip()
-    except InputCancelled:
-        await session.write_line("")
-        return default
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        await write_field_message(session, colored("Not a number -- cancelled.", fg_color=MUTED_COLOR))
-        return None
-
-
-async def _prompt_optional_int(session: Session, label: str, *, current: int | None) -> tuple[int | None, bool]:
-    """Generic nullable-int prompt -- the same open-on-the-current-value
-    shape as `_prompt_min_age` below (see `_CLEAR_HINT`), factored out
-    separately
-    (rather than having that function delegate here) so its existing
-    "no gate" wording -- already asserted on by
-    tests/test_admin_flow.py and tests/test_board_pagination_ui.py --
-    stays exactly as it is. Used for every nullable-int field
-    introduced by design doc §16's Community inheritance model:
-    boards'/file areas' own `min_read_level`/`min_write_level`
-    (this is the *only* way to ever set one back to `None` -- i.e. opt
-    a resource into inheriting its Community's default -- `_read_int`
-    has no clearing mechanism at all), plus Community's own
-    `default_min_read_level`/`default_min_write_level`. "Clear" is the
-    accurate word in both cases, not "no gate" (a level isn't a gate
-    the way age/name-requirement are)."""
-    await write_field_prompt(session, colored(f"{label} ({_CLEAR_HINT}):", fg_color=MUTED_COLOR), hint=_CLEAR_HINT)
-    try:
-        raw = (await _read_seeded_line(
-            session, initial="" if current is None else str(current)
-        )).strip()
-    except InputCancelled:
-        await session.write_line("")
-        return current, True
-    if not raw or raw.lower() == "none":
-        return None, True
-    try:
-        return int(raw), True
-    except ValueError:
-        await write_field_message(session, colored("Not a number -- cancelled.", fg_color=MUTED_COLOR))
-        return None, False
-
-
-#: Issue #557. Both prompts below open on the field's current value and
-#: read an empty line as "clear", which is the convention issue #529
-#: established for the text fields on these same Create/Edit screens.
-#:
-#: Before this they were the other half of a screen with two answers for
-#: the same gesture: a text field's empty submit cleared the value, a
-#: gate's kept it, and each said so in its own prompt text. A SysOp
-#: learns the convention on whichever field they meet first. Applied to
-#: an age gate, "clear the line to clear the value" silently left the
-#: gate in place -- and the screen afterwards looks exactly like one
-#: where it worked, because the value was never on the line to begin
-#: with. That is the same shape of harm as #540 (a gate nobody intended,
-#: in force, with nothing on screen connecting it to what the operator
-#: did), from the other direction.
-#:
-#: Escape is what "blank" used to mean, now on a key of its own instead
-#: of overloaded onto the empty string. `none` stays accepted as an
-#: explicit spelling for the muscle memory it already built.
-_CLEAR_HINT = "Enter saves, blank clears, Esc keeps"
-
-#: The same convention for a field with no null state to clear *to* --
-#: a channel's own `min_level`, an MRC hub port, a trust weight. There is
-#: no third answer to invent here: the value is in the buffer, so Enter
-#: saves what is shown and Escape leaves it alone, which is exactly what
-#: `netbbs.net.resource_editor`'s text fields say. An emptied line has no
-#: meaning for a field that must hold a number, and cannot be reached by
-#: accident now that the line starts populated, so it is read as "no
-#: change" rather than turned into an error a caller would only ever see
-#: by deleting a value on purpose.
-_EDIT_HINT = "Enter saves, Esc cancels"
-
-
-def _seconds_text(value: float) -> str:
-    """A delay as the SysOp would type it: `60`, not `60.0`, and never the
-    6-significant-digit rounding `:g` would seed and save back."""
-    return str(int(value)) if float(value).is_integer() else repr(float(value))
-
-
-async def _read_seeded_line(session: Session, *, initial: str, echo: bool = True) -> str:
-    """Read one line opening on `initial`, with a row to do it in.
-
-    Every prompt below writes its label as a line of its own and then
-    calls this, which is `netbbs.net.resource_editor.text_field`'s shape
-    and for its reason (issue #546, Codex review): `read_line` moves its
-    cursor with single-row `CSI D`/`CSI C`, so a value that soft-wraps
-    onto a second row makes every Home, Left, Backspace and tail redraw
-    clamp to the row it is on while the logical cursor walks into text
-    above -- the display and the value that would be saved diverge,
-    silently.
-
-    The prompt occupying its own line is what makes `viewport` the whole
-    terminal width rather than "whatever was left after the label", which
-    on the supported 40-column floor is frequently nothing: these labels
-    are longer than 40 columns on their own. A callable, not a number, so
-    a caller who resizes mid-edit gets rows sized for the terminal they
-    now have.
-
-    Raises `InputCancelled` on Escape, which every caller reads as
-    "leave the value alone". `echo=False` reads a password unseen.
-    """
-    return await read_field_line(session, initial=initial, echo=echo)
-
-
-#: Bounds for an age gate (issue #540). `0` stays accepted and keeps its
-#: existing meaning -- `netbbs.attestation.meets_age` opens with
-#: `if not min_age: return True`, so zero is "no gate" rather than a
-#: gate nobody passes. The ceiling is loose on purpose: it exists to
-#: catch a typo, not to legislate how old a caller may be.
-MIN_AGE_FLOOR = 0
-MIN_AGE_CEILING = 120
-
-
-async def _prompt_min_age(session: Session, *, current: int | None) -> tuple[int | None, bool]:
-    """Shared min_age prompt for board/channel/area create+edit screens
-    (design doc §18). Returns `(value, ok)` -- `ok=False`
-    means the caller should cancel.
-
-    Opens on the current gate, if any. Enter saves what is shown, an
-    emptied line (or the explicit word `none`) clears the gate, and
-    Escape leaves it alone -- see `_CLEAR_HINT` for why this is no longer
-    "blank = keep"."""
-    await write_field_prompt(
-        session, colored(f"Minimum age ({_CLEAR_HINT}, {MIN_AGE_FLOOR}-{MIN_AGE_CEILING}):", fg_color=MUTED_COLOR),
-        hint=f"Age {MIN_AGE_FLOOR}-{MIN_AGE_CEILING}; Enter saves; Esc keeps",
-    )
-    try:
-        raw = (await _read_seeded_line(
-            session, initial="" if current is None else str(current)
-        )).strip()
-    except InputCancelled:
-        await session.write_line("")
-        return current, True
-    if not raw or raw.lower() == "none":
-        return None, True
-    try:
-        value = int(raw)
-    except ValueError:
-        await write_field_message(session, colored("Not a number -- cancelled.", fg_color=MUTED_COLOR))
-        return None, False
-    if not (MIN_AGE_FLOOR <= value <= MIN_AGE_CEILING):
-        # Issue #540. This used to accept any integer at all, and
-        # `meets_age` compares `compute_age(birthdate) >= min_age`, so a
-        # fat-fingered 188 or 1000 refused every caller on the node --
-        # including callers who would otherwise have qualified -- with
-        # nothing on screen explaining why. "Nobody can get into this
-        # area" does not obviously point at a mistyped age.
-        #
-        # A negative value was worse than useless: truthy, so treated as
-        # a real gate, and then passed by everyone with a birthdate
-        # while still failing closed for anyone without one.
-        #
-        # Refused rather than clamped, and nothing is written, so the
-        # SysOp sees that their value did not take.
-        await write_field_message(session,
-            colored(
-                f"A minimum age must be between {MIN_AGE_FLOOR} and {MIN_AGE_CEILING}, "
-                f"or 'none' for no gate -- cancelled.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return None, False
-    return value, True
-
-
-async def _prompt_min_age_check(
-    session: Session, *, current: int | None, current_requirement: str | None,
-) -> tuple[int | None, str | None, bool]:
-    """`_prompt_min_age` that also asks how the age is checked (issue
-    #1082): a trailing `v` (`18v`) asks for a verified age. Returns
-    `(value, requirement, ok)`. Opens on what is set, `18v` included, so
-    Enter keeps both; an emptied line or `none` clears both."""
-    verified = current_requirement == VERIFIED_AGE
-    shown = "" if current is None else str(current)
-    if verified:
-        shown += "v"
-    await write_field_prompt(
-        session,
-        colored(
-            f"Minimum age ({_CLEAR_HINT}, {MIN_AGE_FLOOR}-{MIN_AGE_CEILING}, add v for verified only):",
-            fg_color=MUTED_COLOR,
-        ),
-        hint=f"Age {MIN_AGE_FLOOR}-{MIN_AGE_CEILING}, 18v = verified only; Enter saves; Esc keeps",
-    )
-    try:
-        raw = (await _read_seeded_line(session, initial=shown)).strip()
-    except InputCancelled:
-        await session.write_line("")
-        return current, current_requirement, True
-    if not raw or raw.lower() == "none":
-        return None, None, True
-    wants_verified = raw[-1:].lower() == "v"
-    number = raw[:-1].strip() if wants_verified else raw
-    if not is_ascii_number(number):
-        await write_field_message(session, colored("Not a number -- cancelled.", fg_color=MUTED_COLOR))
-        return current, current_requirement, False
-    value = int(number)
-    if not (MIN_AGE_FLOOR <= value <= MIN_AGE_CEILING):
-        await write_field_message(session,
-            colored(
-                f"A minimum age must be between {MIN_AGE_FLOOR} and {MIN_AGE_CEILING}, "
-                f"or 'none' for no gate -- cancelled.",
-                fg_color=MUTED_COLOR,
-            )
-        )
-        return current, current_requirement, False
-    return value, VERIFIED_AGE if wants_verified else None, True
-
-
 async def _pick_optional_category(
     session: Session,
     lane: DatabaseLane,
@@ -19437,92 +18622,6 @@ async def _pick_optional_community(
     return selected.id if selected is not None else None
 
 
-def _optional_int_label(value: int | None, *, none_word: str = "none") -> str:
-    return str(value) if value is not None else none_word
-
-
-def _users_phrase(count: int) -> str:
-    return f"{count} user{'s' if count != 1 else ''}"
-
-
-def _plain_level_label(levels: LevelContext | None, level: int | None) -> str:
-    """A channel's, door's or setting's level, with how many enabled,
-    approved accounts it lets in (design doc §5.7, issue #1008)."""
-    if level is None:
-        return "none"
-    if levels is None:
-        return str(level)
-    return f"{level_label(level, levels.names)} \u00b7 {_users_phrase(levels.users_at_or_above(level))}"
-
-
-def _setting_level_label(levels: LevelContext, level: int) -> str:
-    return f"level {level_label(level, levels.names)} and up · {_users_phrase(levels.users_at_or_above(level))}"
-
-
-def _effective_draft_level(levels: LevelContext, draft: dict, key: str) -> tuple[int, str | None]:
-    """A board's or file area's read or write level as the draft stands:
-    `(level, where)`, `where` saying where an inherited level comes from."""
-    stored = draft.get(key)
-    if stored is not None:
-        return stored, None
-    community = levels.communities.get(draft.get("community_id"))
-    default = getattr(community, f"default_{key}", None) if community is not None else None
-    if default is not None:
-        return default, f"from Community {community.name}"
-    return 0, "the default"
-
-
-def _resource_level_label(levels: LevelContext | None, draft: dict, key: str) -> str:
-    """`min_read_level`/`min_write_level` on a board or file area editor:
-    the value, where an inherited one comes from, and how many accounts it
-    lets in. Posting needs reading too, so a write level below the read
-    level is counted at the read level and says so."""
-    if levels is None:
-        return _optional_int_label(draft.get(key))
-    level, where = _effective_draft_level(levels, draft, key)
-    label = level_label(level, levels.names)
-    shown = f"none: {label} {where}" if where is not None else label
-    counted, extra = level, ""
-    if key == "min_write_level":
-        read_level, _ = _effective_draft_level(levels, draft, "min_read_level")
-        if read_level > level:
-            counted, extra = read_level, f" (reading needs {read_level})"
-    return f"{shown} \u00b7 {_users_phrase(levels.users_at_or_above(counted))}{extra}"
-
-
-def _community_default_label(levels: LevelContext | None, draft: dict, key: str, community_id: int | None) -> str:
-    """A Community's default read or write level, with how many accounts it
-    lets in and how many boards and file areas inherit it."""
-    value = draft.get(key)
-    label = _optional_int_label(value)
-    if levels is None:
-        return label
-    if value is not None:
-        label = f"{level_label(value, levels.names)} \u00b7 {_users_phrase(levels.users_at_or_above(value))}"
-    direction = "read" if "read" in key else "write"
-    inheriting = levels.inheriting.get((community_id, direction), {}) if community_id is not None else {}
-    parts = [f"{count} {what}{'s' if count != 1 else ''}" for what, count in sorted(inheriting.items())]
-    return label + (f" \u00b7 inherited by {', '.join(parts)}" if parts else "")
-
-
-# Tri-state "recommend this to Link peers" cycle -- `[L]ink this board`/
-# `[L]ink this file area`'s own `default_moderated` field (dogfood
-# report: converting these screens from their old fixed linear prompt
-# chain). Unlike a plain `bool_field`, silence is a real third state
-# here (send no recommendation at all, matching every other `default_*`
-# field's own "blank = no recommendation" convention), not just a
-# "current" value to keep -- so this cycles through it like
-# `_name_requirement_field`'s own three-value set rather than confirming
-# a toggle.
-_LINK_RECOMMENDATION_VALUES: list[bool | None] = [None, True, False]
-
-
-def _link_recommendation_label(value: bool | None) -> str:
-    if value is None:
-        return "no recommendation"
-    return "yes" if value else "no"
-
-
 # -- FieldSpec adapters (design doc, dogfood feature request) --------
 #
 # Thin wrappers turning this module's own existing per-type prompt
@@ -19532,134 +18631,6 @@ def _link_recommendation_label(value: bool | None) -> str:
 # (draft-preserving, not screen-aborting) on a rejected entry -- unlike
 # every one of these helpers' own original callers, which used to
 # treat a `False` `ok` as "abandon the entire in-progress wizard."
-
-
-def _optional_int_field(key: str, label: str) -> Callable[[Session, DatabaseLane, dict], Awaitable[None]]:
-    @inline_field
-    async def prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
-        value, ok = await _prompt_optional_int(session, label, current=draft.get(key))
-        if ok:
-            draft[key] = value
-
-    return prompt
-
-
-def _int_field(key: str, label: str) -> Callable[[Session, DatabaseLane, dict], Awaitable[None]]:
-    """A plain, non-nullable int field (channel's own `min_level` has
-    no Community-inheritance concept the way boards'/areas' `min_read_
-    level`/`min_write_level` do, so `_read_int`, not `_prompt_optional_
-    int`, is the right underlying primitive here)."""
-
-    @inline_field
-    async def prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
-        # No `[current]` in the prompt any more: the value is in the
-        # line the caller is editing, so showing it twice would read as
-        # two different numbers.
-        await write_field_prompt(session, colored(f"{label} ({_EDIT_HINT}):", fg_color=MUTED_COLOR))
-        value = await _read_int(session, default=draft.get(key))
-        if value is not None:
-            draft[key] = value
-
-    return prompt
-
-
-def _min_age_field(
-    key: str = "min_age", requirement_key: str | None = None,
-) -> Callable[[Session, DatabaseLane, dict], Awaitable[None]]:
-    """The Min age field. With `requirement_key` (issue #1082) it also
-    edits whether the age must be verified: typed as `18v`, shown by
-    `_min_age_label` as "18, verified only"."""
-    @inline_field
-    async def prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
-        if requirement_key is None:
-            value, ok = await _prompt_min_age(session, current=draft.get(key))
-            if ok:
-                draft[key] = value
-            return
-        value, requirement, ok = await _prompt_min_age_check(
-            session, current=draft.get(key), current_requirement=draft.get(requirement_key),
-        )
-        if ok:
-            draft[key] = value
-            draft[requirement_key] = requirement
-
-    return prompt
-
-
-def _min_age_label(value: int | None, requirement: str | None) -> str:
-    """A Min age field's value, with how it is checked (issue #1082). A
-    resource that inherits its age but asks for a verified one says so."""
-    if requirement == VERIFIED_AGE:
-        return f"{_optional_int_label(value)}, verified only"
-    return _optional_int_label(value)
-
-
-def _name_requirement_label(value: str | None) -> str:
-    """Dogfood follow-up: since issue #153 turned this from typed text
-    into a cycling toggle, showing the raw stored value verbatim
-    ('verified_and_displayed') means every render still displays the
-    field's internal string constant, underscores and all, rather than
-    words a SysOp would actually write. 'none'/'verified' already read
-    fine as-is; only the compound value needs it."""
-    return (value or "none").replace("_", " ")
-
-
-_NAME_REQUIREMENT_VALUES = [None, "verified", "verified_and_displayed"]
-
-
-def _name_requirement_field(key: str = "name_requirement") -> Callable[[Session, DatabaseLane, dict], Awaitable[None]]:
-    """Cycles none -> verified -> verified_and_displayed -> none on
-    each hotkey press (dogfood feature request, issue #153) instead of
-    requiring the SysOp to type the literal string
-    `verified_and_displayed`."""
-    return choice_field(key, _NAME_REQUIREMENT_VALUES)
-
-
-def _name_requirement_step(key: str = "name_requirement") -> Callable[[dict, int], None]:
-    """`FieldSpec.step` counterpart to `_name_requirement_field`
-    (dogfood feature request, issue #160's cursor-navigation
-    follow-up) -- Left/Right cycle the same three values Space/Enter/
-    the hotkey letter already do, just in either direction."""
-    return choice_step(key, _NAME_REQUIREMENT_VALUES)
-
-
-def _resolve_redraw_preference(db: Database, actor: User) -> tuple[bool, bool]:
-    """`(redraw_in_place, show_hint)` for `edit_resource_draft` -- one
-    `lane.run` round trip instead of two, resolved once by the caller
-    before entering the screen, the same "caller resolves, function
-    just trusts it" shape `description_level` already uses. The hint
-    is only ever worth showing when the preference is both off and
-    never explicitly touched -- an account that already turned it on,
-    or already turned it down, doesn't need to be told about it again."""
-    enabled = redraw_in_place_enabled(db, actor)
-    show_hint = not enabled and not redraw_in_place_ever_set(db, actor)
-    return enabled, show_hint
-
-
-# Dogfood feature request, issue #150's own concrete example ("new
-# SysOps have absolutely no clue what name requirements do"): Ctrl-H
-# help text for every FieldSpec below that exposes this field. One
-# shared string so the four call sites (board/area/channel plus
-# Community's own cascading default) can never drift apart.
-#: Appended to a Min age field's help (issue #1082): how to ask for a
-#: verified age, which the field itself shows as "18, verified only".
-_VERIFIED_AGE_HELP = (
-    " Type the age with a v (18v) to accept only an age you, or staff who verify "
-    "identity, have verified: a caller old enough by the birthdate they entered sees "
-    "it marked 'needs verification' and is told to ask. A plain number accepts that "
-    "birthdate when there is no verified age. Callers set a birthdate in Your profile › "
-    "Name & details; you verify it from the main menu's [V]erify, and staff can once "
-    "you switch on Can verify identity for them (Users)."
-)
-
-
-_NAME_REQUIREMENT_HELP = (
-    "Gates posting/joining on identity: 'none' has no gate. 'verified' requires "
-    "attestation but shows nothing about it. 'verified_and_displayed' also shows the "
-    "caller's attested real name alongside their posts here. You verify a caller's "
-    "name from the main menu's [V]erify; staff can once you switch on Can verify "
-    "identity for them (Users)."
-)
 
 
 def _community_field(
@@ -19735,14 +18706,6 @@ def _category_field(
         draft["category_id_label"] = category.name if category is not None else None
 
     return prompt
-
-
-def _community_label(db: Database, community_id: int | None) -> str:
-    """Detail-screen display helper -- `(none)` for `community_id is
-    None`, else the Community's own name (sanitized, same as every
-    other user-controlled string shown on these detail screens)."""
-    community = get_community(db, community_id)
-    return sanitize_text(community.name) if community is not None else "(none)"
 
 
 # -- Communities (design doc §16) ------------------
@@ -20303,17 +19266,6 @@ def _board_field_specs(
     ]
 
 
-def _sections_text(sections: Sequence[Section], *, width: int, unicode_style: bool) -> str:
-    """Detail sections as one block of text, for a resource's own screen
-    to show after its fields (issue #1081): the same rendering
-    `_write_sections` writes, a blank row before each group."""
-    lines: list[str] = []
-    for block in render_sections(sections, width=width, unicode_style=unicode_style):
-        lines.append("")
-        lines.extend(block.lines)
-    return "\r\n".join(lines)
-
-
 def _board_draft(board: Board | None) -> dict:
     if board is None:
         return {
@@ -20663,39 +19615,6 @@ async def _list_boards_screen(
 # inherited value would be the more confusing half-measure.
 
 
-@dataclass(frozen=True)
-class _Effective:
-    """The post-cascade values for one resource. `read`/`write` are
-    `None` for a chat channel, which has a single `min_level` and no
-    read/write split to inherit."""
-
-    read: int | None
-    write: int | None
-    min_age: int | None
-    name_requirement: str | None
-    # Whether the age must be verified (issue #1082), after the cascade.
-    age_requirement: str | None = None
-
-
-def _effective_for(db: Database, resource, *, levels: bool = True) -> _Effective:
-    return _Effective(
-        read=get_effective_min_read_level(db, resource) if levels else None,
-        write=get_effective_min_write_level(db, resource) if levels else None,
-        min_age=get_effective_min_age(db, resource),
-        name_requirement=get_effective_name_requirement(db, resource),
-        age_requirement=get_effective_age_requirement(db, resource),
-    )
-
-
-def _effective_by_id(db: Database, resources, *, levels: bool = True) -> dict[int, _Effective]:
-    """Resolved for the whole list in the caller's existing lane pass,
-    not per row: `column_values_of` and `description_of` are pure
-    synchronous callbacks with no database of their own (the same
-    contract `FieldSpec.render` keeps), so the cascade has to be walked
-    here, where a `db` is already in hand."""
-    return {r.id: _effective_for(db, r, levels=levels) for r in resources}
-
-
 def _board_description(board: Board, effective: _Effective, to_review: bool = False) -> str:
     """The narrow-terminal form, below the width a table needs.
 
@@ -20711,21 +19630,6 @@ def _board_description(board: Board, effective: _Effective, to_review: bool = Fa
     return f"to review; {description}" if to_review else description
 
 
-def _describe_resource(read, write, status: str, effective: _Effective) -> str:
-    """Gates lead, deliberately.
-
-    This string is what a narrow terminal shows, and a narrow terminal
-    is exactly where it gets truncated -- appending the gates put them
-    first under the knife, so a 50-column row read
-    "... - read 10/write 0, op..." and lost the only field this issue
-    was filed about. Whoever can enter is the least recoverable fact in
-    the row and the least guessable from context, so it goes first and
-    the levels take the truncation instead."""
-    gates, _ = _gate_cell(effective.min_age, effective.name_requirement, effective.age_requirement)
-    tail = f"read {read}/write {write}, {status}"
-    return tail if gates == "-" else f"{gates}, {tail}"
-
-
 # -- Columnar resource lists (issue #528) -----------------------------
 #
 # `_board_description` above, and its file-area/channel/Community
@@ -20735,75 +19639,6 @@ def _describe_resource(read, write, status: str, effective: _Effective) -> str:
 # gates that never fitted into a one-line sentence at all.
 
 
-def _level_cell(value: int | None) -> str:
-    """A Community's own default-level cell.
-
-    Only Communities use this now: a leaf resource's columns resolve
-    through the cascade and always land on a number. A Community sits
-    at the top with nothing above it, so `None` there means "sets no
-    default", not "inherits one" -- the word matters, since "inherit"
-    on a Community row would point at a parent that does not exist."""
-    return str(value) if value is not None else "none"
-
-
-def _gate_cell(
-    min_age: int | None, name_requirement: str | None, age_requirement: str | None = None,
-) -> tuple[str, SegmentColor]:
-    """The gates column, and the point of the exercise (issue #528).
-
-    A resource can be gated on caller age, on identity attestation, or
-    both, and none of it appeared anywhere in a list row -- so an area
-    that turns away most of the node read exactly like one that turns
-    away nobody. Shown as compact tags rather than prose because this
-    is a column, and colored `GATE_COLOR` only when a gate is actually
-    present: an ungated row should stay quiet, and a gated one should
-    catch the eye while scanning.
-
-    `name` is attestation required; `name+` additionally displays the
-    attested real name alongside the caller's posts
-    ("verified_and_displayed"). An age that must be verified (issue
-    #1082) reads `18+ verified`.
-    """
-    tags: list[str] = []
-    # Truthiness, not `is not None` (Codex review): `meets_age` opens
-    # with `if not min_age: return True` and documents "unset/0 -> always
-    # passes (no gate)", so an explicit 0 -- a supported way to override
-    # an inherited age gate -- admits everyone. Rendering "0+" would
-    # advertise a restriction enforcement does not apply, which is the
-    # same class of lie as omitting a gate that it does.
-    if min_age:
-        tags.append(f"{min_age}+ verified" if age_requirement == VERIFIED_AGE else f"{min_age}+")
-    if name_requirement == "verified_and_displayed":
-        tags.append("name+")
-    elif name_requirement:
-        tags.append("name")
-    if not tags:
-        return ("-", MUTED_COLOR)
-    return (" ".join(tags), GATE_COLOR)
-
-
-# Read/write levels are right-aligned so the numbers form a column that
-# can be compared down the page; the words beside them are not.
-_LEVEL_COLUMNS = [
-    ListColumn("read", 7, VALUE_COLOR, align_right=True),
-    ListColumn("write", 7, VALUE_COLOR, align_right=True),
-]
-_STATUS_COLUMN = ListColumn("status", 9, VALUE_COLOR)
-# Eleven, not nine or ten: `_prompt_min_age` parses a bare `int()`
-# with no upper bound at all, so "1000+ name+" is reachable from the
-# UI today, and a gates column that truncates the gate is worse than
-# no column. Eleven covers every age a human could plausibly be typed
-# as, including a fat-fingered one. The real defect behind this --
-# that an unbounded age is accepted at all, and a typo'd 1000 makes
-# `meets_age` refuse every caller and silently lock the resource --
-# is an input-validation problem, filed separately rather than
-# papered over with a wider column.
-_GATES_COLUMN = ListColumn("gates", 11, GATE_COLOR)
-
-# Issue #681: how much is there, and how much waits. "12 +3" is 12 posts
-# readers see and 3 held for a moderator; a pinned resource says so in
-# its status. At 80 columns the name still keeps the table's minimum.
-_BOARD_STATUS_COLUMN = ListColumn("status", 12, VALUE_COLOR)
 _BOARD_COLUMNS = [*_LEVEL_COLUMNS, _BOARD_STATUS_COLUMN, ListColumn("posts", 9, VALUE_COLOR), _GATES_COLUMN]
 _AREA_COLUMNS = [*_LEVEL_COLUMNS, _BOARD_STATUS_COLUMN, ListColumn("files", 9, VALUE_COLOR), _GATES_COLUMN]
 _CHANNEL_COLUMNS = [
@@ -20816,22 +19651,6 @@ _CHANNEL_COLUMNS = [
 _COMMUNITY_COLUMNS = [*_LEVEL_COLUMNS, ListColumn("listed", 6, VALUE_COLOR), _GATES_COLUMN]
 
 
-def _listing_status(moderated: bool, pinned: bool, to_review: bool = False) -> str | tuple[str, SegmentColor]:
-    """Moderated or open, and pinned to the top of its list -- or, for a
-    resource Link carried in that the SysOp has not opened yet, that it
-    waits for a look (issue #681)."""
-    if to_review:
-        return ("to review", WARNING_COLOR)
-    if pinned:
-        return "mod., pinned" if moderated else "open, pinned"
-    return "moderated" if moderated else "open"
-
-
-def _count_cell(listed: int, pending: int) -> tuple[str, SegmentColor]:
-    """"12 +3": listed, and held for a moderator (in warning color)."""
-    return (f"{listed} +{pending}", WARNING_COLOR) if pending else (str(listed), VALUE_COLOR)
-
-
 def _board_columns(
     board: Board, effective: _Effective, counts: tuple[int, int] = (0, 0), to_review: bool = False,
 ) -> list[str | tuple[str, SegmentColor]]:
@@ -20842,58 +19661,6 @@ def _board_columns(
         _count_cell(*counts),
         _gate_cell(effective.min_age, effective.name_requirement, effective.age_requirement),
     ]
-
-
-def _area_columns(
-    area: FileArea, effective: _Effective, counts: tuple[int, int] = (0, 0), to_review: bool = False,
-) -> list[str | tuple[str, SegmentColor]]:
-    return [
-        str(effective.read),
-        str(effective.write),
-        _listing_status(area.moderated, area.pinned, to_review),
-        _count_cell(*counts),
-        _gate_cell(effective.min_age, effective.name_requirement, effective.age_requirement),
-    ]
-
-
-def _channel_access(channel: Channel) -> str:
-    access = ["members"] if channel.members_only else []
-    if channel.hidden:
-        access.append("hidden")
-    return "+".join(access) if access else "open"
-
-
-def _channel_columns(
-    channel: Channel, effective: _Effective, to_review: bool = False,
-) -> list[str | tuple[str, SegmentColor]]:
-    # `min_level` is a plain non-nullable int with no Community default
-    # behind it, so unlike a board's read/write there is nothing to
-    # resolve -- only the gates cascade for a channel.
-    return [
-        str(channel.min_level),
-        ("to review", WARNING_COLOR) if to_review else _channel_access(channel),
-        _gate_cell(effective.min_age, effective.name_requirement, effective.age_requirement),
-    ]
-
-
-def _community_columns(community: Community) -> list[str | tuple[str, SegmentColor]]:
-    """A Community's own columns are its *defaults* -- the floor every
-    board, area and channel inside it inherits unless it sets its own.
-    Exactly as invisible as a leaf resource's gates were, and with
-    wider consequences, since one edit here moves every child at once."""
-    return [
-        _level_cell(community.default_min_read_level),
-        _level_cell(community.default_min_write_level),
-        "no" if community.hidden else "yes",
-        _gate_cell(community.default_min_age, community.default_name_requirement, community.default_age_requirement),
-    ]
-
-
-def _place_label(place: int, total: int, *, pinned: bool) -> str:
-    """Where a board or area sits in the callers' list (issue #839): among
-    those in the same category and Community, pinned ones apart. It replaced
-    the "Pinned" row, which it now says, so the screen gained no row."""
-    return f"{place + 1} of {total}" + (", pinned first" if pinned else "")
 
 
 async def _board_detail_screen(
@@ -21106,26 +19873,6 @@ def _linked_boards_excluding(db: Database, exclude_board_id: int) -> list[Board]
     ]
 
 
-async def _warn_about_changed_node_identity(
-    session: Session,
-    lane: DatabaseLane,
-    fingerprint: str,
-    *,
-    role: str,
-) -> None:
-    identity_notice = await lane.run(latest_identity_observation, fingerprint)
-    if identity_notice is None or identity_notice.severity != "security":
-        return
-    await session.write_line(
-        colored(
-            "Caution: this familiar node name now has a different cryptographic identity. "
-            f"{role} technical identity is {sanitize_text(fingerprint)}.",
-            fg_color=MUTED_COLOR,
-            bold=True,
-        )
-    )
-
-
 async def _transfer_board_origin_screen(
     session: Session, lane: DatabaseLane, board: Board, link_context: LinkContext
 ) -> None:
@@ -21313,51 +20060,6 @@ async def _accept_board_origin_transfer_screen(
     )
 
 
-def _linked_node_label(link_context, fingerprint) -> str:
-    """Present a linked node by its admitted profile, else by its signed
-    fingerprint -- never by a shared placeholder that would make two
-    unavailable origins indistinguishable."""
-    peer = link_context.link_node.peers.get(fingerprint) if isinstance(fingerprint, str) else None
-    if peer is not None:
-        return identity_for_peer(peer).label
-    if isinstance(fingerprint, str) and fingerprint:
-        return fingerprint
-    return "an unknown linked node"
-
-
-# How many moderators the moderation screen names; the rest are counted.
-_MODERATORS_SHOWN = 5
-
-
-def _moderator_lines(db: Database, object_type: str, object_id: int) -> list[str]:
-    """Who may moderate this board or file area, and with what (issue
-    #678): every grant that applies to it, its own and blanket ones, as
-    `list_grants_for_object` answers, one line each. Shown above its
-    history rather than on its detail screen, which at 80x24 has no row to
-    spare (Codex review on #797). Sanitized: a username is its owner's
-    own text."""
-    grants = list_grants_for_object(db, object_type=object_type, object_id=object_id)
-    if not grants:
-        return ["none: only SysOps moderate here"]
-    lines = []
-    for grant in grants[:_MODERATORS_SHOWN]:
-        user = get_user_by_id(db, grant.user_id)
-        name = user.username if user is not None else "(deleted account)"
-        permissions = ", ".join(
-            flag.name.lower() for flag in BoardPermission if flag & grant.permissions and flag.name
-        )
-        if grant.object_id is not None:
-            scope = ""
-        elif grant.community_id is not None:
-            scope = " (Community-wide)"
-        else:
-            scope = " (all local ones)"
-        lines.append(sanitize_text(f"{name}: {permissions}{scope}"))
-    if len(grants) > _MODERATORS_SHOWN:
-        lines.append(f"...and {len(grants) - _MODERATORS_SHOWN} more (see [R]evoke moderator)")
-    return lines
-
-
 async def _delete_board_screen(
     session: Session, lane: DatabaseLane, actor: User, board: Board, *,
     own_fingerprint: str | None = None,
@@ -21392,61 +20094,6 @@ async def _delete_board_screen(
         session, lane, actor, "boards", board.board_id, board.name, own_fingerprint=own_fingerprint,
         delete=lambda db: delete_board(db, board, deleted_by=actor),
     )
-
-
-_EXCLUDED_AFTER_DELETE = " It is excluded from Link here and will not come back; Link status lists it."
-
-
-async def _hide_carried_screen(
-    session: Session, lane: DatabaseLane, actor: User, kind: str, resource_id: str, name: str,
-    *, own_fingerprint: str | None,
-) -> bool:
-    """Deleting a carried Link resource whose origin is another node (issue
-    #683, decided 2026-09-26): it is hidden from callers and no longer carried,
-    and everything in it is kept, so Restore brings it back exactly as it was;
-    Purge under Link status -> Excluded deletes it for real."""
-    label = KIND_LABELS[kind]
-    await session.write_line(
-        colored(
-            f"\r\nThis {label} is carried from another node. Deleting it here excludes it: "
-            "callers stop seeing it and this node stops carrying it, but everything in it is "
-            "kept. Link status -> Excluded restores it exactly as it was, or purges it for good.",
-            fg_color=MUTED_COLOR,
-        )
-    )
-    await write_prompt(session, f"Type the {label} name {name!r} to confirm, or anything else to cancel: ")
-    confirmation = (await session.read_line()).strip()
-    if confirmation != name:
-        _confirmation_refused(session, confirmation, name)
-        return False
-    return await _remove_resource(
-        session, lane, actor, kind, resource_id, name, own_fingerprint=own_fingerprint, delete=None,
-    )
-
-
-async def _remove_resource(
-    session: Session, lane: DatabaseLane, actor: User, kind: str, resource_id: str, name: str, *,
-    own_fingerprint: str | None, delete,
-) -> bool:
-    """Carry out a confirmed delete as one lane job (`remove_linked_or_local`),
-    and say what actually happened -- which is the reversible hide if the
-    resource's origin moved away while the SysOp was confirming."""
-    def _job(db: Database) -> str:
-        return remove_linked_or_local(
-            db, kind, resource_id, actor=actor, own_fingerprint=own_fingerprint,
-            delete=(lambda: delete(db)) if delete is not None else None,
-        )
-
-    try:
-        outcome = await lane.run(_job)
-    except CarryDecisionError as exc:
-        _announce_line(session, colored(f"Could not delete {name!r}: {exc}", fg_color=ERROR_COLOR))
-        return False
-    if outcome == "hidden":
-        _announce_line(session, f"{name!r} excluded from this node; Link status -> Excluded restores or purges it.")
-    else:
-        _announce_line(session, f"{name!r} deleted." + (_EXCLUDED_AFTER_DELETE if outcome == "deleted-excluded" else ""))
-    return True
 
 
 @dataclass(frozen=True)
@@ -21977,21 +20624,6 @@ async def _gc_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
         if choice == "b":
             return
         report = await lane.run(reclaim_orphaned_blobs, dry_run=False)
-
-
-def _format_bytes(size_bytes: int) -> str:
-    """Human-readable byte count, binary (KiB/MiB/GiB) units -- a small
-    local formatter rather than reaching into
-    `netbbs.net.file_flow`'s own private `_format_size`, which exists
-    for that module's file-listing display specifically."""
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    size = float(size_bytes) / 1024
-    for unit in ("KiB", "MiB", "GiB"):
-        if size < 1024 or unit == "GiB":
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} GiB"  # unreachable, satisfies type checkers
 
 
 def _gc_report_section(report: GCReport) -> Section:

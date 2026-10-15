@@ -24,8 +24,8 @@ import asyncio
 
 import pytest
 
-from netbbs.net.admin_flow import (
-    _float_field,
+from netbbs.net.admin_flow import _float_field
+from netbbs.net.admin_fields import (
     _int_field,
     _optional_text_field,
     _prompt_min_age,

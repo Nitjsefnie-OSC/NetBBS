@@ -429,7 +429,7 @@ def test_process_failure_is_bounded_and_owned(db, lane, hub, sysop, channel, mod
 
 
 def test_console_back_and_draft_save_use_real_editor(db, lane, sysop, channel):
-    from netbbs.net.admin_flow import _load_chrome
+    from netbbs.net.admin_ui import _load_chrome
 
     class Screen(FakeSession):
         def __init__(self, keys):

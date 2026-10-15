@@ -220,7 +220,7 @@ def test_remote_reply_reaches_caller_when_channel_origin_is_offline(tmp_path):
 
 def test_editor_requires_explicit_link_approval_before_persisting(tmp_path, monkeypatch):
     from netbbs.net import bot_flow
-    from netbbs.net.admin_flow import _load_chrome
+    from netbbs.net.admin_ui import _load_chrome
     from tests.test_bot_runtime import FakeSession
     from netbbs.bots.registry import list_bots
 

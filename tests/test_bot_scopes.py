@@ -219,7 +219,7 @@ def test_reader_roster_relay_withdrawal_and_old_peer_compatibility(tmp_path):
 
 def test_editor_warns_and_persists_explicit_scopes(db, lane, sysop, channel, monkeypatch):
     from netbbs.net import bot_flow
-    from netbbs.net.admin_flow import _load_chrome
+    from netbbs.net.admin_ui import _load_chrome
     from netbbs.bots.registry import list_bots
     answers = iter((False, True))
     prompts = []

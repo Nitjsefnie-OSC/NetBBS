@@ -24,6 +24,7 @@ from netbbs.mrc.settings import (
     save_open_room_settings,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu
 from tests.test_admin_flow import FakeSession, _visible, _written_text
 from tests.test_admin_flow_mrc import (  # noqa: F401 -- fixtures and helpers
@@ -119,7 +120,7 @@ def test_retire_asks_first_and_then_removes_the_room(db, lane, sysop):
     assert "Close mrc:lobby and delete its scrollback now?" in text
     # Entered directly, so the outcome is still queued for the menu that would
     # be drawn next rather than written under this screen.
-    assert "Closed 'mrc:lobby'." in _visible("".join(admin_flow._take_notices(session)))
+    assert "Closed 'mrc:lobby'." in _visible("".join(admin_ui._take_notices(session)))
     assert get_mrc_mapping(db, channel) is None
     try:
         get_channel_by_name(db, "mrc:lobby")

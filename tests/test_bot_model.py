@@ -266,7 +266,7 @@ def test_model_action_uses_host_original_and_rejects_forged_token(db, lane, hub,
 
 def test_editor_masked_secret_consent_denial_and_atomic_save(db, lane, sysop, monkeypatch):
     from netbbs.net import bot_model_flow
-    from netbbs.net.admin_flow import _load_chrome
+    from netbbs.net.admin_ui import _load_chrome
     from tests.test_chat_flow_moderation import FakeSession
     prompts = []
     answers = iter((False, True))
