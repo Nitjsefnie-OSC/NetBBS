@@ -2857,8 +2857,17 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
         retired = await lane.run(list_retired_usernames)
         held: list[Field | Note | Table] = (
             [Table(
-                ("Username", "Retired"),
-                [[(entry.username, ACCENT_COLOR), (entry.retired_at[:10], DATE_COLOR)] for entry in retired],
+                ("Username", "Retired", "Held for"),
+                [
+                    [
+                        (entry.username, ACCENT_COLOR), (entry.retired_at[:10], DATE_COLOR),
+                        # Issue #1306: a renamed account still receives mail
+                        # written to its old name.
+                        (f"renamed to {entry.renamed_to}", VALUE_COLOR) if entry.renamed_to
+                        else ("deleted account", MUTED_COLOR),
+                    ]
+                    for entry in retired
+                ],
             )]
             if retired else [Note("None.", color=SUCCESS_COLOR)]
         )
@@ -2866,7 +2875,8 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
             "On NetBBS Link a username is the account's identity, so on a node that has run "
             "Link the name of a deleted account is held: whoever registered it next would "
             "inherit the old account's Link mail address, the authorship of its carried "
-            "posts, and what other nodes recorded about it."
+            "posts, and what other nodes recorded about it. A renamed account's old name is "
+            "held the same way, and mail written to it still reaches that account."
             if await lane.run(link_has_ever_run)
             else "This node has never run NetBBS Link, so deleting an account frees its "
             "username at once and nothing is held here."
@@ -2878,7 +2888,7 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
             session,
             title=_detail_title(
                 session, chrome, "Held names", own=True,
-                subtitle="Names held for deleted accounts so nobody inherits their Link identity.",
+                subtitle="Names held for deleted and renamed accounts so nobody inherits their Link identity.",
             ),
             sections=[Section("Why names are held", [why]), Section("Held usernames", held)],
             actions=actions, page=page, message=message,
@@ -2896,7 +2906,10 @@ async def _retired_usernames_screen(session: Session, lane: DatabaseLane, actor:
             session, retired,
             name_of=lambda entry: entry.username,
             stable_id_of=lambda entry: _stable_id_for(entry.username.lower()),
-            description_of=lambda entry: f"retired {entry.retired_at[:10]}",
+            description_of=lambda entry: (
+                f"retired {entry.retired_at[:10]}"
+                + (f", renamed to {entry.renamed_to}" if entry.renamed_to else "")
+            ),
             title="Release which username?", empty_message="No usernames are retired.",
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style, collapsed=chrome.collapsed,
             accent_color=chrome.accent_color,

@@ -38,6 +38,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 
+from netbbs.auth.renames import get_recipient_by_name
 from netbbs.auth.users import AuthError, User, get_user_by_username, is_usable_sysop, list_users
 from netbbs.boards.boards import get_board_by_id
 from netbbs.boards.limits import MAX_BODY_BYTES
@@ -224,7 +225,9 @@ def _netmail_recipient(db: Database, to_name: str) -> tuple[User, str | None]:
     was for (Decision 7)."""
     name = to_name.strip()
     try:
-        user = get_user_by_username(db, name)
+        # A name renamed away from reaches the renamed account (issue #1306):
+        # FTN networks have no rename, and keep writing to the old one.
+        user = get_recipient_by_name(db, name)
     except AuthError:
         user = None
     if user is not None and mail_recipient_refusal(db, user) is None:

@@ -89,6 +89,13 @@ class ChannelMessage:
     # codes and all; shown per viewer, never part of the sender's identity.
     mrc_handle: str | None = None
     author_kind: Literal["user", "bot"] = "user"
+    # Issue #1306: the local account that wrote the line, so it still
+    # resolves to its author after a rename and never to a later holder of
+    # the name. `None` for a line no account wrote (a bot, a door, MRC, a
+    # Link speaker), which resolves by label; 0 for an older line whose
+    # author could not be told apart from a later holder of the name, which
+    # resolves to nobody (`netbbs.net.chat_flow._resolve_message_author`).
+    author_user_id: int | None = None
 
 
 def get_scrollback_limit(db: Database) -> int:
@@ -136,10 +143,14 @@ def record_message(
     index_body: str | None = None,
     mrc_nick_color: int | None = None,
     mrc_handle: str | None = None,
+    author_user_id: int | None = None,
 ) -> ChannelMessage:
     """
     Append an event to `channel`'s scrollback and trim it back down to the
     configured limit.
+
+    `author_user_id` is the local account the line is by (issue #1306);
+    every line a caller writes passes it.
 
     `external_source` marks a line that arrived from an outside network
     (issue #275's MRC bridge records `"mrc"`); see `ChannelMessage`.
@@ -193,6 +204,10 @@ def record_message(
     if mrc_handle:
         db.connection.execute(
             "UPDATE channel_messages SET mrc_handle = ? WHERE id = ?", (mrc_handle, message_id),
+        )
+    if author_user_id is not None:
+        db.connection.execute(
+            "UPDATE channel_messages SET author_user_id = ? WHERE id = ?", (author_user_id, message_id),
         )
     # Capture *this* row now, inside the transaction and before the trim:
     # never "the channel's newest row" (a background writer -- issue
@@ -284,4 +299,5 @@ def _row_to_message(row: sqlite3.Row) -> ChannelMessage:
         mrc_nick_color=row["mrc_nick_color"] if "mrc_nick_color" in columns else None,
         mrc_handle=row["mrc_handle"] if "mrc_handle" in columns else None,
         author_kind=row["author_kind"] if "author_kind" in columns else "user",
+        author_user_id=row["author_user_id"] if "author_user_id" in columns else None,
     )

@@ -50,6 +50,7 @@ import json
 import nacl.signing
 
 import netbbs.mail as mail_module
+from netbbs.auth.renames import get_recipient_by_name
 from netbbs.auth.users import AuthError, User, get_user_by_username
 from netbbs.identity.addressing import AddressError, is_valid_user_part, parse_address
 from netbbs.identity.encryption import EncryptionError, decrypt_with_any, encrypt_for
@@ -355,7 +356,9 @@ def deliver_link_message(
     sender_address = f"{sender_user}@{origin_node_fingerprint}"
 
     try:
-        recipient = get_user_by_username(db, recipient_local_user_id)
+        # A name renamed away from reaches the renamed account (issue #1306,
+        # design doc §16 #1111 Decision 2): peers still write to it.
+        recipient = get_recipient_by_name(db, recipient_local_user_id)
     except AuthError:
         return _bounce("unknown_recipient")
     # The shared guest account has no mailbox (issue #816): every guest
