@@ -189,7 +189,7 @@ def test_a_sysop_may_correct_another_sysops_details(db, sysop):
 
 
 def _detail(session, lane, actor, target):
-    from netbbs.net.admin_flow import _user_detail_screen
+    from netbbs.net.admin_users import _user_detail_screen
 
     asyncio.run(_user_detail_screen(session, lane, actor, target, None))
     return _visible(_written_text(session))

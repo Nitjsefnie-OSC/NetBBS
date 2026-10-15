@@ -54,7 +54,7 @@ def sysop(db):
 
 
 def _staff_screen(session, lane, actor, target, *, redraw_in_place=True):
-    from netbbs.net.admin_flow import _staff_permissions_screen
+    from netbbs.net.admin_users import _staff_permissions_screen
 
     return asyncio.run(_staff_permissions_screen(
         session, lane, actor, target, None, description_level="brief", redraw_in_place=redraw_in_place,

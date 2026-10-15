@@ -402,7 +402,7 @@ def test_a_declined_confirmation_changes_nothing(db, lane, sysop):
 
 
 def test_an_approval_refused_meanwhile_is_reported_not_raised(db, lane, sysop):
-    from netbbs.net.admin_flow import _user_detail_screen
+    from netbbs.net.admin_users import _user_detail_screen
 
     helper = _staff(db, sysop, "helper", APPROVE)
     stale_helper = helper
@@ -415,7 +415,7 @@ def test_an_approval_refused_meanwhile_is_reported_not_raised(db, lane, sysop):
 
 
 def test_an_identity_grant_by_a_demoted_sysop_is_reported_not_raised(db, lane, sysop):
-    from netbbs.net.admin_flow import _user_detail_screen
+    from netbbs.net.admin_users import _user_detail_screen
 
     boss = create_user(db, "boss", password="hunter2", user_level=SYSOP_LEVEL)
     stale_boss = boss

@@ -9668,7 +9668,7 @@ def test_users_compact_panel_fits_four_digit_account_counts():
     once the "Active ratio: " label is added (Codex follow-up, PR #197
     review); the bar was narrowed to 6 cells specifically for the
     compact branch to keep real headroom."""
-    from netbbs.net.admin_flow import _draw_users_menu
+    from netbbs.net.admin_users import _draw_users_menu
 
     stats = {
         "total": 1000, "active": 1000, "pending": 0, "disabled": 0, "sysops": 1,
