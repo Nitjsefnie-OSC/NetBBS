@@ -59,6 +59,7 @@ from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
 from tests.test_shutdown import _hold_registered
 from netbbs.net import admin_ui
+from netbbs.net import admin_maintenance
 
 # Sentinel strings in FakeSession's single scripted-input queue that
 # read_editor_key maps to
@@ -7056,7 +7057,7 @@ def test_update_screen_reports_up_to_date(db, lane, sysop, monkeypatch):
     async def fake_check(*, known_etag=None, known_release=None, token=None, fetch=None):
         return _fake_release(f"v{__version__}"), None
 
-    monkeypatch.setattr(admin_flow, "check_latest_release", fake_check)
+    monkeypatch.setattr(admin_maintenance, "check_latest_release", fake_check)
 
     session = FakeSession(["s", "u", "c", "b", "b", "b"])
     _run(session, lane, sysop)
@@ -7075,7 +7076,7 @@ def test_update_screen_reports_newer_release_without_auto_applying(db, lane, sys
     async def fake_check(*, known_etag=None, known_release=None, token=None, fetch=None):
         return _fake_release("v999.0.0"), None
 
-    monkeypatch.setattr(admin_flow, "check_latest_release", fake_check)
+    monkeypatch.setattr(admin_maintenance, "check_latest_release", fake_check)
 
     session = FakeSession(["s", "u", "c", "b", "b", "b"])
     _run(session, lane, sysop)
@@ -7121,7 +7122,7 @@ def test_update_screen_handles_check_failure_gracefully(db, lane, sysop, monkeyp
     async def fake_check(*, known_etag=None, known_release=None, token=None, fetch=None):
         raise UpdateError("could not reach the release API: timed out")
 
-    monkeypatch.setattr(admin_flow, "check_latest_release", fake_check)
+    monkeypatch.setattr(admin_maintenance, "check_latest_release", fake_check)
 
     session = FakeSession(["s", "u", "c", "b", "b", "b"])
     _run(session, lane, sysop)
@@ -7269,7 +7270,7 @@ def test_update_screen_manual_check_forwards_the_stored_token(db, lane, sysop, m
         seen_tokens.append(token)
         return _fake_release("v0.0.1"), None
 
-    monkeypatch.setattr(admin_flow, "check_latest_release", fake_check)
+    monkeypatch.setattr(admin_maintenance, "check_latest_release", fake_check)
 
     session = FakeSession(["s", "u", "c", "b", "b", "b"])
     _run(session, lane, sysop)
@@ -7769,7 +7770,7 @@ def test_live_backup_screen_surfaces_a_backup_failure(db, lane, sysop, monkeypat
     def fail_backup(**kwargs):
         raise admin_flow.BackupError("disk is full")
 
-    monkeypatch.setattr(admin_flow, "create_backup", fail_backup)
+    monkeypatch.setattr(admin_maintenance, "create_backup", fail_backup)
     identity_dir = db.path.parent / "identity"
     identity_dir.mkdir()
     controls = _node_controls(backup_identity_dir=identity_dir)
@@ -7833,7 +7834,7 @@ def test_live_backup_remains_owned_until_its_worker_finishes_after_cancellation(
         assert release.wait(timeout=5)
         return kwargs["destination"]
 
-    monkeypatch.setattr(admin_flow, "create_backup", slow_backup)
+    monkeypatch.setattr(admin_maintenance, "create_backup", slow_backup)
     identity_dir = db.path.parent / "identity"
     identity_dir.mkdir()
     controls = _node_controls(backup_identity_dir=identity_dir)
@@ -7863,12 +7864,12 @@ def test_live_backup_remains_owned_until_its_worker_finishes_after_cancellation(
 def test_live_backup_reports_success_when_audit_logging_fails(
     db, lane, sysop, monkeypatch,
 ):
-    from netbbs.net import admin_flow
+    from netbbs.net import admin_maintenance
 
     def fail_audit(*args, **kwargs):
-        raise admin_flow.sqlite3.OperationalError("database is locked")
+        raise admin_maintenance.sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(admin_flow, "record_action", fail_audit)
+    monkeypatch.setattr(admin_maintenance, "record_action", fail_audit)
     identity_dir = db.path.parent / "identity"
     identity_dir.mkdir()
     controls = _node_controls(backup_identity_dir=identity_dir)
@@ -8817,7 +8818,7 @@ def test_diagnostic_log_tail_screen_appends_entries_written_while_watching(db, l
     from netbbs.net import admin_flow
 
     poll_interval = 0.02
-    monkeypatch.setattr(admin_flow, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", poll_interval)
+    monkeypatch.setattr(admin_maintenance, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", poll_interval)
 
     db.connection.execute(
         "INSERT INTO link_diagnostic_log (level, logger_name, message, created_at) "
@@ -8836,7 +8837,7 @@ def test_diagnostic_log_tail_screen_appends_entries_written_while_watching(db, l
     session = _SlowKeySession(["x"])
 
     async def scenario():
-        task = asyncio.create_task(admin_flow._diagnostic_log_tail_screen(session, lane))
+        task = asyncio.create_task(admin_maintenance._diagnostic_log_tail_screen(session, lane))
         await asyncio.sleep(poll_interval * 2)
         db.connection.execute(
             "INSERT INTO link_diagnostic_log (level, logger_name, message, created_at) "

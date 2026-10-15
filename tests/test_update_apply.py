@@ -14,6 +14,7 @@ import pytest
 
 from netbbs import update_apply
 from netbbs.net import admin_flow
+from netbbs.net import admin_maintenance
 from netbbs.net.admin_flow import admin_menu
 from netbbs.selfupdate import ReleaseInfo, get_last_check_summary, save_release_cache
 from netbbs.update_apply import (
@@ -436,8 +437,8 @@ def _environment(tmp_path) -> InstallEnvironment:
 def _install_fakes(monkeypatch, tmp_path, *, pip_status=0, pip_log="Successfully installed netbbs-99.0.0",
                    reported_version="99.0.0"):
     calls = []
-    monkeypatch.setattr(admin_flow, "inspect_install_environment", lambda: _environment(tmp_path))
-    monkeypatch.setattr(admin_flow, "fetch_release_wheel",
+    monkeypatch.setattr(admin_maintenance, "inspect_install_environment", lambda: _environment(tmp_path))
+    monkeypatch.setattr(admin_maintenance, "fetch_release_wheel",
                         lambda tag, token=None: calls.append(("fetch", tag)) or _wheel(
                             tag=tag, version=tag.lstrip("v"), name=f"netbbs-{tag.lstrip('v')}-py3-none-any.whl"))
 
@@ -448,13 +449,13 @@ def _install_fakes(monkeypatch, tmp_path, *, pip_status=0, pip_log="Successfully
         path.write_bytes(WHEEL_BYTES)
         return path
 
-    monkeypatch.setattr(admin_flow, "download_wheel", fake_download)
+    monkeypatch.setattr(admin_maintenance, "download_wheel", fake_download)
 
     async def fake_backup(*, db_path, identity_dir, destination):
         calls.append(("backup", destination))
         return destination
 
-    monkeypatch.setattr(admin_flow, "_create_live_backup_owned", fake_backup)
+    monkeypatch.setattr(admin_maintenance, "_create_live_backup_owned", fake_backup)
 
     async def fake_run(command, *, timeout_seconds, **kwargs):
         if command[1:4] == ["-m", "pip", "install"]:
@@ -463,7 +464,7 @@ def _install_fakes(monkeypatch, tmp_path, *, pip_status=0, pip_log="Successfully
         calls.append(("version", command[0]))
         return 0, reported_version + "\n"
 
-    monkeypatch.setattr(admin_flow, "run_bounded", fake_run)
+    monkeypatch.setattr(admin_maintenance, "run_bounded", fake_run)
     return calls
 
 
@@ -494,7 +495,7 @@ def test_install_refusal_is_explained_and_changes_nothing(db, lane, sysop, monke
     def refuse():
         raise ApplyError("This NetBBS runs from a development checkout (an editable install); update the checkout instead.")
 
-    monkeypatch.setattr(admin_flow, "inspect_install_environment", refuse)
+    monkeypatch.setattr(admin_maintenance, "inspect_install_environment", refuse)
     session = FakeSession(["s", "u", "i", "b", "b", "b", "b"])
     asyncio.run(admin_menu(session, lane, sysop, node_controls=_node_controls(backup_identity_dir=tmp_path)))
 
@@ -669,13 +670,13 @@ def test_second_concurrent_install_is_refused(db, lane, sysop, monkeypatch, tmp_
     calls = _install_fakes(monkeypatch, tmp_path)
 
     async def scenario():
-        await admin_flow._INSTALL_IN_PROGRESS.acquire()
+        await admin_maintenance._INSTALL_IN_PROGRESS.acquire()
         try:
             session = FakeSession(["s", "u", "i", "i", "b", "b", "b"])
             await admin_menu(session, lane, sysop, node_controls=_node_controls(backup_identity_dir=tmp_path))
             return session
         finally:
-            admin_flow._INSTALL_IN_PROGRESS.release()
+            admin_maintenance._INSTALL_IN_PROGRESS.release()
 
     session = asyncio.run(scenario())
     assert calls == []
@@ -686,7 +687,7 @@ def test_standalone_check_does_not_advertise_install(db, lane, sysop, monkeypatc
     async def fake_check(*, known_etag=None, known_release=None, token=None, fetch=None):
         return ReleaseInfo(tag_name="v99.0.0", tarball_url="https://x", published_at="2026-09-27T00:00:00Z"), None
 
-    monkeypatch.setattr(admin_flow, "check_latest_release", fake_check)
+    monkeypatch.setattr(admin_maintenance, "check_latest_release", fake_check)
     session = FakeSession(["s", "u", "c", "b", "b", "b"])
     asyncio.run(admin_menu(session, lane, sysop))
     text = _normalized_visible(_written_text(session))
@@ -712,7 +713,7 @@ def test_cancelling_the_session_mid_pip_lets_the_install_finish_and_record(db, l
         calls.append(("version", command[0]))
         return 0, "99.0.0\n"
 
-    monkeypatch.setattr(admin_flow, "run_bounded", slow_run)
+    monkeypatch.setattr(admin_maintenance, "run_bounded", slow_run)
 
     async def scenario():
         nonlocal pip_started, pip_release
@@ -755,7 +756,7 @@ def test_a_shutdown_scheduled_during_the_install_is_not_replaced(db, lane, sysop
             return 0, "ok"
         return 0, "99.0.0\n"
 
-    monkeypatch.setattr(admin_flow, "run_bounded", run_then_sigterm)
+    monkeypatch.setattr(admin_maintenance, "run_bounded", run_then_sigterm)
     controls = _node_controls(backup_identity_dir=tmp_path)
 
     async def scenario():
@@ -781,7 +782,7 @@ def test_failed_download_stops_before_the_backup(db, lane, sysop, monkeypatch, t
     def bad_download(wheel, directory):
         raise ApplyError("the downloaded wheel does not match the release's SHA-256 digest; nothing was installed")
 
-    monkeypatch.setattr(admin_flow, "download_wheel", bad_download)
+    monkeypatch.setattr(admin_maintenance, "download_wheel", bad_download)
     session = FakeSession(["s", "u", "i", "i", "y", "b", "b", "b", "b"])
     asyncio.run(admin_menu(session, lane, sysop, node_controls=_node_controls(backup_identity_dir=tmp_path)))
     assert [c[0] for c in calls] == ["fetch"]

@@ -8,6 +8,7 @@ import os
 import pytest
 
 from netbbs.net import admin_flow
+from netbbs.net import admin_maintenance
 from netbbs.net.admin_flow import admin_menu
 from netbbs.node_log import (
     MAX_FOLLOW_BYTES,
@@ -299,9 +300,9 @@ def test_follow_screens_raise_a_failed_key_read(db, lane, sysop, screen):
     if screen == "node":
         path = node_log_path(db.path)
         path.write_text("", encoding="utf-8")
-        run = admin_flow._node_log_tail_screen(session, lane, path, floor="WARNING")
+        run = admin_maintenance._node_log_tail_screen(session, lane, path, floor="WARNING")
     else:
-        run = admin_flow._diagnostic_log_tail_screen(session, lane)
+        run = admin_maintenance._diagnostic_log_tail_screen(session, lane)
     with pytest.raises(ConnectionResetError):
         asyncio.run(run)
 
@@ -385,7 +386,7 @@ def test_missing_node_log_says_where_it_looked(db, lane, sysop):
 def test_follow_prints_new_lines_at_or_above_the_floor(db, lane, sysop, monkeypatch):
     path = node_log_path(db.path)
     path.write_text(_line("ERROR", "before"), encoding="utf-8")
-    monkeypatch.setattr(admin_flow, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", 0.05)
+    monkeypatch.setattr(admin_maintenance, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", 0.05)
 
     class _SlowKeySession(FakeSession):
         async def read_key(self, echo: bool = True) -> str:
@@ -395,7 +396,7 @@ def test_follow_prints_new_lines_at_or_above_the_floor(db, lane, sysop, monkeypa
             return "x"
 
     session = _SlowKeySession()
-    asyncio.run(admin_flow._node_log_tail_screen(session, lane, path, floor="WARNING"))
+    asyncio.run(admin_maintenance._node_log_tail_screen(session, lane, path, floor="WARNING"))
 
     text = _visible(_written_text(session))
     assert "loud line" in text
@@ -429,7 +430,7 @@ def test_a_failed_reload_keeps_the_last_read_and_says_why(db, lane, sysop, monke
     from netbbs.node_log import NodeLogRead
 
     _write_log(db, _line("ERROR", "still shown"))
-    real = admin_flow.read_node_log
+    real = admin_maintenance.read_node_log
     calls = []
 
     def _flaky(path, **kwargs):
@@ -438,7 +439,7 @@ def test_a_failed_reload_keeps_the_last_read_and_says_why(db, lane, sysop, monke
             return real(path, **kwargs)
         return NodeLogRead(path=path, error="could not read netbbs.log: Permission denied")
 
-    monkeypatch.setattr(admin_flow, "read_node_log", _flaky)
+    monkeypatch.setattr(admin_maintenance, "read_node_log", _flaky)
     # [F]ollow then any key returns through a reload.
     session = FakeSession(["o", "e", "f", "x", "b", "b", "b"])
     asyncio.run(admin_menu(session, lane, sysop))
@@ -452,7 +453,7 @@ def test_a_failed_reload_keeps_the_last_read_and_says_why(db, lane, sysop, monke
 def test_follow_shows_whole_entries_with_their_traceback(db, lane, sysop, monkeypatch):
     path = node_log_path(db.path)
     path.write_text("", encoding="utf-8")
-    monkeypatch.setattr(admin_flow, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", 0.05)
+    monkeypatch.setattr(admin_maintenance, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", 0.05)
     long_message = "listener failed " + "x" * 150 + " THE-END"
 
     class _SlowKeySession(FakeSession):
@@ -463,7 +464,7 @@ def test_follow_shows_whole_entries_with_their_traceback(db, lane, sysop, monkey
             return "x"
 
     session = _SlowKeySession()
-    asyncio.run(admin_flow._node_log_tail_screen(session, lane, path, floor="WARNING"))
+    asyncio.run(admin_maintenance._node_log_tail_screen(session, lane, path, floor="WARNING"))
 
     text = "".join(_visible(_written_text(session)).split())
     assert "THE-END" in text
@@ -574,7 +575,7 @@ def test_follow_retrieves_a_failed_read_even_when_the_body_fails_first(db, lane,
 
     path = node_log_path(db.path)
     path.write_text("", encoding="utf-8")
-    monkeypatch.setattr(admin_flow, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", 0.02)
+    monkeypatch.setattr(admin_maintenance, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", 0.02)
 
     def _slow_failing_poll(self):
         import time
@@ -582,7 +583,7 @@ def test_follow_retrieves_a_failed_read_even_when_the_body_fails_first(db, lane,
         time.sleep(0.3)
         raise RuntimeError("poll broke")
 
-    monkeypatch.setattr(admin_flow.NodeLogFollower, "poll", _slow_failing_poll)
+    monkeypatch.setattr(admin_maintenance.NodeLogFollower, "poll", _slow_failing_poll)
 
     class _DropsDuringPoll(FakeSession):
         async def read_key(self, echo: bool = True) -> str:
@@ -594,7 +595,7 @@ def test_follow_retrieves_a_failed_read_even_when_the_body_fails_first(db, lane,
     async def scenario():
         asyncio.get_running_loop().set_exception_handler(lambda loop, context: unretrieved.append(context))
         with pytest.raises(RuntimeError, match="poll broke"):
-            await admin_flow._node_log_tail_screen(_DropsDuringPoll(), lane, path, floor="WARNING")
+            await admin_maintenance._node_log_tail_screen(_DropsDuringPoll(), lane, path, floor="WARNING")
         gc.collect()
 
     asyncio.run(scenario())
@@ -642,10 +643,10 @@ def test_the_empty_message_does_not_name_a_stale_level(db, lane, sysop):
 def test_info_entries_are_muted_not_coloured_as_warnings():
     from netbbs.rendering import MUTED_COLOR
 
-    assert admin_flow._node_log_level_color("INFO") == MUTED_COLOR
-    assert admin_flow._node_log_level_color("DEBUG") == MUTED_COLOR
-    assert admin_flow._node_log_level_color("WARNING") != MUTED_COLOR
-    assert admin_flow._node_log_level_color("ERROR") != MUTED_COLOR
+    assert admin_maintenance._node_log_level_color("INFO") == MUTED_COLOR
+    assert admin_maintenance._node_log_level_color("DEBUG") == MUTED_COLOR
+    assert admin_maintenance._node_log_level_color("WARNING") != MUTED_COLOR
+    assert admin_maintenance._node_log_level_color("ERROR") != MUTED_COLOR
 
 
 def test_entry_numbers_survive_a_refresh_that_moves_the_window():
