@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from netbbs import update_apply
-from netbbs.net import admin_flow
 from netbbs.net import admin_maintenance
 from netbbs.net.admin_flow import admin_menu
 from netbbs.selfupdate import ReleaseInfo, get_last_check_summary, save_release_cache

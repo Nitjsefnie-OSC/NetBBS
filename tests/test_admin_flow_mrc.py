@@ -21,7 +21,6 @@ from netbbs.chat.hub import ChatHub
 from netbbs.moderation.log import list_recent_actions
 from netbbs.mrc.bridge import MrcBridge, MrcState
 from netbbs.mrc.settings import MrcSettings, get_mrc_mapping, load_mrc_settings, save_mrc_settings, set_mrc_room
-from netbbs.net import admin_flow
 from netbbs.net import admin_chat
 from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu

@@ -23,7 +23,6 @@ from netbbs.mrc.settings import (
     materialize_open_room,
     save_open_room_settings,
 )
-from netbbs.net import admin_flow
 from netbbs.net import admin_chat
 from netbbs.net import admin_system
 from netbbs.net import admin_ui

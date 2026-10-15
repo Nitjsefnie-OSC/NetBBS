@@ -130,7 +130,6 @@ def test_an_outcome_is_shown_once(db, lane, sysop):
 def test_an_unstyled_outcome_is_coloured_by_what_it_reports():
     """Sites converted from a bare `write_line` hand `_announce_line` plain
     text. A failure among them must not turn success-green by being announced."""
-    from netbbs.net import admin_flow
     from netbbs.rendering import ERROR_COLOR, MUTED_COLOR, SUCCESS_COLOR, fg
 
     session = ScriptedSession([])
@@ -144,7 +143,6 @@ def test_an_unstyled_outcome_is_coloured_by_what_it_reports():
 
 
 def test_an_outcome_never_reaches_another_sessions_console(db, lane, sysop):
-    from netbbs.net import admin_flow
 
     first, second = ScriptedSession([]), ScriptedSession([])
     admin_ui._announce(first, "Created 'Retro'.")
@@ -172,7 +170,6 @@ def test_a_captured_flow_announces_its_outcome_not_the_screen_it_drew_on_the_way
     before it touches the terminal in raw bytes. When it failed before the first
     of them, all of that was still held -- and announcing the title's clear
     erased the screen the console had just redrawn."""
-    from netbbs.net import admin_flow
     from netbbs.rendering import ERROR_COLOR, clear_screen, colored
 
     session = ScriptedSession([])
@@ -192,7 +189,6 @@ def test_a_captured_flow_announces_its_outcome_not_the_screen_it_drew_on_the_way
 
 
 def test_a_captured_flow_still_writes_what_it_said_before_asking_something():
-    from netbbs.net import admin_flow
 
     session = ScriptedSession(["y"])
     flow = admin_ui._TrailingOutput(session)

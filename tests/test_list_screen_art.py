@@ -16,7 +16,7 @@ from netbbs.chat.hub import ChatHub
 from netbbs.chat.mailbox import MessageMailbox
 from netbbs.chat.presence import PresenceRegistry
 from netbbs.files import create_file_area
-from netbbs.net import admin_flow, board_flow, chat_flow, file_flow
+from netbbs.net import board_flow, chat_flow, file_flow
 from netbbs.net import admin_banners
 from netbbs.net.board_list_banner import (
     board_list_banner_path,
