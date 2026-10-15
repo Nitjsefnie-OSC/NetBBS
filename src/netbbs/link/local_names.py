@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from netbbs.storage.database import Database
 
-_TABLES = frozenset({"boards", "channels", "file_areas"})
+_TABLES = frozenset({"boards", "channels", "file_areas", "communities"})
+"""Issue #1308: a carried Link Community's local copy follows the same rule."""
 
 # Increasing prefixes of the resource id. Resource ids are unique, so the last
 # candidate can only be taken by a local resource deliberately named after

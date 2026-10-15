@@ -701,7 +701,42 @@ Community-blanket grants fit between per-object and local-blanket fallback:
 3. local-blanket.
 
 Node carry policy, user follow state, and resource membership are distinct
-concepts when Link Communities arrive.
+concepts.
+
+### Link Communities (issue #1310)
+
+`netbbs.link.communities` owns the rules (design doc §6.5). Invariants that are
+easy to break:
+
+- **Own Community or carried copy is told apart by `link_members_json`.** The
+  origin always keeps its own latest list on the row; a copy never does (its
+  lists live in `link_events`). `subscribed_copy` relies on this, so placement
+  can never move this node's own resources into its own promoted Community.
+- **One membership list per Community is stored.** `store_received_members`
+  deletes the superseded list in the same transaction as it saves the newer
+  one; `_all_community_events` therefore serves at most three events per
+  Community. An older list arriving later is accepted in memory (so it is not
+  refetched every pass) and stored nowhere.
+- **Members are accepted only when new to a list or at subscription start**
+  (`accept_listed_members` with the difference against the previous list). A
+  member already offered to the SysOp and passed over by the cap must not be
+  taken silently on a later pass (#561 Decision 4). Placement
+  (`place_members`) is idempotent and runs on every apply, after every carried
+  genesis, after every accepted offer (`carry._finish_acceptance`, restore) and
+  after a board origin change.
+- **The level-0 drop happens only when a member moves into a copy.** Running it
+  on every placement would undo a SysOp's later explicit 0.
+- **`community_placed_locally` is set by `update_board`/`update_channel`/
+  `update_file_area` when the Community changes**, in SQL (`CASE WHEN
+  community_id IS ? ...`, which reads the old value). A new path that moves a
+  resource between Communities must set it too, or a membership list will
+  move it back.
+- **The origin's list is refreshed every sync pass**
+  (`refresh_own_community_members`), not hooked into each screen that links,
+  unlinks or moves a resource; a new such path needs nothing.
+- **`handle_events` branches on `object_type == ...` comparisons**, which
+  `tests/test_link_opaque_events.py` reads with an AST scan; a branch written
+  as `object_type in (...)` is invisible to it.
 
 ---
 

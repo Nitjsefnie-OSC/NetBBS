@@ -37,6 +37,7 @@ from netbbs.chat import (
 from netbbs.chat.bell import bell_level
 from netbbs.communities import Community, list_communities
 from netbbs.link.boards import LinkContext
+from netbbs.link.communities import linked_community_ids
 from netbbs.link.mail import acknowledge_delivery_notices, pending_delivery_notices
 from netbbs.mail import acknowledge_eviction_notice, pending_eviction_notice
 from netbbs.mail import unread_count as unread_mail_count
@@ -1715,11 +1716,14 @@ async def _enter_communities(
     last_id: int | None = None
     while True:
         communities = _visible_communities_for(db, user)
+        # Issue #1310: a Link Community wears the linked marker (#1104).
+        linked = linked_community_ids(db)
         selected = await pick_item(
             session, communities,
             name_of=lambda c: c.name,
             stable_id_of=lambda c: c.id,
             description_of=lambda c: c.description,
+            linked_of=lambda c: c.id in linked,
             title="Communities",
             own=True,
             empty_message="No Communities exist yet.",
