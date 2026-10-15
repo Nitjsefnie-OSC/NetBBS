@@ -120,7 +120,6 @@ from netbbs.mrc.settings import (
 )
 from netbbs.mrc.protocol import sanitize_room
 from netbbs.net.char_input import HELP_KEY, InputCancelled, reject_unhandled_key
-from netbbs.config import get_max_upload_bytes
 from netbbs.net.help_overlay import show_menu_help
 from netbbs.net.location import crumbs, located
 from netbbs.net.resource_editor import (

@@ -61,7 +61,6 @@ from netbbs.link.channels import is_channel_linked
 from netbbs.moderation.log import record_action
 from netbbs.net.char_input import HELP_KEY, reject_unhandled_key
 from netbbs.net.confirm import prompt_yes_no
-from netbbs.config import get_max_upload_bytes
 from netbbs.sysop_uploads import (
     DOOR_FILE as SYSOP_UPLOAD_DOOR_FILE,
     SysOpUploadTarget,
