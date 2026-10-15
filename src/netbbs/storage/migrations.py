@@ -4405,4 +4405,56 @@ MIGRATIONS = [
         );
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1299/#1332: board polls -- a post with side tables, keyed by its root post "
+            "(`posts.root_post_id`), as #842's `post_file_refs` are keyed by a revision. "
+            "`board_polls` holds the choice mode (`max_choices`, 1 for one answer), the closing "
+            "time, when results show, an early close (`closed_at`: [C]lose poll, a withdrawal or a "
+            "takedown), the root post's Link content id where the poll travels (`link_root_id`), "
+            "and how many carried votes the per-poll row cap turned away (`dropped_votes`). "
+            "`board_poll_options` are its 2 to 10 answers in order. `board_poll_votes` holds one "
+            "vote per voter: a local account (`user_id`, removed with the account), or a voter "
+            "carried over the Link (`home_node_fingerprint` + `remote_user_id`, with the signed "
+            "event's id; a local vote on a Linked poll keeps its own signed event in `event_json`). `choices` is a JSON list of answer positions. No foreign keys to "
+            "`posts`, which migrations rebuild, as for `post_file_refs`: rows go with their post "
+            "through `netbbs.boards.polls.forget_orphaned_polls_without_commit`, which every hard "
+            "delete of posts rows calls. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE board_polls (
+            root_post_id   TEXT PRIMARY KEY,
+            max_choices    INTEGER NOT NULL CHECK (max_choices >= 1),
+            closes_at      TEXT NOT NULL,
+            results        TEXT NOT NULL CHECK (results IN ('after_vote', 'after_close')),
+            closed_at      TEXT,
+            link_root_id   TEXT UNIQUE,
+            dropped_votes  INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE board_poll_options (
+            root_post_id  TEXT NOT NULL,
+            position      INTEGER NOT NULL,
+            label         TEXT NOT NULL,
+            PRIMARY KEY (root_post_id, position)
+        );
+        CREATE TABLE board_poll_votes (
+            id                     INTEGER PRIMARY KEY,
+            root_post_id           TEXT NOT NULL,
+            user_id                INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            home_node_fingerprint  TEXT,
+            remote_user_id         TEXT,
+            choices                TEXT NOT NULL,
+            voted_at               TEXT NOT NULL,
+            event_id               TEXT,
+            event_json             TEXT,
+            CHECK ((user_id IS NULL) != (home_node_fingerprint IS NULL)),
+            CHECK ((home_node_fingerprint IS NULL) = (remote_user_id IS NULL))
+        );
+        CREATE UNIQUE INDEX idx_board_poll_votes_local
+            ON board_poll_votes(root_post_id, user_id) WHERE user_id IS NOT NULL;
+        CREATE UNIQUE INDEX idx_board_poll_votes_remote
+            ON board_poll_votes(root_post_id, home_node_fingerprint, remote_user_id)
+            WHERE home_node_fingerprint IS NOT NULL;
+        """,
+    ),
 ]

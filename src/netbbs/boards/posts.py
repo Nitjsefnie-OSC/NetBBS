@@ -26,6 +26,14 @@ from netbbs.boards.boards import Board
 from netbbs.boards.content_id import compute_content_id
 from netbbs.boards.limits import MAX_BODY_BYTES, MAX_SUBJECT_BYTES
 from netbbs.boards.moderation_notices import record_moderation_outcome
+from netbbs.boards.polls import (
+    PollError,
+    PollSpec,
+    close_poll_for_removal_without_commit,
+    forget_orphaned_polls_without_commit,
+    validate_poll_spec,
+    write_poll_without_commit,
+)
 from netbbs.communities import require_read_gate, require_write_gate, resource_age_gate
 from netbbs.config import get_expiry_grace_period_days
 from netbbs.file_refs import (
@@ -127,9 +135,15 @@ def create_post(
     parent_post_id: str | None = None,
     layout: str = "prose",
     files: list[FileRef] | None = None,
+    poll: PollSpec | None = None,
 ) -> Post:
     """
     Create a new post on `board`.
+
+    `poll` (issue #1299) makes the post a poll: its subject is the
+    question, and the answers and settings are written with it
+    (`netbbs.boards.polls`). Only a new thread, never a reply, and never
+    on a board gated to an FTN network, which has no way to carry one.
 
     `files` (issue #842) are files in this node's file areas the post
     points at (`netbbs.file_refs`), written with it. Each must be one
@@ -177,6 +191,8 @@ def create_post(
     problem = sender_ref_problem(db, author, files, noun="post", verb="publish") if files else None
     if problem is not None:
         raise PostError(problem)
+    if poll is not None:
+        _check_poll(db, board, poll, parent_post_id=parent_post_id)
     status = "pending" if board.moderated else "approved"
     created_at = utc_now_iso()
     author_identifier = author.fingerprint or author.username
@@ -227,8 +243,11 @@ def create_post(
             # post can be created on.
             db.connection.execute("UPDATE posts SET layout = ? WHERE post_id = ?", (layout, post_id))
         write_post_refs_without_commit(db, post_id, files)
+        if poll is not None:
+            write_poll_without_commit(db, post_id, poll)
         db.connection.commit()
     except sqlite3.IntegrityError as exc:
+        db.connection.rollback()
         raise PostError(
             "could not create post — identical content posted twice in the same instant?"
         ) from exc
@@ -350,6 +369,18 @@ def create_labelled_post(
     if commit:
         reindex_post(db, board.id, post_id)
     return get_post(db, post_id)
+
+
+def _check_poll(db: Database, board: Board, poll: PollSpec, *, parent_post_id: str | None) -> None:
+    """Refuse a poll `create_post` cannot write: on a reply, on a board
+    gated to an FTN network, or one `validate_poll_spec` refuses."""
+    from netbbs.ftn.networks import is_board_ftn
+
+    if parent_post_id is not None:
+        raise PollError("a reply cannot be a poll")
+    if is_board_ftn(db, board):
+        raise PollError("polls are not offered on a board gated to an FTN network, which cannot carry them")
+    validate_poll_spec(poll)
 
 
 def _refuse_if_board_hidden(db: Database, board_local_id: int) -> None:
@@ -496,8 +527,13 @@ def edit_post(
             ),
         )
         write_post_refs_without_commit(db, new_post_id, files)
+        if withdrawal:
+            # A withdrawal closes the post's poll, and its totals are
+            # hidden while it stays withdrawn (issue #1299).
+            close_poll_for_removal_without_commit(db, post.root_post_id)
         db.connection.commit()
     except sqlite3.IntegrityError as exc:
+        db.connection.rollback()
         raise PostError(
             "could not save edit — identical content already exists for this post?"
         ) from exc
@@ -1204,6 +1240,7 @@ def delete_post(db: Database, post: Post, *, deleted_by: User, reason: str | Non
         db.connection.rollback()
         raise PostError("this post was already decided by another moderator")
     forget_orphaned_post_refs_without_commit(db)
+    forget_orphaned_polls_without_commit(db)
     if action == "reject":
         # A rejection is recorded, not only carried out (issue #692): for a
         # carried post the signed event is kept, and without this record
@@ -1297,6 +1334,8 @@ def tombstone_post(db: Database, post: Post, board: Board, *, tombstoned_by: Use
             post.root_post_id, current["post_id"], created_at,
         ),
     )
+    # A takedown closes the post's poll and hides its totals (issue #1299).
+    close_poll_for_removal_without_commit(db, post.root_post_id)
     db.connection.commit()
 
     record_action(
@@ -1750,6 +1789,7 @@ def _sweep_expired_posts(db: Database, board: Board) -> None:
         (board.id, deletion_cutoff),
     )
     forget_orphaned_post_refs_without_commit(db)
+    forget_orphaned_polls_without_commit(db)
     db.connection.commit()
 
     for root_post_id in expiring_roots | deleting_roots:

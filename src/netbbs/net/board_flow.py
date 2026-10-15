@@ -57,6 +57,20 @@ from netbbs.boards import (
 from netbbs.boards.categories import Category, list_subcategories, list_top_level_categories
 from netbbs.boards.categories import get_category_by_id as get_board_category_by_id
 from netbbs.boards.posts import count_pending_posts, sweep_expired_posts
+from netbbs.boards.polls import (
+    PollError,
+    PollSpec,
+    answers_locked,
+    close_poll,
+    get_poll,
+    has_votes,
+    may_manage_poll,
+    poll_approved,
+    poll_closed,
+    tally,
+    update_poll,
+    user_vote,
+)
 from netbbs.communities import (
     get_community,
     get_effective_min_write_level,
@@ -86,6 +100,7 @@ from netbbs.link.boards import (
     queue_board_post_tombstone_if_linked,
 )
 from netbbs.moderation import BoardPermission, has_permission
+from netbbs.ftn.networks import is_board_ftn
 from netbbs.ftn.scanner import export_post_if_ftn
 from netbbs.mail import MAX_MAIL_SUBJECT_BYTES
 from netbbs.file_refs import FileRef, body_with_link_text, open_ref, refs_some_readers_cannot_open
@@ -133,6 +148,7 @@ from netbbs.net.node_theme import (
 )
 from netbbs.net.notices import announce, pending_notice_rows, take_notices, write_notices
 from netbbs.net.picker import ListColumn, pick_item
+from netbbs.net import poll_view
 from netbbs.net.prose_editor import EditorHeader, edit_prose
 from netbbs.net.ansi_editor import edit_ansi_art
 from netbbs.net.post_color_preference import post_colors_enabled
@@ -143,6 +159,7 @@ from netbbs.net.shared_account import (
     authored_earlier_by_shared_account,
     earlier_guest_refusal,
     note_created_this_call,
+    signed_in_without_credential,
 )
 from netbbs.net.session_activity import records_activity
 from netbbs.net.sort_ui import SORT_MODE_LABELS, prompt_sort_change
@@ -832,7 +849,7 @@ def _queue_entry(count: int) -> MenuEntry:
 
 def _list_options(
     page: PostPage, *, can_post: bool, has_draft: bool, row_count: int, has_unread: bool,
-    can_draw: bool = False, following: bool = False, queue_count: int = 0,
+    can_draw: bool = False, following: bool = False, queue_count: int = 0, can_poll: bool = False,
 ) -> list[MenuEntry]:
     options = []
     if row_count:
@@ -846,6 +863,8 @@ def _list_options(
         options.append(MenuEntry(label=menu_key("P", "ost"), brief="Write a new post"))
     if can_draw:
         options.append(MenuEntry(label=menu_key("A", "rt post"), brief="Draw a post in the ANSI art editor"))
+    if can_poll:
+        options.append(_POLL_MENU_ENTRY)
     if has_draft:
         options.append(_DRAFT_MENU_ENTRY)
     if has_unread:
@@ -898,6 +917,7 @@ _LIST_HELP = [
     "R            the newest page",
     "P            write a new post (when you may post here)",
     "A            draw a post in the ANSI art editor (boards with color)",
+    "N            a new poll: a question, answers, a closing date",
     "D            resume or discard a saved draft",
     "M            count every post on this board as read",
     "F            follow this board, or stop: New scan lists it first",
@@ -931,6 +951,9 @@ def _moderation_stays_local(db: Database, board: Board, link_context: LinkContex
         return False
     return link_context is None or board_origin_fingerprint(db, board) != link_context.node_identity.fingerprint
 _DRAFT_MENU_ENTRY = MenuEntry(label=menu_key("D", "raft"), brief="Resume or discard your saved draft")
+# Issue #1299: a poll is a post with answers to vote on. The design entry
+# named it Po[l]l; a key is its label's first letter (§3.5), and N is free.
+_POLL_MENU_ENTRY = MenuEntry(label=menu_key("N", "ew poll"), brief="Ask a question to vote on")
 
 
 @records_activity(lambda args: args["board"].name)
@@ -1031,6 +1054,10 @@ async def _board_screen(
     # The ANSI art editor is a third way to write a post, on a board that
     # shows color (issue #711).
     can_draw = can_post and board.allow_color
+    # Issue #1299: a poll is a new thread, never on a board gated to an FTN
+    # network, which has no way to carry one. A Linked board's poll travels
+    # with its post (#1332's Link half); until then polls stay local.
+    can_poll = can_post and not is_board_ftn(db, board) and not is_board_linked(db, board)
     name_requirement = get_effective_name_requirement(db, board)
     # The gates this board applies, named under its title (issue #1105),
     # with the ones this caller does not meet marked (issue #1115).
@@ -1148,7 +1175,7 @@ async def _board_screen(
             # The page budget measures the longer `[F]ollow: off`, so
             # following never changes how many posts fit (Codex review on #788).
             has_unread=unread["menu"], can_draw=can_draw, following=follows["on"] and not measuring,
-            queue_count=_queue_count(),
+            queue_count=_queue_count(), can_poll=can_poll,
         )
         # Descriptions double the action bar. Where they would leave the
         # list fewer rows than a page worth having, the bar goes compact:
@@ -1160,7 +1187,7 @@ async def _board_screen(
                 PostPage(posts=[], has_older=True, has_newer=True),
                 can_post=can_post, has_draft=has_draft, row_count=9, has_unread=unread["menu"],
                 can_draw=can_draw, following=True,  # the longer label
-                queue_count=999 if can_approve else 0,
+                queue_count=999 if can_approve else 0, can_poll=can_poll,
             ),
             width=session.terminal_width, height=session.terminal_height,
             description_level=description_level,
@@ -1337,6 +1364,26 @@ async def _board_screen(
             byline = [*byline, *ref_rows(
                 [open_ref(db, user, ref) for ref in refs], accent=effective_accent_color(session, db),
             )]
+            # A poll's answers and results, under the post (issue #1299).
+            poll = get_poll(db, post.root_post_id)
+            sections = [Section(None, [Styled(body_rows)])]
+            can_vote = can_close_poll = False
+            if poll is not None:
+                closed_poll = poll_closed(db, poll)
+                approved_poll = poll_approved(db, poll)
+                can_vote = may_reply and approved_poll and not closed_poll and not held
+                can_close_poll = (
+                    not held and not closed_poll and may_manage_poll(db, poll, post.author_user_id, board, user)
+                )
+                view = poll_view.PollView(
+                    poll=poll, tally=tally(db, poll), mine=user_vote(db, poll, user), closed=closed_poll,
+                    approved=approved_poll,
+                    hidden="taken down" if post.tombstoned_at is not None else "withdrawn" if post.withdrawn else None,
+                    can_vote=can_vote, linked=poll.link_root_id is not None,
+                )
+                sections.append(Section("Poll", [Styled(poll_view.poll_block_rows(
+                    db, view, width=width, unicode_style=unicode_style, accent=effective_accent_color(session, db),
+                ))]))
             has_previous = index > 0 or (page.has_older and page.oldest_cursor is not None)
             has_next = index < len(page.posts) - 1 or (page.has_newer and page.newest_cursor is not None)
             actions = []
@@ -1345,6 +1392,8 @@ async def _board_screen(
             can_reply = may_reply and post.tombstoned_at is None and not held
             if can_reply:
                 actions.append(("r", menu_key("R", "eply")))
+            if can_vote:
+                actions.append(("v", menu_key("V", "ote")))
             # A private reply to the author (issue #821), to anyone who may
             # read the post, whether or not they may post here.
             mail_target = (
@@ -1384,6 +1433,8 @@ async def _board_screen(
                 # or where one was kept before the board stopped expiring.
                 if board.max_post_age_days is not None or post.exempt_from_expiry:
                     actions.append(("k", menu_key("K", "ept: yes" if post.exempt_from_expiry else "ept: no")))
+            if can_close_poll:
+                actions.append(("c", menu_key("C", "lose poll")))
             if has_next:
                 actions.append(("n", menu_key("N", "ext post")))
             if has_previous:
@@ -1392,7 +1443,7 @@ async def _board_screen(
             key, detail_page = await show_detail(
                 session,
                 title=title,
-                sections=[Section(None, [Styled(body_rows)])],
+                sections=sections,
                 actions=actions,
                 redraw_in_place=redraw_in_place,
                 unicode_style=unicode_style,
@@ -1407,6 +1458,12 @@ async def _board_screen(
             )
             if key == "b":
                 return index
+            if key == "v" and can_vote and poll is not None:
+                await _vote(post, poll)
+                continue
+            if key == "c" and can_close_poll and poll is not None:
+                await _close_poll(post, poll)
+                continue
             if key == "g" and refs and post.tombstoned_at is None:
                 # Downloads run on a lane, as mail's do; the board page reads
                 # through `db`, so one is opened for the download.
@@ -1517,6 +1574,104 @@ async def _board_screen(
                 page_anchor = None
                 page = _refetch_current_page()
                 return None
+
+    async def _compose_poll_post() -> bool:
+        """[N]ew poll (issue #1299): the poll draft editor -- the question, the
+        answers and the settings -- then the body editor for the post that
+        introduces it, then the review screen and `[P]ost`. Nothing is
+        stored before `[P]ost`. Returns whether the body editor was
+        reached, so the caller moves to the newest page only when a poll
+        may exist."""
+        discard_buffered_enter = getattr(session, "discard_buffered_enter", None)
+        if discard_buffered_enter is not None:
+            await discard_buffered_enter()
+        chrome = _picker_style(session, db, user)
+        with entered(session, "New poll"):
+            drafted = await poll_view.edit_poll_draft(session, db, title="New poll", chrome=chrome)
+        if drafted is None:
+            announce(session, "Poll cancelled.", tone="muted")
+            return False
+        state = {"spec": drafted.spec}
+        draft_path = _post_draft_path(db, kind="poll", board=board, user=user)
+        await _compose_screen("New poll")
+        body = await _compose_body(
+            session, db, user, draft_path=draft_path, keep_pasted_color=board.allow_color,
+            header=_editor_header(session, db, board, "New poll", drafted.question),
+        )
+        if body is None:
+            if draft_path.exists():
+                announce(
+                    session,
+                    "Draft saved -- the editor offers its text the next time you start a poll here. "
+                    "The answers were not kept.",
+                    tone="muted",
+                )
+            else:
+                announce(session, "Poll cancelled.", tone="muted")
+            return True
+        signature = get_signature(db, user)
+        if signature:
+            body = append_signature(body, signature)
+
+        async def _edit_poll(subject: str) -> str:
+            with entered(session, "Poll"):
+                again = await poll_view.edit_poll_draft(
+                    session, db, title="New poll", question=subject, spec=state["spec"], chrome=chrome,
+                )
+            if again is None:
+                return subject
+            state["spec"] = again.spec
+            return again.question
+
+        await _review_and_commit(
+            session, db, user, board, subject=drafted.question, body=body, draft_path=draft_path, files=[],
+            commit_key="p", commit_label="ost", commit_brief="Publish this poll",
+            title="New poll",
+            cancelled_notice="Poll cancelled.",
+            draft_saved_notice="Draft saved -- the editor offers its text the next time you start a poll here.",
+            commit=lambda subject, body, files: _publish(subject, body, files=files, poll=state["spec"]),
+            poll=poll_view.ReviewPoll(
+                rows=lambda width: poll_view.review_rows(
+                    state["spec"], db=db, width=width, accent=effective_accent_color(session, db),
+                ),
+                edit=_edit_poll,
+            ),
+        )
+        return True
+
+    async def _vote(post: Post, poll) -> None:
+        """[V]ote (issue #1299): the answers with the caller's vote ticked.
+        The guest account holds one vote, which a later guest call cannot
+        change (#1075)."""
+        mine = user_vote(db, poll, user)
+        if mine is not None and authored_earlier_by_shared_account(session, "vote", poll.root_post_id):
+            announce(session, earlier_guest_refusal("this vote"), tone="error")
+            return
+
+        def _voted(vote: tuple[int, ...]) -> None:
+            note_created_this_call(session, "vote", poll.root_post_id)
+
+        with entered(session, "Vote"):
+            vote = await poll_view.vote_on_poll(
+                session, db, user, poll, board, mine=mine, linked=poll.link_root_id is not None, question=post.subject,
+                chrome=_picker_style(session, db, user), on_voted=_voted,
+            )
+        if vote is not None:
+            announce(session, poll_view.vote_summary(poll, vote), tone="success")
+
+    async def _close_poll(post: Post, poll) -> None:
+        """[C]lose poll (issue #1299), for the author and the board's
+        moderators: no more votes from now. Asked first, as it cannot be
+        undone."""
+        if not await prompt_yes_no(session, "Close this poll? It takes no more votes.", default=False):
+            announce(session, "The poll stays open.", tone="muted")
+            return
+        try:
+            close_poll(db, poll, post.author_user_id, board, closed_by=user)
+        except PollError as exc:
+            announce(session, f"Could not close the poll: {exc}.", tone="error")
+            return
+        announce(session, "Poll closed.", tone="success")
 
     async def _compose_screen(title: str) -> None:
         await show_compose_screen(
@@ -1665,7 +1820,7 @@ async def _board_screen(
 
     async def _publish(
         subject: str, body: str, *, layout: str = "prose", parent_post_id: str | None = None,
-        files: list[FileRef] | None = None,
+        files: list[FileRef] | None = None, poll: PollSpec | None = None,
     ) -> bool:
         # Asked again here, not only when the board was drawn: the origin may
         # have changed who posts while this was being written, and a post made
@@ -1678,8 +1833,9 @@ async def _board_screen(
         try:
             post = create_post(
                 db, board, user, subject, body, layout=layout, parent_post_id=parent_post_id, files=files,
+                poll=poll,
             )
-        except PostError as exc:
+        except (PostError, PollError) as exc:
             announce(session, f"Could not create post: {exc}", tone="muted")
             return False
         # A guest may later edit or withdraw what it wrote in this call, and
@@ -1698,7 +1854,7 @@ async def _board_screen(
             # it, marked "held" (issue #678), until a moderator approves it.
             announce(session, "Submitted. Others will see it once a moderator approves it.")
         else:
-            announce(session, "Posted.")
+            announce(session, "Poll posted." if poll is not None else "Posted.")
         return True
 
     def _has_saved_draft() -> bool:
@@ -1876,6 +2032,8 @@ async def _board_screen(
                 options.append(MenuEntry(label=menu_key("P", "ost"), brief="Write the first post"))
             if can_draw:
                 options.append(MenuEntry(label=menu_key("A", "rt post"), brief="Draw the first post"))
+            if can_poll:
+                options.append(MenuEntry(label=menu_key("N", "ew poll"), brief="Ask the first question"))
             if has_draft:
                 options.append(_DRAFT_MENU_ENTRY)
             # Its readers see no posts, but held ones may wait (issue #678).
@@ -1918,10 +2076,15 @@ async def _board_screen(
                     break
                 has_draft = await _draw_empty_board()
                 continue
-            if (choice == "p" and can_post) or (choice == "d" and has_draft) or (choice == "a" and can_draw):
+            if (
+                (choice == "p" and can_post) or (choice == "d" and has_draft) or (choice == "a" and can_draw)
+                or (choice == "n" and can_poll)
+            ):
                 await session.write_line("")
                 if choice == "a":
                     await _compose_art_post()
+                elif choice == "n":
+                    await _compose_poll_post()
                 else:
                     await _saved_draft_menu(from_post=choice == "p")
                 page = list_posts_page(db, board, user, limit=_page_limit(), with_pinned=True, pinned_block_rows=_PINNED_BLOCK_ROWS)
@@ -2035,6 +2198,15 @@ async def _board_screen(
             else:
                 page, highlighted = _refetch_keeping(page, highlighted)
             await _render_fresh(page, highlighted)
+        elif char == "n" and can_poll:
+            await _moved_on()
+            if await _compose_poll_post():
+                page_anchor = None  # a new poll lands on the newest page
+                highlighted = None
+                page = _refetch_current_page()
+            else:
+                page, highlighted = _refetch_keeping(page, highlighted)
+            await _render_fresh(page, highlighted)
         elif char == "d" and _has_saved_draft():
             await _moved_on()
             if await _saved_draft_menu():
@@ -2130,14 +2302,49 @@ async def _edit_existing_post(
         if _art_canvas(session, split_signature(initial_body)[0]) is None:
             return  # said why; the draft stays
 
-    # Its own screen (issue #813), under the board.
-    await show_compose_screen(
-        session, title="Edit post",
-        redraw_in_place=redraw_in_place_enabled(db, user), unicode_style=unicode_style_enabled(db, user),
-        collapsed=breadcrumb_collapsed_enabled(db, user),
-        header_color=effective_header_color(session, db), accent_color=effective_accent_color(session, db),
-    )
-    subject = await read_subject(session, max_bytes=MAX_SUBJECT_BYTES, current=post.subject)
+    # A poll's question is the post's subject, edited with its answers and
+    # settings in the poll's draft editor (issue #1299).
+    poll = get_poll(db, post.root_post_id) if not art else None
+    poll_state: dict = {}
+    if poll is not None:
+        chrome = _picker_style(session, db, user)
+        closing_locked = "the poll is closed" if poll_closed(db, poll) else None
+        answers_lock = closing_locked or (
+            "fixed once someone has voted" if has_votes(db, poll)
+            else "fixed when it was posted to other BBSes" if answers_locked(db, poll) else None
+        )
+
+        async def _edit_poll(subject: str) -> str:
+            with entered(session, "Poll"):
+                again = await poll_view.edit_poll_draft(
+                    session, db, title="Edit poll", question=subject, spec=poll_state["spec"],
+                    answers_locked=answers_lock, closing_locked=closing_locked, chrome=chrome,
+                )
+            if again is None:
+                return subject
+            poll_state["spec"] = again.spec
+            return again.question
+
+        poll_state["spec"] = poll.spec
+        with entered(session, "Edit poll"):
+            drafted = await poll_view.edit_poll_draft(
+                session, db, title="Edit poll", question=post.subject, spec=poll.spec,
+                answers_locked=answers_lock, closing_locked=closing_locked, chrome=chrome,
+            )
+        if drafted is None:
+            announce(session, "Edit cancelled.", tone="muted")
+            return
+        poll_state["spec"] = drafted.spec
+        subject = drafted.question
+    else:
+        # Its own screen (issue #813), under the board.
+        await show_compose_screen(
+            session, title="Edit post",
+            redraw_in_place=redraw_in_place_enabled(db, user), unicode_style=unicode_style_enabled(db, user),
+            collapsed=breadcrumb_collapsed_enabled(db, user),
+            header_color=effective_header_color(session, db), accent_color=effective_accent_color(session, db),
+        )
+        subject = await read_subject(session, max_bytes=MAX_SUBJECT_BYTES, current=post.subject)
 
     edit_draft_path = _post_draft_path(
         db, kind="art_edit" if art else "edit", board=board, user=user, root_post_id=post.root_post_id
@@ -2169,8 +2376,17 @@ async def _edit_existing_post(
     current_files = shown_post_refs(db, post) if own_post else None
 
     async def _save(subject: str, body: str, files: list[FileRef] | None) -> bool:
+        poll_changed = poll is not None and poll_state["spec"] != poll.spec
+        if poll_changed:
+            try:
+                update_poll(db, poll, post.author_user_id, board, poll_state["spec"], changed_by=user)
+            except PollError as exc:
+                announce(session, f"Could not save the poll: {exc}.", tone="muted")
+                return False
         if subject == post.subject and body == post.body and files == current_files:
-            announce(session, "No changes to save.", tone="muted")
+            announce(session, "Poll updated." if poll_changed else "No changes to save.", tone=(
+                "success" if poll_changed else "muted"
+            ))
             return True
         try:
             edited = edit_post(db, post, board, subject=subject, body=body, edited_by=user, files=files)
@@ -2202,6 +2418,12 @@ async def _edit_existing_post(
         cancelled_notice="Edit cancelled.",
         draft_saved_notice=draft_saved_notice,
         commit=_save,
+        poll=poll_view.ReviewPoll(
+            rows=lambda width: poll_view.review_rows(
+                poll_state["spec"], db=db, width=width, accent=effective_accent_color(session, db),
+            ),
+            edit=_edit_poll,
+        ) if poll is not None else None,
     )
 
 
@@ -2223,6 +2445,7 @@ async def _review_and_commit(
     layout: str = "prose",
     title: str = "New post",
     files: list[FileRef] | None = None,
+    poll: poll_view.ReviewPoll | None = None,
 ) -> None:
     """The review screen a new post and an edit both pass through
     before anything is stored: the draft is shown whole, its subject and
@@ -2244,13 +2467,16 @@ async def _review_and_commit(
     `files` are the files the post points at so far (issue #842), changed
     here with `[A]ttach file` and `[R]emove file` and handed to `commit`
     with the subject and body. `None` -- a moderator editing someone else's
-    post -- offers no file keys and hands `commit` `None`: the files stay."""
+    post -- offers no file keys and hands `commit` `None`: the files stay.
+
+    `poll` (issue #1299) shows a poll under the subject and offers
+    `[Q]uestion and answers` to change it; its question is the subject."""
     with entered(session, title):
         await _review_loop(
             session, db, user, board, subject=subject, body=body, draft_path=draft_path,
             commit_key=commit_key, commit_label=commit_label, commit_brief=commit_brief,
             cancelled_notice=cancelled_notice, draft_saved_notice=draft_saved_notice,
-            commit=commit, layout=layout, title=title, files=files,
+            commit=commit, layout=layout, title=title, files=files, poll=poll,
         )
 
 
@@ -2272,6 +2498,7 @@ async def _review_loop(
     layout: str,
     title: str,
     files: list[FileRef] | None,
+    poll: poll_view.ReviewPoll | None = None,
 ) -> None:
     """`_review_and_commit`'s loop, under the composition's name."""
     body_mode = post_body_mode(
@@ -2309,11 +2536,20 @@ async def _review_loop(
             body_mode=body_mode,
             body_layout=layout,
             extra_rows=(
-                _file_rows(db, board, files, accent=effective_accent_color(session, db), linked=linked)
-                if files is not None else ()
+                *(poll.rows(session.terminal_width) if poll is not None else ()),
+                *(
+                    _file_rows(db, board, files, accent=effective_accent_color(session, db), linked=linked)
+                    if files is not None else ()
+                ),
             ),
-            extra_actions=file_actions(files, noun="post") if files is not None else (),
+            extra_actions=(
+                *(file_actions(files, noun="post") if files is not None else ()),
+                *((poll_view.REVIEW_POLL_ACTION,) if poll is not None else ()),
+            ),
         )
+        if poll is not None and action == poll_view.REVIEW_POLL_ACTION[0]:
+            subject = await poll.edit(subject)
+            continue
         if isinstance(action, str) and files is not None:
             # `[A]ttach file` or `[R]emove file`: the pickers run on a lane,
             # opened for as long as they are.
@@ -2717,7 +2953,8 @@ async def _withdraw_existing_post(
     await session.write_line(colored(
         f"Its text will read {WITHDRAWN_PLACEHOLDER} here and on every node that carries the board. "
         "This hides it but does not delete it: a moderator can still read it, and you can edit the "
-        "post again later.",
+        "post again later."
+        + (" Its poll closes, and its results are hidden." if get_poll(db, post.root_post_id) is not None else ""),
         fg_color=MUTED_COLOR,
     ))
     if not await prompt_yes_no(session, "Withdraw this post?", default=False):

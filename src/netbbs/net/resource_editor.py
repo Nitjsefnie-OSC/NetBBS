@@ -548,6 +548,7 @@ async def edit_resource_draft(
     accent_color: int = ACCENT_COLOR,
     header_color: int | tuple[int, int, int] = HEADER_COLOR,
     detail: DetailMode | None = None,
+    save_brief: str | None = None,
 ) -> Any | None:
     """
     Drives one draft-based create/edit screen: renders `title` plus
@@ -686,6 +687,9 @@ async def edit_resource_draft(
     if notices is None:
         def notices() -> list[str]:
             return take_notices(session)
+    # `save_brief` names what `save` does where it is not storing a
+    # resource: a draft handed on to the next step (issue #1332's poll).
+    save_brief_text = save_brief or _SAVE_BRIEF
     detail_state: DetailState | None = None
     if detail is not None:
         detail_state = await detail.refresh()
@@ -747,7 +751,7 @@ async def edit_resource_draft(
         # offers Save and Back.
         menu_save = save
         extra_entries: list[MenuEntry] = []
-        save_brief = _SAVE_BRIEF
+        save_brief = save_brief_text
         after_text = ""
         if detail_state is not None:
             # Creating (stay_after_save=False) has nothing stored to match, so
