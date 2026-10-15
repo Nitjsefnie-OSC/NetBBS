@@ -137,7 +137,7 @@ def test_who_is_online_does_not_name_a_deleted_door(db, player, tmp_path):
 
 
 def test_the_sysop_who_screen_names_the_door_too():
-    from netbbs.net.admin_flow import _session_description
+    from netbbs.net.admin_sessions import _session_description
 
     presence, session = PresenceRegistry(), FakeSession()
     presence.enter_door(session, 7, "Blacksite", "2026-01-01T00:00:00Z")
@@ -149,7 +149,7 @@ def test_the_sysop_who_screen_names_the_door_too():
 
 def test_the_sysop_who_screen_distinguishes_two_sessions_of_one_account():
     """What the finding was actually about: telling the rows apart."""
-    from netbbs.net.admin_flow import _session_description
+    from netbbs.net.admin_sessions import _session_description
 
     presence = PresenceRegistry()
     playing, idle = FakeSession(), FakeSession()

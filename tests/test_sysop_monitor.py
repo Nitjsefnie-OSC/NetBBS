@@ -9,7 +9,8 @@ import pytest
 from netbbs.auth.users import SYSOP_LEVEL, create_user
 from netbbs.moderation.log import list_recent_actions
 from netbbs.net import sysop_monitor
-from netbbs.net.admin_flow import admin_menu, disconnect_session_draft
+from netbbs.net.admin_flow import admin_menu
+from netbbs.net.admin_sessions import disconnect_session_draft
 from netbbs.net.char_input import EditorKey, EditorKeyKind
 from netbbs.net.live_screen import SHOW_CURSOR, KeyOutcome, run_live_screen
 from netbbs.net.maintenance import MaintenanceMode
