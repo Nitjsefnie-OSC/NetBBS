@@ -18,7 +18,6 @@ from netbbs.boards.posts import approve_post, create_post, edit_post
 from netbbs.files import entries as entries_module
 from netbbs.files.areas import create_file_area
 from netbbs.files.entries import upload_file
-from netbbs.net import admin_flow
 from netbbs.net import admin_moderation
 from netbbs.net.admin_moderation import _load_pending_items, _post_action_screen
 from tests.test_admin_flow import FakeSession, _run, _visible, _written_text, db, lane, sysop  # noqa: F401 -- fixtures

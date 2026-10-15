@@ -232,7 +232,7 @@ async def _explain_acceptance(session: Session, lane: DatabaseLane) -> None:
 async def _write_wrapped(session: Session, text: str) -> None:
     """Word-wrapped to the real terminal width before coloring, one
     physical line at a time -- the established fix for colored prose on
-    narrow terminals (`netbbs.net.admin_flow._write_wrapped_subtitle`)."""
+    narrow terminals (`netbbs.net.admin_ui._write_wrapped_subtitle`)."""
     await session.write_line("")
     for wrapped in wrap_to_width(text, session.terminal_width):
         await session.write_line(colored(wrapped, fg_color=MUTED_COLOR))

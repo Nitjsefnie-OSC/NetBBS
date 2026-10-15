@@ -13,7 +13,7 @@ aiohttp = pytest.importorskip("aiohttp")
 from netbbs.auth.users import SYSOP_LEVEL, create_user, set_user_level  # noqa: E402
 from netbbs.doors.registry import custom_doors_dir  # noqa: E402
 from netbbs.moderation.log import list_recent_actions  # noqa: E402
-from netbbs.net import admin_flow, zmodem  # noqa: E402
+from netbbs.net import zmodem
 from netbbs.net import admin_doors
 from netbbs.net import admin_banners
 from netbbs.net import admin_ui

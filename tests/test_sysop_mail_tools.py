@@ -41,7 +41,6 @@ from netbbs.mail import (
     send_system_mail,
     set_kept,
 )
-from netbbs.net import admin_flow
 from netbbs.net import admin_link
 from netbbs.net.admin_flow import admin_menu
 from netbbs.storage.database import Database

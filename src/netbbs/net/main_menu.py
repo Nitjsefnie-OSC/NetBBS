@@ -1123,7 +1123,7 @@ async def _main_menu_loop(
                 # GitHub issue #29: the cross-process revalidation
                 # boundary. In-process disable/delete already disconnects
                 # a live session directly (see
-                # netbbs.net.admin_flow._revoke_live_sessions), but the
+                # netbbs.net.admin_sessions._revoke_live_sessions), but the
                 # standalone `python -m netbbs.admin` CLI can also change
                 # `disabled_at`/delete the row from a completely separate
                 # process with no in-memory notification path at all --

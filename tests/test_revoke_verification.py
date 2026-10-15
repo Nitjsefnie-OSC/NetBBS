@@ -133,7 +133,6 @@ def test_clearing_the_birthdate_never_revokes_the_verified_age(db, sysop, carol)
 
 
 def _detail(session, lane, actor, target):
-    from netbbs.net import admin_flow
 
     asyncio.run(admin_users._user_detail_screen(session, lane, actor, target, None))
     return _visible(_written_text(session))
@@ -235,7 +234,6 @@ def test_the_verify_screen_says_so_when_someone_else_revoked_first(db, sysop, ca
 
 def test_the_account_screen_says_so_when_someone_else_revoked_first(db, lane, sysop, carol, monkeypatch):
     # Review on #1118: the account screen said nothing at all in that case.
-    from netbbs.net import admin_flow
 
     attest_age(db, carol, BORN, verifier=sysop)
     real_revoke = admin_users.revoke_attestation

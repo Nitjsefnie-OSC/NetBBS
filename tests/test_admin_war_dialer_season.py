@@ -203,7 +203,6 @@ def test_the_node_audit_records_the_effective_seasons_of_an_idle_world(db, lane,
 
 
 def test_a_second_concurrent_change_is_refused(db, lane, sysop, identity_dir):
-    from netbbs.net import admin_flow
 
     _war_dialer_door(db, sysop)
     path = _war_dialer_world(db)
@@ -221,7 +220,6 @@ def test_a_second_concurrent_change_is_refused(db, lane, sysop, identity_dir):
 def test_a_dropped_session_still_records_the_change_it_made(db, lane, sysop, identity_dir, monkeypatch):
     import threading
 
-    from netbbs.net import admin_flow
 
     door = _war_dialer_door(db, sysop)
     path = _war_dialer_world(db)
@@ -288,7 +286,6 @@ def test_a_backup_that_failed_verification_is_not_called_a_backup(db, lane, syso
 def test_maintenance_cannot_be_switched_while_a_competition_change_runs(db, lane, sysop):
     """Codex review, PR #744: switching maintenance off mid-change would let
     a caller in between the backup and the commit."""
-    from netbbs.net import admin_flow
 
     _war_dialer_door(db, sysop)
     path = _war_dialer_world(db)
@@ -308,7 +305,6 @@ def test_a_session_dropped_while_the_audit_is_written_still_records_it(db, lane,
     import threading
     import time
 
-    from netbbs.net import admin_flow
 
     door = _war_dialer_door(db, sysop)
     path = _war_dialer_world(db)
@@ -383,7 +379,6 @@ def test_the_worker_rechecks_the_destination_right_before_the_backup(db, lane, s
     """Codex review, PR #744: a disk unmounted between the screen's check and
     the worker must stop the change, not get its mount point recreated."""
     from netbbs.backup_schedule import set_destination_setting
-    from netbbs.net import admin_flow
 
     _war_dialer_door(db, sysop)
     path = _war_dialer_world(db)
@@ -411,7 +406,6 @@ def test_a_failed_node_audit_still_reports_the_change_as_done(db, lane, sysop, i
     is done, and separately that the node audit entry is missing."""
     import sqlite3
 
-    from netbbs.net import admin_flow
 
     _war_dialer_door(db, sysop)
     path = _war_dialer_world(db)

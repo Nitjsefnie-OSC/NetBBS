@@ -28,7 +28,7 @@ from netbbs.link.carry import accept_genesis, hide_carried_resource, restore_exc
 from netbbs.link.events import build_channel_genesis
 from netbbs.link.node_identity import bootstrap_node_identity
 from netbbs.mrc.settings import OpenRoomSettings, materialize_open_room, save_open_room_settings
-from netbbs.net import admin_flow, chat_flow
+from netbbs.net import chat_flow
 from netbbs.net import admin_chat
 from netbbs.net import admin_ui
 from netbbs.net.char_input import InputHistory

@@ -376,7 +376,7 @@ async def _caller_who_screen(
 ) -> None:
     """
     Issue #99: the caller-facing counterpart to the SysOp `[N]ode`
-    menu's own `[W]ho` screen (`netbbs.net.admin_flow._who_screen`) --
+    menu's own `[W]ho` screen (`netbbs.net.admin_sessions._who_screen`) --
     same underlying `ActiveSessionRegistry`, but scoped down to what an
     ordinary caller should actually see and do: no peer addresses (the
     SysOp version's unauthenticated-session fallback shows one; this

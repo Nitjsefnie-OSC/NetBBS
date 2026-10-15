@@ -204,7 +204,7 @@ _MRC_NAME_STYLE_LABELS = {
 }
 
 #: How a self-reported field on Name & details is edited. The same words
-#: as `admin_flow._CLEAR_HINT` (issue #557) for a value that can be
+#: as `admin_fields._CLEAR_HINT` (issue #557) for a value that can be
 #: cleared; kept here because the caller's screens do not import the
 #: console's.
 _FIELD_HINT = "Enter saves, blank clears, Esc keeps"

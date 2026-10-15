@@ -480,7 +480,7 @@ async def _message(session: Session, state: MonitorState, controls: NodeControls
         state.say(f"{_label(entry)} is no longer connected.", ERROR_COLOR)
 
 
-#: How an outcome line reads, from how it starts (`admin_flow._announce_line`
+#: How an outcome line reads, from how it starts (`admin_ui._announce_line`
 #: colours the same way).
 _NEUTRAL_OUTCOMES = ("Cancelled", "No change", "Not ")
 
@@ -690,7 +690,7 @@ async def monitor_screen(
     """Show the live monitor until the SysOp leaves it.
 
     `disconnect` is the Who screen's disconnect draft
-    (`admin_flow.disconnect_session_draft`): an optional message and an
+    (`admin_sessions.disconnect_session_draft`): an optional message and an
     explicit Disconnect, not a chain of questions (design doc §3.5), and
     one audit-log path for both screens."""
     _format, timezone_name = await lane.run(resolve_display_preferences)

@@ -7,7 +7,6 @@ import os
 
 import pytest
 
-from netbbs.net import admin_flow
 from netbbs.net import admin_maintenance
 from netbbs.net.admin_flow import admin_menu
 from netbbs.node_log import (

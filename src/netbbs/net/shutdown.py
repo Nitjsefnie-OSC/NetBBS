@@ -237,7 +237,7 @@ class SequenceScheduler:
     cancellable sequence. Closing the loophole this leaves -- a SysOp
     who can't explicitly cancel a signal-triggered shutdown otherwise
     silently *replacing* it by scheduling a new one -- is therefore the
-    caller's job: `netbbs.net.admin_flow._shutdown_screen` checks
+    caller's job: `netbbs.net.admin_sessions._shutdown_screen` checks
     `is_cancellable()` itself before ever reaching its own `schedule()`
     call, refusing to offer a new shutdown at all while a non-cancellable
     one is in flight, rather than this class refusing on its behalf.
@@ -505,7 +505,7 @@ async def run_drain_sequence(
     §13.8's own two-step workflow: turn on `[M]aintenance mode` first if
     new non-SysOp logins should be blocked too, then `[D]rain` if anyone
     already connected also needs to go), not silently implied by each
-    other. `netbbs.net.admin_flow._drain_screen` says so explicitly, the
+    other. `netbbs.net.admin_sessions._drain_screen` says so explicitly, the
     same way its own `[M]aintenance mode` screen already explains its own
     limits.
 

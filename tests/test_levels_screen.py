@@ -175,7 +175,6 @@ def test_a_resource_opened_from_levels_gets_the_content_menus_services(db, lane,
 
     from netbbs.access_map import GateKind, list_gates
     from netbbs.files.areas import create_file_area
-    from netbbs.net import admin_flow
 
     create_file_area(db, "Uploads", creator=sysop)
     seen = {}

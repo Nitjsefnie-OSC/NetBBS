@@ -141,7 +141,6 @@ def _announced_text(session: FakeSession) -> str:
     whichever console screen is drawn next shows it above its prompt. A
     test that drives one screen function directly never draws that next
     screen, so it reads the queue instead."""
-    from netbbs.net import admin_flow
 
     return _visible("\r\n".join(admin_ui._take_notices(session)))
 
@@ -586,7 +585,6 @@ def test_trust_override_reconfirms_when_identity_warning_changes_during_prompt(
     from netbbs.link.node_identity import bootstrap_node_identity
     from netbbs.link.protocol import LinkNode
     from netbbs.link.store import save_peer
-    from netbbs.net import admin_flow
 
     first_familiar = LinkNode(identity=bootstrap_node_identity("first-trust-name"))
     second_familiar = LinkNode(identity=bootstrap_node_identity("second-trust-name"))
@@ -7769,7 +7767,6 @@ def test_dashboard_refreshes_its_backup_summary_after_quick_action(
 
 
 def test_live_backup_screen_surfaces_a_backup_failure(db, lane, sysop, monkeypatch):
-    from netbbs.net import admin_flow
 
     def fail_backup(**kwargs):
         raise admin_doors.BackupError("disk is full")
@@ -7828,7 +7825,6 @@ def test_live_backup_screen_refuses_a_missing_configured_identity(
 def test_live_backup_remains_owned_until_its_worker_finishes_after_cancellation(
     db, lane, sysop, monkeypatch,
 ):
-    from netbbs.net import admin_flow
 
     started = threading.Event()
     release = threading.Event()
@@ -8819,7 +8815,6 @@ def test_diagnostic_log_tail_screen_appends_entries_written_while_watching(db, l
     full scripted admin_menu) since this needs real concurrency --
     inserting a row *while* the tail loop's poll is in flight -- that a
     single ordered FakeSession input queue can't express."""
-    from netbbs.net import admin_flow
 
     poll_interval = 0.02
     monkeypatch.setattr(admin_maintenance, "_DIAGNOSTIC_TAIL_POLL_INTERVAL_SECONDS", poll_interval)
