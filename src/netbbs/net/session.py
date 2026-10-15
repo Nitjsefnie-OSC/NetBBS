@@ -245,6 +245,10 @@ class Session(ABC):
     #: caller's colour depth preference after login.
     sixteen_colors: bool = False
     detected_sixteen_colors: bool = False
+    #: The caller's own colour depth once applied at login or from their
+    #: profile (`"16"`, `"256"`, `"truecolor"`), `None` under auto: a
+    #: detection that finishes late changes only what auto follows.
+    color_depth_choice: str | None = None
     _basic_colors: BasicColorFilter | None = None
 
     #: This node's own display name (`netbbs.config.get_node_display_

@@ -65,5 +65,7 @@ def sixteen_colors_for(session: Session, override: str | None) -> bool:
 
 def apply_color_depth(session: Session, override: str | None) -> None:
     """Carry the caller's colour depth into `session`, from the next write
-    on: at login, and when they change it on their profile."""
+    on: at login, and when they change it on their profile. Kept on the
+    session, so a detection that finishes later leaves it alone."""
+    session.color_depth_choice = override
     session.sixteen_colors = sixteen_colors_for(session, override)

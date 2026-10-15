@@ -170,3 +170,18 @@ def test_a_background_is_never_bright_and_dark_art_stays_dark():
     assert nearest_basic((255, 60, 60), background=True) == 1
     assert nearest_basic((30, 20, 50), background=True) == 0  # a night sky, not blue
     assert basic_for_index(12, background=True) == 4
+
+
+def test_a_late_colorterm_does_not_undo_the_callers_choice():
+    # Claude review of #1349: a NEW-ENVIRON reply after sign-in re-runs
+    # detection; only what auto follows may change.
+    async def scenario():
+        session, _writer = _telnet(sixteen=True)
+        apply_color_depth(session, "16")
+        session._colorterm = "truecolor"
+        session._apply_terminal_colors()
+        chosen = session.sixteen_colors, session.detected_sixteen_colors
+        apply_color_depth(session, None)
+        return chosen, session.sixteen_colors
+
+    assert asyncio.run(scenario()) == ((True, False), False)

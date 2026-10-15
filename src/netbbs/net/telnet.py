@@ -296,7 +296,11 @@ class TelnetSession(Session):
         after NEW-ENVIRON, as `_apply_terminal_truecolor` does; a caller's
         own preference replaces it after login."""
         sixteen = not self._colorterm and terminal_shows_sixteen_colors(self.terminal_types, unrecognised=True)
-        self.sixteen_colors = self.detected_sixteen_colors = sixteen
+        self.detected_sixteen_colors = sixteen
+        # A NEW-ENVIRON reply after sign-in must not undo the caller's
+        # own choice (Claude review of #1349).
+        choice = self.color_depth_choice
+        self.sixteen_colors = sixteen if choice is None else choice == "16"
 
     def _apply_terminal_truecolor(self) -> None:
         """Give truecolor to a terminal whose type says it shows it but
