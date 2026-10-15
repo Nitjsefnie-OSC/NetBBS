@@ -14822,9 +14822,15 @@ id. They keep it: it is what was signed and carried, a post's content id is
 derived from it, and every peer's copy says the same. What follows the account
 is everything that looks the account up live: Who's online, the directory,
 ownership of one's own posts, mail recipients, presence. Chat scrollback is
-the one table with no account id. It gains `author_user_id`, backfilled from
-the current names of the node's accounts, so an old line still resolves to
-its author after a rename, and never to a later holder of the name. Rejected:
+the one table with no account id. It gains `author_user_id`, written for
+every new line, so a line still resolves to its author after a rename and
+never to a later holder of the name. The migration backfills older lines by
+name only where that is safe: a line is given to the account that holds its
+name now only if that account already existed when the line was written. A
+line older than the account was written by a former holder of a name that was
+freed and re-registered (§4.3 allows that on a node that never ran Link, and
+#594 Decision 5 leaves earlier reuse unrepaired). That line keeps its stored
+name and resolves to nobody. Rejected:
 rewriting snapshots, which would make this node's copy of a signed post
 disagree with every peer's copy.
 
@@ -14859,7 +14865,14 @@ time, because entries age out of the list. From then on it treats
 power.** A home node already speaks for its users, so letting it rename them
 grants nothing it lacks, with two exceptions, and both are refused. A peer
 ignores an entry whose new name it already holds as a separate subject with
-any history (content, mail, trust state): that would merge two users into one.
+history from *before* the entry's `at`: that would merge two users into one.
+History from `at` onwards is the renamed account's own. It is signed by the
+same home node, and it can reach a peer before the notice does, through
+another route or a peer still holding the older descriptor. An honest rename
+is therefore never refused for being noticed late. A node could backdate `at`
+to slip past this test. So when both names already carry trust state, the
+merged subject keeps the stricter one of each kind (a block or quarantine
+on either side stays), and a rename can never lift a restriction.
 It also ignores an entry that renames to a name the same node renamed away
 from earlier: names are retired at home, so an honest node never does this.
 After a peer has learned `old → new`, content newly signed as `old@node` is
