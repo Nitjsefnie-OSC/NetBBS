@@ -211,6 +211,22 @@ def test_delete_community_reverts_referencing_channel_and_area(db, sysop):
     assert get_file_area_by_name(db, area.name).community_id is None
 
 
+def test_delete_community_reverts_a_referencing_door(db, sysop):
+    """A door's Community reference has no ON DELETE clause, so a Community
+    holding a door could not be deleted at all ("FOREIGN KEY constraint
+    failed") until delete_community cleared doors too."""
+    import sys
+
+    from netbbs.doors.registry import create_door, list_doors
+
+    community = create_community(db, "Games", creator=sysop)
+    create_door(db, "Trivia", sys.executable, community_id=community.id, creator=sysop)
+    delete_community(db, community, deleted_by=sysop)
+
+    [door] = list_doors(db)
+    assert door.community_id is None
+
+
 def test_delete_community_revokes_scoped_community_blanket_grant(db, sysop):
     community = create_community(db, "Politics", creator=sysop)
     alice = create_user(db, "alice", password="hunter2", user_level=10)

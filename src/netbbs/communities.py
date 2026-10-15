@@ -244,7 +244,7 @@ def delete_community(db: Database, community: Community, *, deleted_by: User) ->
     """
     Permanently remove `community`.
 
-    Every referencing board/channel/file_area reverts to `community_id
+    Every referencing board/channel/file_area/door reverts to `community_id
     = NULL` (Uncategorized) -- the reverse of assignment, not a
     cascading delete of the resources themselves, matching the design
     doc's "migration is a non-event" framing: losing a Community
@@ -278,6 +278,10 @@ def delete_community(db: Database, community: Community, *, deleted_by: User) ->
     db.connection.execute("UPDATE boards SET community_id = NULL WHERE community_id = ?", (community.id,))
     db.connection.execute("UPDATE channels SET community_id = NULL WHERE community_id = ?", (community.id,))
     db.connection.execute("UPDATE file_areas SET community_id = NULL WHERE community_id = ?", (community.id,))
+    # Doors joined Communities later (#172) and were missed here: their
+    # reference has no ON DELETE clause, so a Community holding a door
+    # could not be deleted at all.
+    db.connection.execute("UPDATE doors SET community_id = NULL WHERE community_id = ?", (community.id,))
     db.connection.execute("DELETE FROM moderator_grants WHERE community_id = ?", (community.id,))
     db.connection.execute(
         "DELETE FROM user_follows WHERE object_type = 'community' AND object_id = ?", (community.id,)

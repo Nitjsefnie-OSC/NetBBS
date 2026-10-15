@@ -20059,18 +20059,19 @@ async def _delete_community_screen(session: Session, lane: DatabaseLane, actor: 
     will be left without a Community, and how many Community-blanket
     moderator grants will be revoked outright."""
 
-    def _counts(db: Database) -> tuple[int, int, int, int]:
+    def _counts(db: Database) -> tuple[int, int, int, int, int]:
         board_count = sum(1 for b in list_boards(db) if b.community_id == community.id)
         channel_count = sum(1 for c in list_channels(db) if c.community_id == community.id)
         area_count = sum(1 for a in list_file_areas(db) if a.community_id == community.id)
+        door_count = len(list_doors(db, community_id=community.id))
         grant_count = len(list_grants_for_community(db, community.id))
-        return board_count, channel_count, area_count, grant_count
+        return board_count, channel_count, area_count, door_count, grant_count
 
-    board_count, channel_count, area_count, grant_count = await lane.run(_counts)
+    board_count, channel_count, area_count, door_count, grant_count = await lane.run(_counts)
     await session.write_line(
         colored(
             f"\r\nThis Community has {board_count} message board(s), {channel_count} chat channel(s), "
-            f"{area_count} file area(s), and {grant_count} moderator grant(s). Removing it leaves "
+            f"{area_count} file area(s), {door_count} door(s), and {grant_count} moderator grant(s). Removing it leaves "
             "those resources without a Community and revokes those grants. This cannot be undone.",
             fg_color=MUTED_COLOR,
         )
