@@ -3242,9 +3242,12 @@ proves an account never had a session.
 `UsernameRetiredError` stringifies exactly as a taken username does, because
 both self-service registration paths print the exception to a remote caller;
 a SysOp surface has to reach for `sysop_detail` and, in a draft editor,
-re-raise it as the editor's `error_type` so the draft survives. A rename, if
-one is ever built, frees a name the same way a deletion does and must retire
-it the same way. Any new path that inserts into `users` without going through
+re-raise it as the editor's `error_type` so the draft survives. A rename
+(issue #1306, `netbbs.auth.renames`) retires the old name through the same
+predicate, inside its own transaction, and records the account in
+`retired_usernames.user_id`; delivery by name goes through
+`get_recipient_by_name`, never `get_user_by_username`, wherever a name can come
+from outside (Link mail, netmail, `/msg`). Any new path that inserts into `users` without going through
 `_create_user_with_password_hash` bypasses the hold. Because `create_user` now
 reads `retired_usernames`, a migration test that opens a schema truncated
 before that table cannot call it; `tests/legacy_schema.py` inserts the account
@@ -3252,6 +3255,22 @@ the way every schema has stored one. "Has this node ever run Link" is a sticky
 `node_config` marker, seeded once by the migration from every artifact Link
 leaves behind, because stored peers alone miss a node that originated a linked
 board without ever storing one.
+
+**A peer's view of a renamed user goes through `_canonical` (issue #1306).**
+`link_user_aliases` maps `(node, old) -> new`, learned in `save_peer` and
+`save_introduced_identity` from the stored descriptor. The trust writers and
+`get_effective_trust_state` resolve a user subject through it first, and
+learning an alias moves the old subject's rows to the new one
+(`merge_renamed_user_subject`), inside `learn_user_renames`' own transaction.
+SQL that reads a trust table by a subject id built from a wire name, outside
+those functions, does not see the alias: route it through them. A received
+remote attestation keeps naming the old subject (its issuer reissues it), so
+the old subject row is deleted only when nothing in
+`link_remote_attestation*` still names it.
+`channel_messages.author_user_id` is NULL for a line no account wrote and 0 for
+an older line whose author could not be told apart from a later holder of the
+name; `_resolve_message_author` resolves NULL by label and 0 to nobody, so a
+new code path that records a caller's line must pass `author_user_id`.
 
 **A node's own trust objects are stored with the ones it carries (issue
 #589).** `trust_issuance.reconcile_issued_vouches` signs a vouch and writes it
