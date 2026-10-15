@@ -316,10 +316,13 @@ def record_post_opened(db: Database, user: User, board: Board, post: Post) -> bo
     so a caller keeping an unread count knows to count again.
 
     A copy of a cross-post (issue #1298) is one message: opening it marks
-    the other copies `user` can open on this node read too."""
+    the other copies `user` can open on this node read too -- on boards they
+    have visited. A board never visited has nothing new on it yet, and a
+    first baseline written here would count its whole backlog as read."""
     capped = _record_one_post_opened(db, user, board, post)
     for copy_board, copy in visible_crosspost_copies(db, user, post):
-        _record_one_post_opened(db, user, copy_board, copy)
+        if _get_cursor(db, user, _BOARD, copy_board.id) is not None:
+            _record_one_post_opened(db, user, copy_board, copy)
     return capped
 
 
@@ -497,7 +500,6 @@ def unread_replies_to(db: Database, user: User) -> list[Post]:
         if row["link_envelope_json"] is None
         or envelope_content_visible(db, row["link_envelope_json"], author_cache=author_cache)
     ]
-    reply_groups = {row["post_id"]: row["crosspost_group"] for row in rows if row["crosspost_group"] is not None}
 
     # Unread as the board list decides it (issue #710): above the board's
     # floor and never opened. Each board's floor and opened set are read
@@ -513,18 +515,7 @@ def unread_replies_to(db: Database, user: User) -> list[Post]:
         floor = floors[reply.board_id]
         if floor is None or (reply.id > floor and reply.id not in opened[reply.board_id]):
             unread.append(reply)
-    # A cross-post is one message on several boards (issue #1298): counted
-    # once, by its first copy.
-    counted: set[str] = set()
-    once = []
-    for reply in unread:
-        group = reply_groups.get(reply.post_id)
-        if group is not None:
-            if group in counted:
-                continue
-            counted.add(group)
-        once.append(reply)
-    return once
+    return unread
 
 
 def _root_row_to_post(row) -> Post:

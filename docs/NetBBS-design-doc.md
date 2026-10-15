@@ -4454,9 +4454,11 @@ always worth surfacing.
 
 A cross-post (issue #1298) is one message on several boards. Opening one copy
 marks the copies the caller can see on this node read too
-(`record_post_opened` on each). New scan counts a group's unread copies once,
-on the first board in its list that has one, and "replies to you" lists a
-group once; `search_posts` lists it once, by the first copy the caller can
+(`record_post_opened` on each), on boards the caller has visited: a board
+never visited keeps having no baseline, rather than having its backlog
+counted read by a visit elsewhere. New scan counts a group's unread copies once,
+on the first board in its list that has one. A reply is never cross-posted,
+so "replies to you" already lists each reply once. `search_posts` lists it once, by the first copy the caller can
 open. A copy's byline says "also in X, Y", naming only the boards of the
 other copies the reader can open.
 

@@ -542,3 +542,17 @@ def test_the_sysop_sets_the_cap_beside_the_other_node_wide_limits(db, sysop):
     text = _visible(_written_text(session))
     assert "Cross-post boards" in text and "up to 5 boards" in text
     assert get_crosspost_board_limit(db) == 3
+
+
+def test_opening_a_copy_does_not_visit_a_board_never_visited(db, sysop, alice):
+    bob = _user(db, "bob")
+    first = create_board(db, "Critique", creator=sysop)
+    second = create_board(db, "Showcase", creator=sysop)
+    create_post(db, second, sysop, "older backlog", "b")
+    ensure_board_baseline(db, bob, first)
+    one, _two = create_crosspost(db, [first, second], sysop, "s", "b")
+
+    record_post_opened(db, bob, first, one)
+
+    # Showcase stays "not visited yet": its backlog was never shown to bob.
+    assert unread_post_count(db, bob, second) is None
