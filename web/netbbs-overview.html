@@ -191,7 +191,7 @@
         </div>
         <div class="t-item active">
           <div class="t-head"><h3>NetBBS Link connectivity</h3><span class="badge active">Implemented</span></div>
-          <p>Peer discovery, shared message boards, chat channels, file catalogues, mail, and relay support for nodes behind NAT or an HTTP proxy. Each SysOp chooses what their node carries: anything past a carry cap is offered for a decision rather than dropped, and content another node originates can be hidden, restored or purged.</p>
+          <p>Peer discovery, shared message boards, chat channels, file catalogues, mail, and relay support for nodes behind NAT or an HTTP proxy. Each SysOp chooses what their node carries: anything past a carry cap is offered for a decision rather than dropped, and content another node originates can be hidden, restored or purged. New in v7.27.0: a SysOp can share a whole Community, and another node can subscribe to it; callers on every node that carries a shared message board can vote in its polls; and when the SysOp approves a caller's new username, linked nodes follow the rename.</p>
         </div>
         <div class="t-item pending">
           <div class="t-head"><h3>Trust &amp; reputation</h3><span class="badge pending">Validation continues</span></div>
@@ -233,10 +233,10 @@
         <div class="cat">
           <h3>Core BBS</h3>
           <ul>
-            <li><b>Message boards &amp; files</b> — a post list and a reader, read tracking per post, full-text search, real Zmodem and browser transfers.</li>
+            <li><b>Message boards &amp; files</b> — a post list and a reader, polls with results as bars, one post sent to several message boards at once, read tracking per post, full-text search, real Zmodem and browser transfers.</li>
             <li><b>Mail</b> — personal mail, local or across NetBBS Link: drafts, replies, forwarding, several recipients, read receipts, blocking, search, and the delivery state of every letter you sent to another node.</li>
             <li><b>FidoNet &amp; fsxNet</b> — echomail on message boards and netmail in Mail over BinkP, polled and answered, with a nodelist for direct netmail and the SysOp choosing who may send it.</li>
-            <li><b>Communities</b> — topic-first grouping of message boards, chat channels, and file areas.</li>
+            <li><b>Communities</b> — topic-first grouping of message boards, chat channels, and file areas, which a SysOp can share over NetBBS Link for other nodes to subscribe to.</li>
             <li><b>Directory</b> — vCard/finger-style caller lookup and preferences.</li>
             <li><b>Classic terminals</b> — a session speaks UTF-8, CP437 or plain ASCII, detected when the caller connects and changeable in their profile, so SyncTERM draws its boxes right.</li>
           </ul>
@@ -244,7 +244,7 @@
         <div class="cat">
           <h3>Real-time</h3>
           <ul>
-            <li><b>Chat channels</b> — scrollback you page through with PgUp and PgDn while the chat holds still, private messages, <code>/nick</code>, <code>/away</code>, and <code>/who</code> and <code>/list</code> that count everyone in a chat channel, on linked nodes and on MRC.</li>
+            <li><b>Chat channels</b> — scrollback you page through with PgUp and PgDn while the chat holds still, private messages, <code>/nick</code>, <code>/away</code>, and <code>/who</code> and <code>/list</code> that count everyone in a chat channel, on linked nodes and on MRC; a terminal bell, set with <code>/bell</code>, for private messages or for mentions of your name.</li>
             <li><b>Moderation</b> — mute/ban/kick and moderated-content approval queues.</li>
             <li><b>Node-wide presence</b> — who's online, across every linked node.</li>
             <li><b>Inter-BBS chat</b> — chat channels bridged to rooms on the public MRC network, or any room opened on demand.</li>
@@ -264,7 +264,7 @@
         <div class="cat">
           <h3>SysOp &amp; customization</h3>
           <ul>
-            <li><b>Admin console</b> — users, message boards, file areas, chat channels, scheduled backups, installing a new release, the node log, audit log.</li>
+            <li><b>Admin console</b> — users and the username changes they ask for, message boards, file areas, chat channels, scheduled backups, installing a new release, the node log, audit log.</li>
             <li><b>Staff permissions</b> — let a helper approve signups, manage accounts or moderate everything without a second SysOp account; members see who runs the node under Operators on the main menu.</li>
             <li><b>Levels</b> — a Levels screen showing what each access level opens, a preview of what a level change opens and closes before it is applied, named levels, and automatic promotion under rules the SysOp sets.</li>
             <li><b>Branding</b> — welcome banner and mastheads, or your own ANSI art as the main menu and the message board, file area and chat channel lists, with live values filled in, items a caller can't use blanked, optional modem-speed playback with a time limit, and SAUCE records from scene tools understood; node-wide accent/header/clock colors.</li>
