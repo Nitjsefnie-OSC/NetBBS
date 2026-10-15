@@ -221,8 +221,10 @@ def _later(previous: str | None) -> str:
 
 
 def _resource_origin(kind: str, row) -> str | None:
-    """A linked resource's current origin: a board's moves (§9.4)."""
-    if kind == "boards" and row["link_origin_fingerprint"]:
+    """A linked resource's current origin: the override column first, where
+    the table has one, then its genesis -- never either alone. Only a board's
+    origin moves today (§9.4); a file area's column waits for its transfer."""
+    if "link_origin_fingerprint" in row.keys() and row["link_origin_fingerprint"]:
         return row["link_origin_fingerprint"]
     origin = json.loads(row["link_genesis_json"])["envelope"]["payload"].get("origin_fingerprint")
     return origin if isinstance(origin, str) else None
