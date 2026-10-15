@@ -299,7 +299,7 @@ def test_attach_a_file_on_review_and_publish_it(db):
 
 
 def test_a_held_post_shows_its_files_to_the_moderator(db, tmp_path):
-    from netbbs.net.admin_flow import _post_action_screen
+    from netbbs.net.admin_moderation import _post_action_screen
     from netbbs.storage.execution import DatabaseLane
 
     alice, mod = _user(db, "alice"), _user(db, "mod", user_level=255)
@@ -334,7 +334,7 @@ def test_a_moderators_edit_offers_no_file_keys_and_keeps_the_files(db):
 
 
 def test_a_held_edit_that_drops_every_file_says_so_to_the_moderator(db):
-    from netbbs.net.admin_flow import _post_action_screen
+    from netbbs.net.admin_moderation import _post_action_screen
     from netbbs.storage.execution import DatabaseLane
 
     alice, mod = _user(db, "alice"), _user(db, "mod", user_level=255)

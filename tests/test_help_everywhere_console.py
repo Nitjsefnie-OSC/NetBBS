@@ -23,6 +23,7 @@ from netbbs.link.trust import (
     register_subject,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_moderation
 from netbbs.net import admin_trust
 from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu, staff_menu
@@ -142,7 +143,7 @@ def _pending_file(db, sysop):
 def test_the_pending_file_screen_has_help(db, lane, sysop):
     entry, area = _pending_file(db, sysop)
     session = FakeSession([H, " ", "a"])
-    asyncio.run(admin_flow._file_action_screen(session, lane, sysop, entry, area))
+    asyncio.run(admin_moderation._file_action_screen(session, lane, sysop, entry, area))
     text = _visible(_written_text(session))
     _assert_help_then_redraw(text, "Pending file help", "waiting for approval", "Publish this pending file")
     assert "Approved." in _visible("\r\n".join(admin_ui._take_notices(session)))

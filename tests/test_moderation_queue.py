@@ -19,7 +19,8 @@ from netbbs.files import entries as entries_module
 from netbbs.files.areas import create_file_area
 from netbbs.files.entries import upload_file
 from netbbs.net import admin_flow
-from netbbs.net.admin_flow import _load_pending_items, _post_action_screen
+from netbbs.net import admin_moderation
+from netbbs.net.admin_moderation import _load_pending_items, _post_action_screen
 from tests.test_admin_flow import FakeSession, _run, _visible, _written_text, db, lane, sysop  # noqa: F401 -- fixtures
 
 
@@ -122,7 +123,7 @@ def test_the_content_menu_opens_the_node_wide_queue(db, lane, sysop, alice):
 
 
 def test_a_queue_lists_the_oldest_and_says_more_waits(db, lane, sysop, alice, monkeypatch):
-    monkeypatch.setattr(admin_flow, "MAX_QUEUE_ITEMS", 2)
+    monkeypatch.setattr(admin_moderation, "MAX_QUEUE_ITEMS", 2)
     board = create_board(db, "general", creator=sysop, moderated=True)
     for i in range(3):
         create_post(db, board, alice, f"Post {i}", "x")
@@ -191,7 +192,7 @@ def test_the_edit_readers_would_get_is_not_called_superseded(db, lane, sysop, al
 
 def test_the_node_wide_cap_is_one_cap_across_every_board(db, sysop, alice, monkeypatch):
     """Codex review on #795: one bounded query for the node, not one per board."""
-    monkeypatch.setattr(admin_flow, "MAX_QUEUE_ITEMS", 2)
+    monkeypatch.setattr(admin_moderation, "MAX_QUEUE_ITEMS", 2)
     first = create_board(db, "first", creator=sysop, moderated=True)
     second = create_board(db, "second", creator=sysop, moderated=True)
     create_post(db, first, alice, "A", "x")
@@ -232,7 +233,7 @@ def test_only_a_sysop_reads_the_node_wide_queue(db, alice):
 def test_a_hidden_board_takes_no_place_in_the_node_wide_queue(db, sysop, alice, monkeypatch):
     """Codex review on #795: rows of a board excluded from a carried Link
     are left out inside the capped query, not after it."""
-    monkeypatch.setattr(admin_flow, "MAX_QUEUE_ITEMS", 1)
+    monkeypatch.setattr(admin_moderation, "MAX_QUEUE_ITEMS", 1)
     hidden = create_board(db, "hidden", creator=sysop, moderated=True)
     shown = create_board(db, "shown", creator=sysop, moderated=True)
     create_post(db, hidden, alice, "Old hidden 1", "x")
@@ -295,7 +296,7 @@ def test_a_reply_to_a_held_post_names_it(db, lane, sysop, alice):
 def test_the_decision_screens_name_the_board_and_the_area(db, lane, sysop, alice):
     """Codex review on #795: reached from the node-wide queue, the screen
     itself must say where the item waits."""
-    from netbbs.net.admin_flow import _file_action_screen
+    from netbbs.net.admin_moderation import _file_action_screen
 
     board, area = _held_everything(db, sysop, alice)
     items, _more = _load_pending_items(db, sysop)

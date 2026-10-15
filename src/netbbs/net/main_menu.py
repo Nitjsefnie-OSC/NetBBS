@@ -37,7 +37,8 @@ from netbbs.link.boards import LinkContext
 from netbbs.link.mail import acknowledge_delivery_notices, pending_delivery_notices
 from netbbs.mail import acknowledge_eviction_notice, pending_eviction_notice
 from netbbs.mail import unread_count as unread_mail_count
-from netbbs.net.admin_flow import admin_menu, moderation_queue, staff_list_screen, staff_menu
+from netbbs.net.admin_flow import admin_menu, staff_list_screen, staff_menu
+from netbbs.net.admin_moderation import moderation_queue
 from netbbs.boards import list_boards
 from netbbs.chat.channels import list_channels
 from netbbs.files import list_file_areas
