@@ -21,8 +21,8 @@ Link, real-time, door API and bot API versions are unchanged
 
 **Rolling back to v7.26.0 needs a restore** (see below).
 
-It is a minor release because callers and SysOps get new screens, a new
-Profile field and a new console setting, and nothing that worked before
+It is a minor release because callers and SysOps get new screens, two new
+Profile fields and a new console setting, and nothing that worked before
 stops working.
 
 ## Renaming a username (issue #1306, PRs #1334 and #1337)
