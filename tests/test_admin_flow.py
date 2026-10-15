@@ -8204,7 +8204,7 @@ def test_managed_dns_abandoned_replacement_still_offers_cancel_change(
     async def fake_cancel(_session, _lane):
         cancelled.append(True)
 
-    monkeypatch.setattr("netbbs.net.admin_flow.cancel_registration_rename", fake_cancel)
+    monkeypatch.setattr("netbbs.net.admin_system.cancel_registration_rename", fake_cancel)
     session = FakeSession(["d", "c", "b", "b"])
     _run(session, lane, sysop)
     text = _visible(_written_text(session))

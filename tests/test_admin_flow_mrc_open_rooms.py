@@ -24,6 +24,7 @@ from netbbs.mrc.settings import (
     save_open_room_settings,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_system
 from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu
 from tests.test_admin_flow import FakeSession, _visible, _written_text
@@ -166,7 +167,7 @@ def test_status_screen_reports_open_rooms(db, lane, sysop, lobby):
         save_open_room_settings(db, OpenRoomSettings(enabled=True, cap=8, retention_days=2))
         bridge = _bridge(lane)
         await bridge.start()
-        await _wait_state(bridge, admin_flow.MrcState.CONNECTED)
+        await _wait_state(bridge, admin_system.MrcState.CONNECTED)
         try:
             await bridge.open_room("garden", "alice")
             # Paged on a 24-row terminal: open rooms and the channel table
