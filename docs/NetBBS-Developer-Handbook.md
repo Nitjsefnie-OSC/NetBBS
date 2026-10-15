@@ -371,7 +371,10 @@ not construct that name: read the directory, parse each file, and match on the
 `request` field it carries. This
 is what lets two sessions of the same door run at once without one
 overwriting the other's outcome — which matters for any door that permits
-more than one player at a time.
+more than one player at a time. A receipt is renamed into place whole, but a
+read can still fail for a moment just after, on Windows especially (a virus
+scanner may hold the new file): treat a failed read as "not yet" and try again
+on your next poll.
 
 ```json
 {"status": "posted", "post_id": "...", "board": "Chronicle", "moderated": true,
