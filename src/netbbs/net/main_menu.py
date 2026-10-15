@@ -31,8 +31,10 @@ from netbbs.chat import (
     MessageMailbox,
     PresenceRegistry,
     format_with_preference,
+    get_nick,
     list_pending_invitations_for_user,
 )
+from netbbs.chat.bell import bell_level
 from netbbs.communities import Community, list_communities
 from netbbs.link.boards import LinkContext
 from netbbs.link.communities import linked_community_ids
@@ -1448,6 +1450,8 @@ async def _handle_incoming_invite(
             collapsed=breadcrumb_collapsed_enabled(db, user),
             accent_color=effective_accent_color_256(db),
             header_color=effective_header_color_256(db),
+            bell=bell_level(db, user),
+            nick=get_nick(db, user),
         )
     else:
         announce(session, f"Declined {invite.inviter.username}'s invitation.", tone="muted")

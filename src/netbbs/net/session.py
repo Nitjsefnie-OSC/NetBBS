@@ -318,6 +318,16 @@ class Session(ABC):
     #: the chat session that captured it.
     pinned_notice_hook: Callable[[str], Awaitable[None]] | None = None
 
+    #: Installed by chat beside `pinned_notice_hook` (issue #1302): rings
+    #: this caller's bell for a notice that came through that hook and
+    #: carries a ring flag (a `/dm` invitation), with the sender it is
+    #: from. Chat checks the caller's level and its scrollback pager.
+    chat_bell_hook: Callable[[str], Awaitable[None]] | None = None
+
+    #: This connection's bell budget (`netbbs.chat.bell.BellLimiter`),
+    #: made on the first bell and kept across every chat screen.
+    chat_bell_limiter: object | None = None
+
     #: The lines a chat has written, oldest first, while one is open: every
     #: `write_line` appends its text here when this is set. A resize makes
     #: chat clear the screen to rebuild its pinned rows, and it draws the

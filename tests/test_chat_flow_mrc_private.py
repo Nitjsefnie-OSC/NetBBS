@@ -13,6 +13,7 @@ import asyncio
 from netbbs.chat.mailbox import MessageMailbox
 from netbbs.net import chat_flow
 from netbbs.net.char_input import InputHistory
+from netbbs.chat.bell import set_bell_level
 from netbbs.net.mrc_private_preference import set_mrc_private_messages_enabled
 from tests.test_chat_flow_mrc import (  # noqa: F401 -- fixtures and helpers
     _QueueSession,
@@ -128,14 +129,39 @@ def test_inbound_private_line_rings_the_bell_and_r_answers_it(db, lane, hub, pre
                 lane, hub, presence, channel, alice, ["/mrc r right back", "/quit"],
                 mrc_bridge=rig.bridge, while_joined=push_private,
             )
-            raw = "\n".join(session.written)
             text = _text(session)
-            assert "\x07" in raw
+            # Issue #1302: the bell is its own write, after the line, never
+            # inside it -- so it is never in a transcript or a replay.
+            assert session.written.count("\x07") == 1
+            assert all("\x07" not in chunk for chunk in session.written if chunk != "\x07")
             assert "[MRC private] bob@Other: psst" in text
             assert text.count(NOTE) == 1
             assert "[MRC private] -> bob@Other: right back" in text
             sent = await rig.fake.wait_for(lambda p: p.to_user == "bob")
             assert (sent.msg_ext, sent.body) == ("", "|08<|14alice|08>|16|07 right back")
+        finally:
+            await rig.close()
+    asyncio.run(scenario())
+
+
+def test_an_inbound_private_line_is_silent_when_the_bell_is_off(db, lane, hub, presence, channel, alice):
+    """Issue #1302: MRC privates follow the caller's chat bell level."""
+    set_mrc_private_messages_enabled(db, alice, True)
+    set_bell_level(db, alice, "off")
+
+    async def scenario():
+        rig = await _rig(db, lane, hub, channel)
+        try:
+            async def push_private():
+                await rig.fake.wait_for(lambda p: p.body == "NEWROOM::lobby" and p.from_user == "alice")
+                await rig.fake.send_line("bob~Other~garden~alice~My_Board~~|03<|11bob|03>|16|07 psst~")
+                await asyncio.sleep(0.2)
+
+            session = await _run_session(
+                lane, hub, presence, channel, alice, ["/quit"], mrc_bridge=rig.bridge, while_joined=push_private,
+            )
+            assert "[MRC private] bob@Other: psst" in _text(session)
+            assert not any("\x07" in chunk for chunk in session.written)
         finally:
             await rig.close()
     asyncio.run(scenario())
