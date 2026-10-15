@@ -800,9 +800,15 @@ def build_board_post(
     parent_post_id: str | None = None,
     nonce: str | None = None,
     layout: str | None = None,
+    crosspost: str | None = None,
 ) -> BoardPost:
     """
     Build and sign one `board_post` event, per design doc.
+
+    `crosspost` (issue #1298, design doc §9.2) is the group id of a post
+    written to several boards at once, set on each Linked copy and omitted
+    otherwise, never `null`. Like `layout`, an older node keeps and relays
+    the signed bytes unchanged and shows the copy as an ordinary post.
 
     `layout` (issue #711, design doc §16) is set only for a post written
     in the ANSI art editor (`"art"`), whose lines a reader keeps; it is
@@ -853,6 +859,8 @@ def build_board_post(
         payload["parent_post_id"] = parent_post_id
     if layout is not None:
         payload["layout"] = layout
+    if crosspost is not None:
+        payload["crosspost"] = crosspost
 
     envelope = build_envelope(BOARD_POST_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))

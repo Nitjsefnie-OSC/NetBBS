@@ -1216,6 +1216,19 @@ from here:
 - raising an area's read level hides the file's and area's names from readers
   it now shuts out.
 
+A caller may post one new message to several boards at once (**To boards**,
+up to the cap in **Settings ▸ Limits & retention**). Each board gets an
+ordinary copy of its own:
+
+- each board's moderation applies to its own copy, so a moderated board may
+  hold its copy while the others appear;
+- delete, take down, pin and keep act on one copy, and so does an author's
+  edit or withdrawal;
+- a copy on a Linked board goes out as a post there, and a copy on an echo
+  as its own echomail message, starting with `* Crossposted in` and the other
+  echoes of that network it went to. Your local and Linked board names never
+  go to an FTN network.
+
 > [!TIP]
 > Inspect effective gates on child resources before changing a Community's
 > shared default.
@@ -2430,7 +2443,7 @@ a quiet heading), and hidden.
 
 ### Limits and retention
 
-**Settings ▸ Limits & retention** holds six node-wide values, saved together
+**Settings ▸ Limits & retention** holds seven node-wide values, saved together
 and applied without a restart:
 
 | Setting | Default | Effect |
@@ -2441,6 +2454,7 @@ and applied without a restart:
 | Chat scrollback | 100 messages | Lines each channel keeps, carried Link channels included. Lowering it trims a channel the next time someone speaks there. |
 | Node map level | 0 | The lowest level that may open **Directory ▸ Node map**. A guest is an ordinary account: set this above the guest account's level to keep the map from guests. |
 | Mail level | 0 | The lowest level that may open **E-mail**: read, write and reply, here and to other BBSes. Below it the main menu offers no E-mail. Mail sent to an account below it still arrives and waits until you raise the account's level. |
+| Cross-post boards | 5 boards | The most message boards one new post may go to with **To boards** on its review screen, the board it was written on included. Each board gets its own copy, so this bounds what one post writes. 1 turns cross-posting off. |
 
 ### The guest account
 

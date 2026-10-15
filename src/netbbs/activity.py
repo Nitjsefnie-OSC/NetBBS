@@ -60,7 +60,13 @@ from dataclasses import dataclass
 
 from netbbs.auth.users import User
 from netbbs.boards.boards import Board
-from netbbs.boards.posts import Post, count_visible_roots, iter_visible_roots, sweep_expired_posts
+from netbbs.boards.posts import (
+    Post,
+    count_visible_roots,
+    iter_visible_roots,
+    sweep_expired_posts,
+    visible_crosspost_copies,
+)
 from netbbs.chat.channels import Channel
 from netbbs.chat.scrollback import ChannelMessage
 from netbbs.files.areas import FileArea
@@ -307,7 +313,18 @@ def record_post_opened(db: Database, user: User, board: Board, post: Post) -> bo
     the newest post of a board does not mark the posts under it read.
 
     Returns whether the opened-set cap gave other unread posts up as read,
-    so a caller keeping an unread count knows to count again."""
+    so a caller keeping an unread count knows to count again.
+
+    A copy of a cross-post (issue #1298) is one message: opening it marks
+    the other copies `user` can open on this node read too."""
+    capped = _record_one_post_opened(db, user, board, post)
+    for copy_board, copy in visible_crosspost_copies(db, user, post):
+        _record_one_post_opened(db, user, copy_board, copy)
+    return capped
+
+
+def _record_one_post_opened(db: Database, user: User, board: Board, post: Post) -> bool:
+    """`record_post_opened` for `post` alone."""
     if not _board_exists(db, board):
         return False
     ensure_board_baseline(db, user, board)
@@ -424,6 +441,32 @@ def unread_post_count(db: Database, user: User, board: Board) -> int | None:
     return count
 
 
+def unread_crosspost_groups(db: Database, user: User, board: Board) -> set[str]:
+    """The cross-post groups (issue #1298) of `user`'s unread posts on
+    `board` -- what `unread_post_count` counted that is also on another
+    board. Empty for a board never visited. New scan counts each group once
+    over all boards."""
+    cursor = _get_cursor(db, user, _BOARD, board.id)
+    if cursor is None:
+        return set()
+    post_ids = [
+        post_id for _row_id, _created_at, post_id in iter_visible_roots(
+            db, board.id, after_id=cursor.arrival_id or 0,
+            extra_sql=(
+                "AND root.crosspost_group IS NOT NULL AND root.id NOT IN ("
+                "SELECT post_row_id FROM user_board_opened_posts WHERE user_id = ? AND board_id = ?)"
+            ),
+            extra_params=(user.id, board.id),
+        )
+    ]
+    groups: set[str] = set()
+    for post_id in post_ids:
+        row = db.connection.execute("SELECT crosspost_group FROM posts WHERE post_id = ?", (post_id,)).fetchone()
+        if row is not None and row["crosspost_group"] is not None:
+            groups.add(row["crosspost_group"])
+    return groups
+
+
 def unread_replies_to(db: Database, user: User) -> list[Post]:
     """Every approved post, on any board, replying to one of `user`'s
     own posts, newer than that board's own read cursor for `user` --
@@ -454,6 +497,7 @@ def unread_replies_to(db: Database, user: User) -> list[Post]:
         if row["link_envelope_json"] is None
         or envelope_content_visible(db, row["link_envelope_json"], author_cache=author_cache)
     ]
+    reply_groups = {row["post_id"]: row["crosspost_group"] for row in rows if row["crosspost_group"] is not None}
 
     # Unread as the board list decides it (issue #710): above the board's
     # floor and never opened. Each board's floor and opened set are read
@@ -469,7 +513,18 @@ def unread_replies_to(db: Database, user: User) -> list[Post]:
         floor = floors[reply.board_id]
         if floor is None or (reply.id > floor and reply.id not in opened[reply.board_id]):
             unread.append(reply)
-    return unread
+    # A cross-post is one message on several boards (issue #1298): counted
+    # once, by its first copy.
+    counted: set[str] = set()
+    once = []
+    for reply in unread:
+        group = reply_groups.get(reply.post_id)
+        if group is not None:
+            if group in counted:
+                continue
+            counted.add(group)
+        once.append(reply)
+    return once
 
 
 def _root_row_to_post(row) -> Post:

@@ -18,7 +18,9 @@ codebase.
 from __future__ import annotations
 
 import datetime
+import secrets
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from netbbs.auth.users import SYSOP_LEVEL, StaffPermission, User
@@ -160,6 +162,31 @@ def create_post(
     kind, replies included.
     """
     require_write_gate(db, author, board)
+    _refuse_new_post(db, board, subject, body, layout=layout)
+    files = list(files or [])
+    problem = sender_ref_problem(db, author, files, noun="post", verb="publish") if files else None
+    if problem is not None:
+        raise PostError(problem)
+    try:
+        post_id = _insert_new_post_without_commit(
+            db, board, author, subject, body,
+            parent_post_id=parent_post_id, layout=layout, files=files, created_at=utc_now_iso(),
+        )
+        db.connection.commit()
+    except sqlite3.IntegrityError as exc:
+        db.connection.rollback()
+        raise PostError(
+            "could not create post — identical content posted twice in the same instant?"
+        ) from exc
+
+    reindex_post(db, board.id, post_id)  # a fresh post is its own root
+    return get_post(db, post_id)
+
+
+def _refuse_new_post(db: Database, board: Board, subject: str, body: str, *, layout: str) -> None:
+    """The checks a new post meets on `board` besides its author's write
+    gate, raising `PostError`: the length limits, a closed or hidden board,
+    and a layout this module knows."""
     _check_content_length(subject, body)
     closed_row = db.connection.execute(
         "SELECT * FROM boards WHERE id = ?", (board.id,)
@@ -170,15 +197,27 @@ def create_post(
         # Issue #683: a caller who opened the board before the SysOp excluded
         # it still holds the `Board`; the write is refused here.
         raise PostError(f"board {board.name!r} is no longer available on this node")
-
     if layout not in ("prose", "art"):
         raise PostError(f"invalid layout: {layout!r}")
-    files = list(files or [])
-    problem = sender_ref_problem(db, author, files, noun="post", verb="publish") if files else None
-    if problem is not None:
-        raise PostError(problem)
+
+
+def _insert_new_post_without_commit(
+    db: Database,
+    board: Board,
+    author: User,
+    subject: str,
+    body: str,
+    *,
+    parent_post_id: str | None,
+    layout: str,
+    files: list[FileRef],
+    created_at: str,
+    crosspost_group: str | None = None,
+) -> str:
+    """Write one new post of `author` on `board`, with its file rows, in the
+    caller's open transaction, and return its `post_id`. Checked by the
+    caller first (`_refuse_new_post`)."""
     status = "pending" if board.moderated else "approved"
-    created_at = utc_now_iso()
     author_identifier = author.fingerprint or author.username
     post_id = compute_content_id(
         {
@@ -200,41 +239,181 @@ def create_post(
         if parent is None:
             raise PostError(f"parent post {parent_post_id!r} not found on this board")
 
+    db.connection.execute(
+        """
+        INSERT INTO posts
+            (post_id, board_id, parent_post_id, author_user_id, author_label,
+             author_fingerprint, subject, body, created_at, status, root_post_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            post_id,
+            board.id,
+            parent_post_id,
+            author.id,
+            author.username,
+            author.fingerprint,
+            subject,
+            body,
+            created_at,
+            status,
+            post_id,  # a fresh post is the root of its own edit chain
+        ),
+    )
+    if layout != "prose":
+        # Apart from the INSERT, which stays valid on every schema a
+        # post can be created on.
+        db.connection.execute("UPDATE posts SET layout = ? WHERE post_id = ?", (layout, post_id))
+    if crosspost_group is not None:
+        db.connection.execute("UPDATE posts SET crosspost_group = ? WHERE post_id = ?", (crosspost_group, post_id))
+    write_post_refs_without_commit(db, post_id, files)
+    return post_id
+
+
+# -- one post on several boards (issue #1298) ---------------------------------
+#
+# A cross-post is one ordinary post per board, each with its own content id
+# (the board is part of it), replies, moderation, pinning and edits. What ties
+# the copies together is `posts.crosspost_group`, the same on each root, as
+# `mail_messages.mail_group_id` ties a letter's copies (#827). A group written
+# here is a bare id; a carried copy's is `<id>@<home node fingerprint>`
+# (`netbbs.link.boards.materialize_carried_post`), so no other node's group can
+# share it.
+
+
+class CrosspostRefused(PostError):
+    """One board of a cross-post refused it; nothing was written. `board`
+    names it, `reason` says why."""
+
+    def __init__(self, board: Board, reason: str) -> None:
+        super().__init__(f"{board.name}: {reason}")
+        self.board = board
+        self.reason = reason
+
+
+def new_crosspost_group_id() -> str:
+    """A fresh id for one post on several boards."""
+    return secrets.token_hex(8)
+
+
+def create_crosspost(
+    db: Database,
+    boards: list[Board],
+    author: User,
+    subject: str,
+    body: str,
+    *,
+    layout: str = "prose",
+    files: list[FileRef] | None = None,
+    refusal_of: Callable[[Board], str | None] | None = None,
+) -> list[Post]:
+    """Post one new message on every board of `boards` (issue #1298), all or
+    nothing: every board is checked before any copy is written -- the write
+    gate, a closed or hidden board, the length limits, an art post's need
+    for color, and `refusal_of`, the caller's own checks (the Link's posting
+    setting, a Linked board's file lines) -- and the copies are written in
+    one transaction. The first board that refuses raises `CrosspostRefused`
+    naming it.
+
+    Each copy is an ordinary post with its own file rows; a moderated board
+    holds its copy while the others go up. Returns the copies in `boards`'
+    order."""
+    from netbbs.permissions import InsufficientLevelError
+
+    if len({board.id for board in boards}) != len(boards) or not boards:
+        raise PostError("a cross-post names each board once")
+    files = list(files or [])
+    problem = sender_ref_problem(db, author, files, noun="post", verb="publish") if files else None
+    if problem is not None:
+        raise PostError(problem)
+    for board in boards:
+        try:
+            require_write_gate(db, author, board)
+        except InsufficientLevelError:
+            raise CrosspostRefused(board, "you cannot post on this message board") from None
+        try:
+            _refuse_new_post(db, board, subject, body, layout=layout)
+        except PostError as exc:
+            raise CrosspostRefused(board, str(exc)) from None
+        if layout == "art" and not board.allow_color:
+            raise CrosspostRefused(board, "this message board does not show color, so it takes no art posts")
+        reason = refusal_of(board) if refusal_of is not None else None
+        if reason is not None:
+            raise CrosspostRefused(board, reason)
+
+    group = new_crosspost_group_id() if len(boards) > 1 else None
+    created_at = utc_now_iso()
+    post_ids: list[str] = []
     try:
-        db.connection.execute(
-            """
-            INSERT INTO posts
-                (post_id, board_id, parent_post_id, author_user_id, author_label,
-                 author_fingerprint, subject, body, created_at, status, root_post_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                post_id,
-                board.id,
-                parent_post_id,
-                author.id,
-                author.username,
-                author.fingerprint,
-                subject,
-                body,
-                created_at,
-                status,
-                post_id,  # a fresh post is the root of its own edit chain
-            ),
-        )
-        if layout != "prose":
-            # Apart from the INSERT, which stays valid on every schema a
-            # post can be created on.
-            db.connection.execute("UPDATE posts SET layout = ? WHERE post_id = ?", (layout, post_id))
-        write_post_refs_without_commit(db, post_id, files)
+        for board in boards:
+            post_ids.append(_insert_new_post_without_commit(
+                db, board, author, subject, body,
+                parent_post_id=None, layout=layout, files=files, created_at=created_at,
+                crosspost_group=group,
+            ))
         db.connection.commit()
     except sqlite3.IntegrityError as exc:
+        db.connection.rollback()
         raise PostError(
             "could not create post — identical content posted twice in the same instant?"
         ) from exc
+    except BaseException:
+        db.connection.rollback()
+        raise
+    for board, post_id in zip(boards, post_ids):
+        reindex_post(db, board.id, post_id)
+    return [get_post(db, post_id) for post_id in post_ids]
 
-    reindex_post(db, board.id, post_id)  # a fresh post is its own root
-    return get_post(db, post_id)
+
+def crosspost_group_of(db: Database, post: Post) -> str | None:
+    """The cross-post group `post` (any revision) belongs to, or `None` for
+    a post on one board. Kept on the root."""
+    row = db.connection.execute(
+        "SELECT crosspost_group FROM posts WHERE post_id = ?", (post.root_post_id,)
+    ).fetchone()
+    return row["crosspost_group"] if row is not None else None
+
+
+def crosspost_copies(db: Database, post: Post) -> list[tuple[Board, Post]]:
+    """The other copies of `post`'s cross-post on this node, as `(board,
+    root)`, in board order: every one, visible or not, on a board that is
+    not hidden. Empty for a post on one board."""
+    from netbbs.boards.boards import _row_to_board
+
+    group = crosspost_group_of(db, post)
+    if group is None:
+        return []
+    rows = db.connection.execute(
+        """
+        SELECT p.post_id, p.board_id FROM posts p
+        JOIN boards b ON b.id = p.board_id AND b.link_hidden_at IS NULL
+        WHERE p.crosspost_group = ? AND p.post_id = p.root_post_id AND p.board_id != ?
+        ORDER BY b.pinned DESC, b.position, b.id
+        """,
+        (group, post.board_id),
+    ).fetchall()
+    copies = []
+    for row in rows:
+        board_row = db.connection.execute("SELECT * FROM boards WHERE id = ?", (row["board_id"],)).fetchone()
+        copies.append((_row_to_board(board_row), get_post(db, row["post_id"])))
+    return copies
+
+
+def visible_crosspost_copies(db: Database, user: User, post: Post) -> list[tuple[Board, Post]]:
+    """The other copies of `post`'s cross-post that `user` can open now: on a
+    board they may read (its read gate and age), and shown there -- approved
+    and not hidden by trust (`visible_post`). Each as `(board, the copy as
+    the feed shows it)`."""
+    from netbbs.communities import meets_read_gate
+
+    visible = []
+    for board, root in crosspost_copies(db, post):
+        if not meets_read_gate(db, user, board) or resource_age_gate(db, user, board) != "pass":
+            continue
+        shown = visible_post(db, root.post_id)
+        if shown is not None:
+            visible.append((board, shown))
+    return visible
 
 
 def create_labelled_post(

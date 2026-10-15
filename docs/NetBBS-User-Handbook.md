@@ -162,6 +162,7 @@ instead.
 
 In this chapter: [Read and reply](#read-and-reply) ·
 [Point a post at files](#point-a-post-at-files) ·
+[Post to several boards](#post-to-several-boards) ·
 [The line editor](#the-line-editor) ·
 [The fullscreen editor](#the-fullscreen-editor) ·
 [Drafts](#drafts-come-back-where-you-started) ·
@@ -219,6 +220,37 @@ by Zmodem, or with a browser link where your terminal has no Zmodem.
   file, its size, its file area and this BBS at the end of the post, not a
   download.
 - A draft keeps the text, not the files.
+
+#### Post to several boards
+
+A new post can go to more than one board at once -- a question that belongs
+in two places, say. Replies and edits always stay on one board.
+
+1. On the review screen press <kbd>T</kbd> **To boards**.
+2. Tick each board the post should go to, and press <kbd>B</kbd> **Back**.
+
+The board you wrote it on is always ticked. A row under the subject lists the
+boards, and nothing is posted until you press <kbd>P</kbd> **Post**.
+
+- **How many:** the SysOp sets how many boards one post may go to, five
+  unless they changed it, counting the board you wrote it on. The list tells
+  you when you reach it.
+- **Boards you can't use:** the list shows them dimmed, with `-` instead of a
+  number and the reason beside the name -- a level you don't have yet, say,
+  or a board without color for an art post.
+- **All or nothing:** if one of the boards refuses the post when you press
+  **Post**, nothing is posted anywhere; the review screen names the board and
+  why, and **To boards** lets you take it off.
+- **One copy on each board:** each board gets its own copy, with its own
+  replies. A moderated board may hold its copy for approval while the others
+  appear at once. Editing or withdrawing a copy changes only that one.
+- **Read once:** opening one copy marks the others read for you too, and new
+  scan and search count the post once. A copy's byline names the other boards
+  it is on, as in "also in Showcase", when you can open them.
+- **Shared and FTN boards:** a copy on a board shared with other BBSes goes
+  out like any post there. In an echo, the copy starts with a line such as
+  `* Crossposted in FSX_BBS` naming the other echoes of that network it went
+  to.
 
 #### The line editor
 

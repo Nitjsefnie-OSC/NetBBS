@@ -18,7 +18,7 @@ also split out, hold only session-entry/auth logic).
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 from pathlib import Path
 
@@ -56,7 +56,8 @@ from netbbs.boards import (
 )
 from netbbs.boards.categories import Category, list_subcategories, list_top_level_categories
 from netbbs.boards.categories import get_category_by_id as get_board_category_by_id
-from netbbs.boards.posts import count_pending_posts, sweep_expired_posts
+from netbbs.boards.posts import count_pending_posts, sweep_expired_posts, visible_crosspost_copies
+from netbbs.config import get_crosspost_board_limit
 from netbbs.communities import (
     get_community,
     get_effective_min_write_level,
@@ -139,6 +140,14 @@ from netbbs.net.post_color_preference import post_colors_enabled
 from netbbs.net.redraw_preference import redraw_in_place_enabled
 from netbbs.gate_summary import gates_line, resource_gates, unmet_gates, unmet_gates_shown
 from netbbs.net.session import Session, physical_terminal_width, post_body_width, write_prompt
+from netbbs.net.crosspost_flow import (
+    CROSSPOST_KEY,
+    CrosspostTargets,
+    choose_crosspost_boards,
+    crosspost_action,
+    crosspost_rows,
+    publish_crosspost,
+)
 from netbbs.net.shared_account import (
     authored_earlier_by_shared_account,
     earlier_guest_refusal,
@@ -1326,6 +1335,7 @@ async def _board_screen(
                 db, post, name_requirement=name_requirement, is_new=was_new,
                 separator=separator, width=width,
                 held="post" if held else "edit" if post.root_post_id in page.held_edits else None,
+                also_in=[copy_board.name for copy_board, _copy in visible_crosspost_copies(db, user, post)],
             )
             body_rows = post_body_rows(
                 post.body, post_body_width(session, post.layout), body_mode, truecolor=truecolor,
@@ -1567,6 +1577,8 @@ async def _board_screen(
             if initial_body is None:
                 initial_body = _reply_quote(db, reply_to, board, name_requirement=name_requirement) or None
         published = {"done": False}
+        # [T]o boards (issue #1298): a new post only, never a reply.
+        targets = _crosspost_targets("prose") if reply_to is None else None
 
         async def _commit(commit_subject: str, commit_body: str, commit_files: list[FileRef]) -> bool:
             if reply_to is not None and _reply_target(db, reply_to, board) is None:
@@ -1575,6 +1587,10 @@ async def _board_screen(
                 # one can reach.
                 announce(session, "The post you are replying to is no longer available.", tone="error")
                 return False
+            if targets is not None and targets.crossposted:
+                done = _publish_crosspost(targets, commit_subject, commit_body, commit_files)
+                published["done"] = published["done"] or done
+                return done
             done = await _publish(
                 commit_subject, commit_body, parent_post_id=reply_to.root_post_id if reply_to else None,
                 files=commit_files,
@@ -1615,6 +1631,7 @@ async def _board_screen(
             cancelled_notice=cancelled_notice,
             draft_saved_notice=draft_saved_notice,
             commit=_commit,
+            crosspost=targets,
         )
         return published["done"]
 
@@ -1652,15 +1669,42 @@ async def _board_screen(
             # Reset first: a drawing whose last row fills its last column
             # ends without one, and the signature would take its color.
             body = append_signature(body + "\x1b[0m", signature)
+        art_targets = _crosspost_targets("art")
+
+        async def _commit_art(commit_subject: str, commit_body: str, commit_files: list[FileRef]) -> bool:
+            if art_targets is not None and art_targets.crossposted:
+                return _publish_crosspost(art_targets, commit_subject, commit_body, commit_files)
+            return await _publish(commit_subject, commit_body, layout="art", files=commit_files)
+
         await _review_and_commit(
             session, db, user, board, subject=subject, body=body, draft_path=draft_path, files=[],
             commit_key="p", commit_label="ost", commit_brief="Publish this post",
             title="New art post",
             cancelled_notice="Post cancelled.",
             draft_saved_notice="Draft saved -- the art editor offers it the next time you draw here.",
-            commit=lambda subject, body, files: _publish(subject, body, layout="art", files=files),
+            commit=_commit_art,
             layout="art",
+            crosspost=art_targets,
         )
+        return True
+
+    def _crosspost_targets(layout: str) -> CrosspostTargets | None:
+        """The boards a new post goes to, for `[T]o boards` (issue #1298):
+        this one to start with. `None` -- no `[T]o boards` -- while the
+        SysOp's cap leaves room for no other board."""
+        if get_crosspost_board_limit(db) < 2:
+            return None
+        return CrosspostTargets(home=board, layout=layout, own_fingerprint=own_fingerprint)
+
+    def _publish_crosspost(
+        targets: CrosspostTargets, subject: str, body: str, files: list[FileRef] | None,
+    ) -> bool:
+        """[P]ost for a post going to several boards (issue #1298)."""
+        if publish_crosspost(
+            session, db, user, targets, subject=subject, body=body, files=files, link_context=link_context,
+        ) is None:
+            return False
+        unread["count"] = unread_post_count(db, user, board) or 0
         return True
 
     async def _publish(
@@ -2223,6 +2267,7 @@ async def _review_and_commit(
     layout: str = "prose",
     title: str = "New post",
     files: list[FileRef] | None = None,
+    crosspost: CrosspostTargets | None = None,
 ) -> None:
     """The review screen a new post and an edit both pass through
     before anything is stored: the draft is shown whole, its subject and
@@ -2244,13 +2289,16 @@ async def _review_and_commit(
     `files` are the files the post points at so far (issue #842), changed
     here with `[A]ttach file` and `[R]emove file` and handed to `commit`
     with the subject and body. `None` -- a moderator editing someone else's
-    post -- offers no file keys and hands `commit` `None`: the files stay."""
+    post -- offers no file keys and hands `commit` `None`: the files stay.
+
+    `crosspost` (issue #1298), on a new post's review only, offers `[T]o
+    boards` and holds the boards chosen; `commit` reads them from it."""
     with entered(session, title):
         await _review_loop(
             session, db, user, board, subject=subject, body=body, draft_path=draft_path,
             commit_key=commit_key, commit_label=commit_label, commit_brief=commit_brief,
             cancelled_notice=cancelled_notice, draft_saved_notice=draft_saved_notice,
-            commit=commit, layout=layout, title=title, files=files,
+            commit=commit, layout=layout, title=title, files=files, crosspost=crosspost,
         )
 
 
@@ -2272,6 +2320,7 @@ async def _review_loop(
     layout: str,
     title: str,
     files: list[FileRef] | None,
+    crosspost: CrosspostTargets | None = None,
 ) -> None:
     """`_review_and_commit`'s loop, under the composition's name."""
     body_mode = post_body_mode(
@@ -2309,11 +2358,19 @@ async def _review_loop(
             body_mode=body_mode,
             body_layout=layout,
             extra_rows=(
-                _file_rows(db, board, files, accent=effective_accent_color(session, db), linked=linked)
-                if files is not None else ()
+                *(crosspost_rows(crosspost, accent=effective_accent_color(session, db)) if crosspost else ()),
+                *(_file_rows(db, board, files, accent=effective_accent_color(session, db), linked=linked)
+                  if files is not None else ()),
             ),
-            extra_actions=file_actions(files, noun="post") if files is not None else (),
+            extra_actions=(
+                *(file_actions(files, noun="post") if files is not None else ()),
+                *((crosspost_action(),) if crosspost is not None else ()),
+            ),
         )
+        if action == CROSSPOST_KEY and crosspost is not None:
+            # [T]o boards (issue #1298): the choice stays on this screen.
+            await choose_crosspost_boards(session, db, user, crosspost, style=_picker_style(session, db, user))
+            continue
         if isinstance(action, str) and files is not None:
             # `[A]ttach file` or `[R]emove file`: the pickers run on a lane,
             # opened for as long as they are.
@@ -2962,13 +3019,17 @@ def _remote_author_subject(author_label: str) -> TrustSubject | None:
 
 def _post_byline(
     db: Database, post: Post, *, name_requirement: str | None, is_new: bool, separator: str,
-    width: int, held: str | None = None,
+    width: int, held: str | None = None, also_in: Sequence[str] = (),
 ) -> list[str]:
     """The reader's lines under the subject: who, when, and what state the
     post is in -- edited, new to this caller -- and then which post it
     answers, on a row of its own cut to `width`: a parent's subject runs to
     `MAX_SUBJECT_BYTES`, and wrapped it would take the rows the body is
-    paged into (Codex review on #719)."""
+    paged into (Codex review on #719).
+
+    `also_in` names the boards of the post's other copies this reader can
+    open (issue #1298), "also in X, Y" on a row of its own, cut the same
+    way."""
     parts = [
         _author_display_name(db, post, name_requirement=name_requirement),
         colored(format_for_display(post.created_at, db), fg_color=METADATA_COLOR),
@@ -2987,6 +3048,7 @@ def _post_byline(
         parts.append(badge("awaiting approval", tone="warning"))
     elif held == "edit":
         parts.append(badge("your edit awaits approval", tone="warning"))
+    rows = [colored(separator, fg_color=METADATA_COLOR).join(parts)]
     if post.parent_post_id is not None:
         # As the feed shows the parent now: its current subject, and nothing
         # at all for a parent that is expired, pending or trust-hidden.
@@ -2995,8 +3057,10 @@ def _post_byline(
             reply = f'reply to "{sanitize_text(parent.subject)}"'
             if display_width(reply) > width - 1:
                 reply = cut_to_width(reply, max(1, width - 4)) + "..."
-            return [
-                colored(separator, fg_color=METADATA_COLOR).join(parts),
-                colored(reply, fg_color=METADATA_COLOR),
-            ]
-    return [colored(separator, fg_color=METADATA_COLOR).join(parts)]
+            rows.append(colored(reply, fg_color=METADATA_COLOR))
+    if also_in:
+        also = "also in " + ", ".join(sanitize_text(name) for name in also_in)
+        if display_width(also) > width - 1:
+            also = cut_to_width(also, max(1, width - 4)) + "..."
+        rows.append(colored(also, fg_color=METADATA_COLOR))
+    return rows
