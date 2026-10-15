@@ -8532,7 +8532,7 @@ running anyway would defeat the whole point of a graceful stop.
 `SequenceScheduler.cancel()` — the explicit "cancel it?" action — refuses
 outright for a non-cancellable sequence; `schedule()` itself stays
 unconditional regardless (a second real SIGTERM must still be able to
-reset an in-flight SIGTERM countdown), so `netbbs.net.admin_flow.
+reset an in-flight SIGTERM countdown), so `netbbs.net.admin_sessions.
 _shutdown_screen` is the one responsible for never reaching its own
 `schedule()` call in that case either — a non-cancellable, already-
 scheduled shutdown gets a status-only message and returns immediately,
@@ -8544,7 +8544,7 @@ originally described.
 `[D]rain` are deliberately separate, composable primitives; `[L]ock &
 drain` (added after this subsection originally shipped) just composes
 them for the common case a SysOp wants both together. Its own screen
-(`netbbs.net.admin_flow._lock_and_drain_screen`) must not infer whether
+(`netbbs.net.admin_sessions._lock_and_drain_screen`) must not infer whether
 *it* is active from `maintenance.is_lockdown_active()` alone — that bit
 is shared with the plain `[M]` toggle, so a lockdown enabled
 independently would otherwise be misreported as "Lock & drain already
@@ -8661,7 +8661,7 @@ the node itself."
 **5. Operator-visible in stdout/the process log, not only the DB-backed
 moderation log.** Scheduling or cancelling a drain/shutdown, and toggling
 maintenance mode, now each log one `INFO`-level line
-(`netbbs.net.admin_flow`'s own `_logger`) alongside the existing
+(`netbbs.net.admin_sessions`' own `_logger`) alongside the existing
 `record_action` audit row — an operator watching a foreground terminal or
 `journalctl` sees it happen without a separate DB query. `netbbs.__main__.
 run()` also gained one `"NetBBS is ready to accept connections"` line,

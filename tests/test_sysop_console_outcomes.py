@@ -4,7 +4,7 @@ With redraw-in-place on -- the default for a new account -- a line written just
 before a screen returns is never seen: the screen it returns to clears the
 terminal in the same burst of output. `'General' deleted.`, `Created 'Retro'.`,
 a rejected field value, an empty list's "No message boards yet." were all
-written that way. They are announced instead (`admin_flow._announce`) and the
+written that way. They are announced instead (`admin_ui._announce`) and the
 next console screen drawn -- a menu, a detail panel, a draft editor, a picker --
 shows them directly above its prompt. No keypress is asked for.
 

@@ -1323,7 +1323,7 @@ def test_signal_triggered_shutdown_is_registered_as_non_cancellable():
     hand-constructed `SequenceScheduler.schedule()` call, which
     `test_shutdown.py`'s own unit tests already cover), must show up
     tracked as non-cancellable -- and `cancel()` must actually refuse
-    it, exactly as `netbbs.net.admin_flow._shutdown_screen` relies on."""
+    it, exactly as `netbbs.net.admin_sessions._shutdown_screen` relies on."""
     shutdown_event = asyncio.Event()
     shutdown_scheduler = SequenceScheduler()
 

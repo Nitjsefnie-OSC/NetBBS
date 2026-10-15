@@ -1722,7 +1722,7 @@ def _install_signal_handlers(
         #
         # Issue #108: cancellable=False. The service supervisor that
         # sent this signal outranks an in-BBS SysOp choice to keep the
-        # node running -- `netbbs.net.admin_flow._shutdown_screen`
+        # node running -- `netbbs.net.admin_sessions._shutdown_screen`
         # refuses to offer "Cancel it?" (or to schedule a replacement)
         # for a sequence registered this way; see
         # `SequenceScheduler.is_cancellable()`'s own docstring.

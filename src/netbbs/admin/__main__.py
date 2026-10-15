@@ -317,7 +317,7 @@ async def _bootstrap_first_sysop(session: Session, lane: DatabaseLane) -> User:
             await session.write_line("An account needs a password, a public key, or both. Try again.\r\n")
 
     # create_user (not create_user_async), same reasoning as
-    # netbbs.net.admin_flow._create_user_screen -- lane.run() already
+    # netbbs.net.admin_users._create_user_screen -- lane.run() already
     # dispatches this whole call to a worker thread.
     def _create(db: Database) -> User:
         user = create_user(db, username, password=password, verify_key=verify_key, user_level=SYSOP_LEVEL)

@@ -49,7 +49,7 @@ Unlike the shutdown gate's task-based ownership, this is a plain string
 tag -- lockdown is only ever toggled by discrete, synchronous SysOp
 actions, never something a background task itself later reverses on its
 own cancellation, so there is no analogous race to guard against here.
-The tag exists purely so `netbbs.net.admin_flow._lock_and_drain_screen`
+The tag exists purely so `netbbs.net.admin_sessions._lock_and_drain_screen`
 can tell "lockdown is on because *I* (the composite command) turned it
 on" from "lockdown is on for some other, independent reason" -- and
 therefore never silently claims ownership of (or offers to undo) state

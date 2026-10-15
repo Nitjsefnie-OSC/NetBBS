@@ -1,49 +1,45 @@
 """
-Shared SysOp admin menu (design doc -- SysOp foundation).
+The SysOp console (design doc -- SysOp foundation): its entry points and menus.
 
-The single implementation of every user-management action, reachable
+`admin_menu` is the single implementation of the SysOp console, reachable
 two ways: a gated menu option inside an authenticated BBS session
 (`netbbs.net.login_flow`), and the standalone local CLI tool
 (`netbbs.admin.__main__`, `python -m netbbs.admin`) -- see that
 module's docstring for why the two entry points share this rather than
-each carrying their own copy. Every action here is audit-logged
-against whichever `User` the caller supplies, regardless of which
-entry point that came from.
+each carrying their own copy. Every action is audit-logged against
+whichever `User` the caller supplies, regardless of which entry point that
+came from. `staff_menu` and `staff_list_screen` are the staff side of the
+same console.
 
-Follows the submenu shape already established by
-`netbbs.net.profile_flow._edit_profile`: a redraw-on-real-change-only
-draw function, a bell-only-on-invalid-key dispatch loop (design doc),
-and `netbbs.net.picker.pick_item` for target selection.
+This module holds the entry points, the admin, Operations and Content
+menus and the dashboard panel. The screens they open live in one module
+per area (issue #1311 split them out of this file):
 
-Migrated onto the two-lane database execution model (design doc,
-issue #57) -- every screen/menu
-function here takes `lane: DatabaseLane` instead of `db: Database`,
-and every direct domain-function call goes through `await lane.run(...)`.
-Almost entirely mechanical (no
-synchronous-callback contracts here the way the Tab completer in
-chat_flow.py has) --
-`pick_item`'s own `name_of`/`description_of` callbacks in this file only
-ever read attributes already present on the objects handed to
-`pick_item`, never a fresh DB call, except one: `_who_screen`'s
-`description_of` cannot call `format_for_display(entry.connected_at,
-db)` directly inside its lambda, since a synchronous callback cannot
-dispatch through a lane -- it instead uses the same fix as elsewhere
-(`resolve_display_preferences`, fetched once via
-`lane.run` before the picker, then passed as `override_format`/
-`override_timezone` into a plain synchronous `format_for_display`
-call). `_community_label` stays `db`-first, dispatched *through* the
-lane like `netbbs.net.file_flow`'s `_uploader_display_name` before it
--- it's a callee, never a caller, of the lane.
+- `admin_ui`: the shared screen machinery -- announcements, choice
+  prompts, pickers, draft editors, detail views, panel writers, uploads;
+- `admin_fields`: draft-editor fields the area editors share;
+- `admin_resources`: listing and detail helpers shared by boards, file
+  areas, chat channels and Communities;
+- `admin_users`, `admin_trust`, `admin_link`, `admin_system`,
+  `admin_sessions`, `admin_maintenance`, `admin_banners`,
+  `admin_moderation`, `admin_boards`, `admin_files`, `admin_chat`,
+  `admin_doors`: the screens of each area.
 
-Both entry points that share this module now need a real
-`DatabaseLane`: the in-BBS `[S]ysOp` menu option
-(`netbbs.net.login_flow`, same `lane is None` degrade-gracefully guard
-as the mail/files/chat branches before it) and the standalone
-`python -m netbbs.admin` CLI (`netbbs.admin.__main__`), which
-constructs its own `DatabaseLane` around its own `Database` handle --
-there is no live-session/CLI distinction for admin functionality
-itself once inside `admin_menu` (that's `node_controls`' job,
-established independently).
+The area modules import from `admin_ui`, `admin_fields`,
+`admin_resources` and from each other without a cycle (a detail screen
+opening another area's screen), and never from this module, so this
+module can import all of them. A test that patches a name must
+patch the module whose code calls it: the menus here look the screens up
+in this module's globals, the screens look their helpers up in their own
+(`tests/test_admin_patch_targets.py` holds every patch to that).
+
+Every screen and menu takes `lane: DatabaseLane` instead of
+`db: Database` (design doc, issue #57), and every direct domain-function
+call goes through `await lane.run(...)`. Synchronous callbacks such as
+`pick_item`'s `name_of`/`description_of` only read attributes already on
+the objects they are handed, never the database. There is no
+live-session/CLI distinction for admin functionality once inside
+`admin_menu` (that is `node_controls`' job).
 """
 
 from __future__ import annotations

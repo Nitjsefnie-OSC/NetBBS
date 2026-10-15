@@ -15,7 +15,7 @@ fails -- not that a maintainer signed them. An asset without a published digest
 is refused rather than installed on TLS alone.
 
 Pure functions and injectable I/O here; the SysOp screen is
-`netbbs.net.admin_flow._install_release_screen`.
+`netbbs.net.admin_maintenance._install_release_screen`.
 """
 
 from __future__ import annotations

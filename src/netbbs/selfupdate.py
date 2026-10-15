@@ -477,7 +477,7 @@ async def run_scheduled_update_check(
     immediately on entry, then every `interval_seconds` (default once a
     day) -- the "startup" and "daily-background" halves of §17's own
     three-trigger-point design; the third, "manual," is `netbbs.net.
-    admin_flow._update_settings_screen`'s existing check-for-updates
+    admin_maintenance._update_settings_screen`'s existing check-for-updates
     screen. That screen's own UI copy ("Daily automatic check: ON/off")
     and `get_auto_update_check_enabled`/`set_auto_update_check_enabled`
     already named and gated this switch -- nothing previously wired to

@@ -127,7 +127,7 @@ async def show_detail(
         if paged:
             rows.append(colored(f"(Page {page + 1} of {len(pages)}: < > turns)", fg_color=MUTED_COLOR))
         # Directly above the prompt, where the eye already is -- and where a
-        # self-drawn console screen shows its own (`admin_flow._choice_prompt`).
+        # self-drawn console screen shows its own (`admin_ui._choice_prompt`).
         rows.extend(message_rows)
         lead = clear_screen() if redraw_in_place else "\r\n"
         # A section may hold an art post's rows (issue #964), drawn for

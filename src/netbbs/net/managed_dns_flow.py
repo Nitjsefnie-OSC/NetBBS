@@ -260,7 +260,7 @@ async def _write_note(session: Session, text: str) -> None:
     physical line at a time -- coloring the whole paragraph as one
     string and relying on the terminal's own soft-wrap runs past the
     right edge unpredictably on anything narrower than the text itself
-    (the same bug `netbbs.net.admin_flow._write_wrapped_subtitle`'s own
+    (the same bug `netbbs.net.admin_ui._write_wrapped_subtitle`'s own
     docstring documents fixing for screen subtitles)."""
     for wrapped in wrap_to_width(text, session.terminal_width):
         await session.write_line(colored(wrapped, fg_color=MUTED_COLOR))

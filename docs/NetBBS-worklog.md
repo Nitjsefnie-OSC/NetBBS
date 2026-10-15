@@ -194,6 +194,13 @@ Keep domain logic in its subsystem and transport/session orchestration in
 - `netbbs.rendering`: ANSI, reflow, screen-buffer, and editor-independent
   rendering primitives;
 - `netbbs.net`: user-facing flows, sessions, server adapters, and orchestration;
+  the SysOp console is `admin_flow` (entry points and menus) plus one
+  `admin_<area>` module per area's screens over the shared `admin_ui`,
+  `admin_fields` and `admin_resources` (issue #1311). The area modules never
+  import `admin_flow`, which imports them all. A test patches the module whose
+  code *calls* the name -- the menus look screens up in `admin_flow`'s
+  globals, the screens look helpers up in their own --
+  and `tests/test_admin_patch_targets.py` fails a patch that reaches nothing;
 - `netbbs.storage`: migrations, database ownership, and execution lanes.
 
 Do not teach storage modules how terminal output should look, or teach generic
@@ -2042,10 +2049,10 @@ remedies are, respectively, a titled screen held until `[B]ack`
 (`_show_report`), a `show_detail` screen that returns to the picker, and an
 outcome carried into the next draw -- never a "Press any key" hold.
 
-The carrying is a per-session queue in `admin_flow` (`_announce`,
+The carrying is a per-session queue in `admin_ui` (`_announce`,
 `_announce_line`; a `WeakKeyDictionary`, so a notice cannot outlive its
 connection or reach another SysOp). Four things drain it, which is why they
-are *wrappers defined in `admin_flow`* and not the imported names: `_choice_
+are *wrappers defined in `admin_ui`* and not the imported names: `_choice_
 prompt` (every self-drawn screen's `Choice:`), `show_detail`, `edit_resource_
 draft` (through the editor's `notices` hook, so a field prompt's "Not a
 number." survives the editor's redraw), and `pick_item` (through the picker's
@@ -2424,7 +2431,7 @@ the database.
   partner, file name or search string goes into the trail.
 
 A stand-in session that forwards attributes with `__getattr__`
-(`admin_flow._TrailingOutput`) forwards reads only. It must forward `activity`
+(`admin_ui._TrailingOutput`) forwards reads only. It must forward `activity`
 writes explicitly, or the trail lands on the stand-in, where nothing looks.
 
 ### Session output passes through one layer: the screen copy (issue #764)
@@ -4769,7 +4776,7 @@ Invariants that are easy to break:
 
 - **The restart request is process-global state in `netbbs.update_apply`.**
   `__main__.main` reads it after `run()` returns and exits with status 75.
-  `admin_flow` sets it. This only works because both import the module at
+  `admin_maintenance` sets it. This only works because both import the module at
   startup, so they share the one module object. Imported lazily after an
   install, the module could come from the new files on disk, carrying a
   flag nobody set. Keep those imports at module top.
@@ -4787,7 +4794,7 @@ Invariants that are easy to break:
   environment that nothing reports. The restart is armed after that unit
   finishes, and only when no other shutdown is scheduled by then.
 - **Never test against the shared venv.** Tests fake the pip subprocess
-  boundary (`admin_flow.run_bounded`). `run_bounded`'s own tests run only
+  boundary (`admin_maintenance.run_bounded`). `run_bounded`'s own tests run only
   harmless `python -c` children. A real `pip install` from a test would
   replace the editable install every session shares.
 
@@ -6389,7 +6396,7 @@ the 40x12 floor both games share. NetBBS's `scripts/door_gallery.py` stays
 only for the website captures and bump checks; each game develops its own
 gallery.
 
-`netbbs.net.admin_flow._door_field_specs`' `args` field is parsed with
+`netbbs.net.admin_doors._door_field_specs`' `args` field is parsed with
 `shlex.split(draft["args_line"])` -- deliberately POSIX-mode (the
 default), matching the "never a shell, always an argv list" posture
 `netbbs.doors.runtime` already documents. POSIX-mode `shlex` treats a
