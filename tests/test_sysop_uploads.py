@@ -14,6 +14,7 @@ from netbbs.auth.users import SYSOP_LEVEL, create_user, set_user_level  # noqa: 
 from netbbs.doors.registry import custom_doors_dir  # noqa: E402
 from netbbs.moderation.log import list_recent_actions  # noqa: E402
 from netbbs.net import admin_flow, zmodem  # noqa: E402
+from netbbs.net import admin_doors
 from netbbs.net import admin_banners
 from netbbs.net import admin_ui
 from netbbs.net.file_transfer import TransferGrants  # noqa: E402
@@ -315,7 +316,7 @@ def test_no_public_url_is_refused_before_a_name_is_asked(db, lane, sysop):
     session = FakeSession([])  # no scripted input: any prompt would fail the test
     _browser_console(session, base_url=None)
 
-    asyncio.run(admin_flow._upload_door_file_screen(session, lane, sysop))
+    asyncio.run(admin_doors._upload_door_file_screen(session, lane, sysop))
 
     assert "public_url" in " ".join(_announced_text(session).split())
 
@@ -388,7 +389,7 @@ def test_door_upload_names_the_file_first(db, lane, sysop):
     session = FakeSession(["mygame.py"])
     grants = _browser_console(session)
 
-    asyncio.run(admin_flow._upload_door_file_screen(session, lane, sysop))
+    asyncio.run(admin_doors._upload_door_file_screen(session, lane, sysop))
 
     (grant,) = grants._grants.values()
     assert grant.sysop_upload.kind == DOOR_FILE
@@ -400,7 +401,7 @@ def test_door_upload_refuses_a_path_as_a_name(db, lane, sysop):
     session = FakeSession(["../escape.py"])
     grants = _browser_console(session)
 
-    asyncio.run(admin_flow._upload_door_file_screen(session, lane, sysop))
+    asyncio.run(admin_doors._upload_door_file_screen(session, lane, sysop))
 
     assert len(grants._grants) == 0
     assert "plain file name" in _announced_text(session)
@@ -413,7 +414,7 @@ def test_door_upload_confirms_replacing_an_existing_file(db, lane, sysop):
     session = FakeSession(["mygame.py", "y"])
     grants = _browser_console(session)
 
-    asyncio.run(admin_flow._upload_door_file_screen(session, lane, sysop))
+    asyncio.run(admin_doors._upload_door_file_screen(session, lane, sysop))
 
     assert "Replace the existing mygame.py" in _visible(_written_text(session))
     assert len(grants._grants) == 1
@@ -422,7 +423,7 @@ def test_door_upload_confirms_replacing_an_existing_file(db, lane, sysop):
 def test_menus_offer_upload(db, lane, sysop):
     session = FakeSession([])
     asyncio.run(admin_banners._draw_welcome_banner_menu(session, lane, "off", False, False, False))
-    asyncio.run(admin_flow._draw_door_menu(session, "off", False, False, False))
+    asyncio.run(admin_doors._draw_door_menu(session, "off", False, False, False))
     assert _visible(_written_text(session)).count("[U]pload") == 2
 
 
@@ -476,7 +477,7 @@ def test_door_from_disk_hides_dot_files(db, lane, sysop):
     (directory / "game.py").write_text("print('hi')", encoding="utf-8")
     session = FakeSession(["b"])
 
-    asyncio.run(admin_flow._door_filesystem_screen(session, lane, sysop, "off", False, False, False))
+    asyncio.run(admin_doors._door_filesystem_screen(session, lane, sysop, "off", False, False, False))
 
     text = _visible(_written_text(session))
     assert "game.py" in text and ".upload-" not in text

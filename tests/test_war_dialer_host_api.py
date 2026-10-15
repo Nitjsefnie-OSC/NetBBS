@@ -20,7 +20,7 @@ def test_admin_and_backup_use_only_the_pinned_boundary():
     expected = {
         "doors/war_dialer_admin.py": {"administer_world", "WorldStateError"},
         "backup.py": {"inspect_world", "world_session", "WorldStateError"},
-        "net/admin_flow.py": {"_event_plain", "WorldStateError"},
+        "net/admin_doors.py": {"_event_plain", "WorldStateError"},
     }
     for path, names in expected.items():
         tree = ast.parse((root / path).read_text(encoding="utf-8"))
