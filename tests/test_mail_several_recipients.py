@@ -477,7 +477,7 @@ def test_write_to_all_callers_from_the_console_sends_and_says_what_happened(db, 
 
 
 def test_the_console_mail_screen_offers_mail_to_all_callers(db, lane):
-    from netbbs.net.admin_flow import _mail_tools_screen
+    from netbbs.net.admin_link import _mail_tools_screen
 
     root = _user(db, "root", user_level=255)
     bob = _user(db, "bob")

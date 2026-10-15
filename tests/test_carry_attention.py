@@ -175,7 +175,7 @@ def test_exclude_on_an_offer_excludes_it(db, lane, sysop, remote, own):
     """`[E]xclude` on an offer's screen does what it says (review of #1164:
     the key moved from `x` and its handler had not)."""
     from netbbs.link.carry import EXCLUDED, OFFERED, count_carry_decisions
-    from netbbs.net.admin_flow import _carry_decisions_screen
+    from netbbs.net.admin_link import _carry_decisions_screen
 
     _carry(db, remote, own, cap=0)
     session = FakeSession(["1", "\r", "e", "b", "b"])
