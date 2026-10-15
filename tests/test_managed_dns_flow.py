@@ -62,7 +62,7 @@ def test_offer_opt_in_is_a_no_op_once_already_decided(tmp_path):
 def test_offer_opt_in_blurb_is_word_wrapped_to_the_terminal_width(tmp_path):
     """Dogfood report: the opt-in blurb shown at first-SysOp login/
     bootstrap relied on the terminal's own soft-wrap instead of being
-    wrapped before coloring, the same bug netbbs.net.admin_flow.
+    wrapped before coloring, the same bug netbbs.net.admin_ui.
     _write_wrapped_subtitle's own docstring already documents fixing
     for screen subtitles elsewhere -- a colored ANSI string can run
     visibly past the right edge on a narrow terminal. Every blurb line

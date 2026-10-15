@@ -91,7 +91,7 @@ DOOR_LABEL_SUFFIX = ".door"
 BOT_LABEL_SUFFIX = ".bot"
 
 # Self-service registration's own minimum, deliberately stricter than
-# admin-created accounts (netbbs.net.admin_flow._prompt_optional_password
+# admin-created accounts (netbbs.net.admin_users._create_user_password_field
 # enforces no minimum at all) -- a SysOp vetting each account by hand is
 # a different trust boundary than anyone on the network choosing their
 # own password, so the extra floor only applies to the self-service path.
