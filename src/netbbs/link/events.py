@@ -118,6 +118,12 @@ BOARD_CLOSURE_OBJECT_TYPE = "board_closure"
 BOARD_POSTING_OBJECT_TYPE = "board_posting"
 BOARD_POSTING_MODES = ("anyone", "origin_threads", "origin_only")
 
+# Design doc §16 (issue #1299, built by #1332): one voter's vote on a poll on
+# a Linked board, signed by the voter's home node like a post. Not chained:
+# per voter and poll, the vote with the latest `created_at` is the one in
+# force (see BoardPollVote).
+BOARD_POLL_VOTE_OBJECT_TYPE = "board_poll_vote"
+
 # Design doc §9.6, issue #87: the channel-side counterpart to board_
 # genesis/board_post -- structurally identical minus what doesn't apply
 # (no edit chain; channel messages have no local edit concept at all).
@@ -823,6 +829,7 @@ def build_board_post(
     nonce: str | None = None,
     layout: str | None = None,
     crosspost: str | None = None,
+    poll: dict | None = None,
 ) -> BoardPost:
     """
     Build and sign one `board_post` event, per design doc.
@@ -831,6 +838,11 @@ def build_board_post(
     written to several boards at once, set on each Linked copy and omitted
     otherwise, never `null`. Like `layout`, an older node keeps and relays
     the signed bytes unchanged and shows the copy as an ordinary post.
+
+    `poll` (issue #1299, design doc §16) makes the post a poll: `{"options":
+    [...], "max_choices": n, "closes_at": ..., "results": "after_vote" |
+    "after_close"}`. Omitted otherwise. An optional field, so a node that
+    predates it shows the post without its poll.
 
     `layout` (issue #711, design doc §16) is set only for a post written
     in the ANSI art editor (`"art"`), whose lines a reader keeps; it is
@@ -883,6 +895,8 @@ def build_board_post(
         payload["layout"] = layout
     if crosspost is not None:
         payload["crosspost"] = crosspost
+    if poll is not None:
+        payload["poll"] = poll
 
     envelope = build_envelope(BOARD_POST_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))
@@ -951,6 +965,7 @@ def build_board_post_edit(
     created_at: str,
     nonce: str | None = None,
     withdrawn: bool = False,
+    poll: dict | None = None,
 ) -> BoardPostEdit:
     """
     Build and sign one `board_post_edit` event, per design doc.
@@ -978,6 +993,10 @@ def build_board_post_edit(
     (the omission rule of §7.2). A receiving node honors it only when the
     edit is a withdrawal and nothing else -- see
     `netbbs.link.boards.is_withdrawal_edit`.
+
+    `poll` (issue #1299) is set on an edit of a poll's post:
+    `{"closes_at": ...}`, the poll's closing date as of this revision, the
+    one thing about a Linked poll that changes after it is posted.
     """
     payload = {
         "board_id": board_id,
@@ -991,6 +1010,8 @@ def build_board_post_edit(
     }
     if withdrawn:
         payload["withdrawn"] = True
+    if poll is not None:
+        payload["poll"] = poll
 
     envelope = build_envelope(BOARD_POST_EDIT_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))
@@ -1062,6 +1083,7 @@ def build_board_post_moderator_edit(
     body: str,
     created_at: str,
     nonce: str | None = None,
+    poll: dict | None = None,
 ) -> BoardPostModeratorEdit:
     """
     Build and sign one `board_post_moderator_edit` event, per design
@@ -1069,7 +1091,8 @@ def build_board_post_moderator_edit(
     origin's* own current signing key (`netbbs.link.boards.board_origin_
     fingerprint` resolves which node that is), never the edited post's
     own author's key — that's the entire mechanical difference from
-    `build_board_post_edit`.
+    `build_board_post_edit`. `poll` as for `build_board_post_edit`: a
+    moderator's change of a poll's closing date (issue #1299).
     """
     payload = {
         "board_id": board_id,
@@ -1080,6 +1103,8 @@ def build_board_post_moderator_edit(
         "created_at": created_at,
         "nonce": nonce if nonce is not None else secrets.token_hex(16),
     }
+    if poll is not None:
+        payload["poll"] = poll
 
     envelope = build_envelope(BOARD_POST_MODERATOR_EDIT_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))
@@ -2084,6 +2109,85 @@ def verify_board_closure(closure: BoardClosure, signing_verify_key: nacl.signing
     both the caller's job, same division of responsibility as `verify_
     board_origin_transfer_offer`."""
     return verify_signature(signing_verify_key, canonical_bytes(closure.envelope), closure.signature)
+
+
+@dataclass(frozen=True)
+class BoardPollVote:
+    """
+    One signed `board_poll_vote` event (design doc §16, issue #1299): a
+    voter's answers to a poll on a Linked board. `root_post_id` is the
+    poll's root `board_post` content id; `choices` are answer positions,
+    counted from 0; `author` names the voter as a post's author does
+    (`node_vouched_user`), and the voter's home node signs it.
+
+    Not chained: a node keeps one vote per author identity and poll, the
+    one with the latest `created_at` (the content id breaks a tie), so
+    nodes agree whichever order the votes reach them in. A vote dated
+    after the poll closes is kept but not counted. A vote cannot be
+    secret from the network -- it names its voter, as a post names its
+    author -- which the poll says before a caller's first vote.
+
+    Names a `board_id`, so a node that predates this type relays it with
+    the board as an opaque event (issue #1022, §7.5).
+    """
+
+    envelope: dict
+    signature: bytes
+
+    @property
+    def payload(self) -> dict:
+        return self.envelope["payload"]
+
+    @property
+    def content_id(self) -> str:
+        return event_content_id(self.envelope)
+
+    def to_dict(self) -> dict:
+        return {
+            "envelope": self.envelope,
+            "signature": base64.b64encode(self.signature).decode("ascii"),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BoardPollVote":
+        return cls(envelope=data["envelope"], signature=base64.b64decode(data["signature"]))
+
+
+def build_board_poll_vote(
+    *,
+    signing_identity: Identity,
+    home_node_fingerprint: str,
+    local_user_id: str,
+    board_id: str,
+    root_post_id: str,
+    choices: list[int],
+    created_at: str,
+    nonce: str | None = None,
+) -> BoardPollVote:
+    """Build and sign one `board_poll_vote` with the voter's home node's
+    current signing key, as `build_board_post` signs a post."""
+    payload = {
+        "board_id": board_id,
+        "root_post_id": root_post_id,
+        "author": {
+            "kind": _NODE_VOUCHED_USER_AUTHOR_KIND,
+            "home_node_fingerprint": home_node_fingerprint,
+            "local_user_id": local_user_id,
+        },
+        "choices": sorted(choices),
+        "created_at": created_at,
+        "nonce": nonce if nonce is not None else secrets.token_hex(16),
+    }
+    envelope = build_envelope(BOARD_POLL_VOTE_OBJECT_TYPE, payload)
+    signature = signing_identity.sign(canonical_bytes(envelope))
+    return BoardPollVote(envelope=envelope, signature=signature)
+
+
+def verify_board_poll_vote(vote: BoardPollVote, signing_verify_key: nacl.signing.VerifyKey) -> bool:
+    """Verify `vote`'s signature against the voter's home node's signing
+    key -- resolving that key is the caller's job, as for
+    `verify_board_post`."""
+    return verify_signature(signing_verify_key, canonical_bytes(vote.envelope), vote.signature)
 
 
 @dataclass(frozen=True)

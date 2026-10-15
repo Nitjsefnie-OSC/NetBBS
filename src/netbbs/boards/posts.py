@@ -587,9 +587,15 @@ def edit_post(
     edited_by: User,
     withdrawal: bool = False,
     files: list[FileRef] | None = None,
+    poll_change: bool = False,
 ) -> Post:
     """
     Create a new revision of `post`.
+
+    `poll_change` (issue #1299): the revision carries a Linked poll's new
+    closing date, which travels as an edit of its post. It is written even
+    when the text is unchanged, and is not held for approval when it is:
+    there is no new text to review.
 
     `files` (issue #842) are the files the new revision points at. `None`
     keeps the current revision's -- a moderator's edit, or any caller that
@@ -652,7 +658,8 @@ def edit_post(
     if problem is not None:
         raise PostError(problem)
 
-    if subject == current["subject"] and body == current["body"] and files == current_files and not withdrawal:
+    text_unchanged = subject == current["subject"] and body == current["body"] and files == current_files
+    if text_unchanged and not withdrawal and not poll_change:
         # No-op edit (GitHub issue #41): every edit gets a fresh
         # created_at, which alone would produce a new content-addressed
         # post_id and make list_posts_page/_resolve_current_version
@@ -667,7 +674,7 @@ def edit_post(
     # A withdrawal (`withdraw_post`) only takes text away, so it is not
     # held for approval: held, the post would keep showing what its author
     # withdrew until a moderator got to it.
-    status = "pending" if board.moderated and not withdrawal else "approved"
+    status = "pending" if board.moderated and not withdrawal and not (poll_change and text_unchanged) else "approved"
     created_at = utc_now_iso()
     author_identifier = post.author_fingerprint or post.author_label
     new_post_id = compute_content_id(

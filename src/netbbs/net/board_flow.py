@@ -100,6 +100,7 @@ from netbbs.link.boards import (
     queue_board_post_moderator_edit_if_linked,
     queue_board_post_tombstone_if_linked,
 )
+from netbbs.link.polls import queue_board_poll_vote_if_linked
 from netbbs.moderation import BoardPermission, has_permission
 from netbbs.ftn.networks import is_board_ftn
 from netbbs.ftn.scanner import export_post_if_ftn
@@ -1064,9 +1065,9 @@ async def _board_screen(
     # shows color (issue #711).
     can_draw = can_post and board.allow_color
     # Issue #1299: a poll is a new thread, never on a board gated to an FTN
-    # network, which has no way to carry one. A Linked board's poll travels
-    # with its post (#1332's Link half); until then polls stay local.
-    can_poll = can_post and not is_board_ftn(db, board) and not is_board_linked(db, board)
+    # network, which has no way to carry one. On a Linked board it travels
+    # with its post, and its votes as signed events.
+    can_poll = can_post and not is_board_ftn(db, board)
     name_requirement = get_effective_name_requirement(db, board)
     # The gates this board applies, named under its title (issue #1105),
     # with the ones this caller does not meet marked (issue #1115).
@@ -1667,6 +1668,9 @@ async def _board_screen(
                 chrome=_picker_style(session, db, user), on_voted=_voted,
             )
         if vote is not None:
+            if link_context is not None:
+                # Issue #1299: a vote on a Linked poll is signed and sent.
+                queue_board_poll_vote_if_linked(db, poll, board, user, node_identity=link_context.node_identity)
             announce(session, poll_view.vote_summary(poll, vote), tone="success")
 
     async def _close_poll(post: Post, poll) -> None:
@@ -1682,6 +1686,8 @@ async def _board_screen(
             announce(session, f"Could not close the poll: {exc}.", tone="error")
             return
         announce(session, "Poll closed.", tone="success")
+        if poll.link_root_id is not None:
+            _send_poll_change(session, db, board, post, user, link_context=link_context)
 
     async def _compose_screen(title: str) -> None:
         await show_compose_screen(
@@ -2427,13 +2433,20 @@ async def _edit_existing_post(
             except PollError as exc:
                 announce(session, f"Could not save the poll: {exc}.", tone="muted")
                 return False
-        if subject == post.subject and body == post.body and files == current_files:
+        text_unchanged = subject == post.subject and body == post.body and files == current_files
+        # A Linked poll's closing date travels as an edit of its post (issue
+        # #1299), so a change of it alone is still a revision.
+        carried_poll_change = poll_changed and poll.link_root_id is not None
+        if text_unchanged and not carried_poll_change:
             announce(session, "Poll updated." if poll_changed else "No changes to save.", tone=(
                 "success" if poll_changed else "muted"
             ))
             return True
         try:
-            edited = edit_post(db, post, board, subject=subject, body=body, edited_by=user, files=files)
+            edited = edit_post(
+                db, post, board, subject=subject, body=body, edited_by=user, files=files,
+                poll_change=carried_poll_change,
+            )
         except PostError as exc:
             # Back to review with the revision intact: the editor already
             # deleted its draft on /done, so returning here would lose it.
@@ -2449,7 +2462,7 @@ async def _edit_existing_post(
         if edited.status == "pending":
             announce(session, "Edit submitted. The post keeps its current text until a moderator approves it.")
         else:
-            announce(session, "Post updated.")
+            announce(session, "Poll updated." if text_unchanged else "Post updated.")
         if post.author_user_id != user.id and _moderation_stays_local(db, board, link_context):
             announce(session, _STAYS_LOCAL_NOTICE, tone="muted")
         return True
@@ -2468,6 +2481,35 @@ async def _edit_existing_post(
             ),
             edit=_edit_poll,
         ) if poll is not None else None,
+    )
+
+
+def _send_poll_change(
+    session: Session, db: Database, board: Board, post: Post, user: User, *, link_context: LinkContext | None,
+) -> None:
+    """Send a Linked poll's new closing date (issue #1299): a revision of
+    its post with the text unchanged, carried as the author's
+    `board_post_edit` or, on the board's origin, a moderator's
+    `board_post_moderator_edit`. A moderator elsewhere changes this node's
+    copy only, and is told so."""
+    if link_context is None:
+        return
+    if post.author_user_id != user.id and _moderation_stays_local(db, board, link_context):
+        announce(session, _STAYS_LOCAL_NOTICE, tone="muted")
+        return
+    current = visible_post(db, post.post_id)
+    if current is None:
+        return
+    try:
+        revision = edit_post(
+            db, post, board, subject=current.subject, body=current.body, edited_by=user, poll_change=True,
+        )
+    except PostError as exc:
+        announce(session, f"The poll closed here, but could not be sent to other BBSes: {exc}.", tone="error")
+        return
+    queue_board_post_edit_if_linked(db, revision, board, node_identity=link_context.node_identity, edited_by=user)
+    queue_board_post_moderator_edit_if_linked(
+        db, revision, board, node_identity=link_context.node_identity, edited_by=user
     )
 
 

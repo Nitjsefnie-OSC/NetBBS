@@ -48,6 +48,13 @@ MAX_POLL_OPTION_BYTES = 200
 DEFAULT_POLL_DAYS = 7
 MAX_POLL_DAYS = 365
 
+# Design doc §16 (Decision 4): each node counts at most this many voters
+# from each other home node per poll, and keeps at most this many voter rows
+# per poll. A hostile node can mint accounts; the cap limits how far it can
+# move a tally, and the results say how many votes were not counted.
+MAX_COUNTED_VOTERS_PER_NODE = 50
+MAX_VOTER_ROWS_PER_POLL = 5000
+
 RESULTS_AFTER_VOTE = "after_vote"
 RESULTS_AFTER_CLOSE = "after_close"
 RESULTS_MODES = (RESULTS_AFTER_VOTE, RESULTS_AFTER_CLOSE)
@@ -301,16 +308,34 @@ def user_vote(db: Database, poll: Poll, user: User) -> tuple[int, ...] | None:
 
 def tally(db: Database, poll: Poll) -> PollTally:
     """The poll's results on this node: each answer's count and how many
-    voters were counted. A vote dated after the poll closed is not counted;
-    `not_counted` says how many were left out, with those the per-poll row
-    cap turned away."""
+    voters were counted. `not_counted` says how many votes were left out:
+
+    - a vote dated after the poll closed, or naming answers it does not
+      have or more than it allows;
+    - a carried vote whose author or home node this node's trust hides
+      (design doc §12), as their posts are hidden;
+    - past the first `MAX_COUNTED_VOTERS_PER_NODE` voters from one other
+      home node, in the order they arrived;
+    - one the per-poll row cap turned away (`dropped_votes`).
+
+    Each node's tally is its own view, as its post list is."""
+    from netbbs.link.enforcement import envelope_content_visible
+
     counts = [0] * len(poll.options)
     voters = 0
     not_counted = poll.dropped_votes
     closes = _moment(closing_moment(poll))
     rows = db.connection.execute(
-        "SELECT choices, voted_at FROM board_poll_votes WHERE root_post_id = ? ORDER BY id", (poll.root_post_id,)
+        """
+        SELECT v.choices, v.voted_at, v.home_node_fingerprint, e.envelope_json
+        FROM board_poll_votes v
+        LEFT JOIN link_events e ON e.content_id = v.event_id AND v.home_node_fingerprint IS NOT NULL
+        WHERE v.root_post_id = ? ORDER BY v.id
+        """,
+        (poll.root_post_id,),
     ).fetchall()
+    per_node: dict[str, int] = {}
+    authors: dict = {}
     for row in rows:
         choices = _parse_choices(row["choices"], len(poll.options))
         try:
@@ -320,6 +345,17 @@ def tally(db: Database, poll: Poll) -> PollTally:
         if choices is None or len(choices) > poll.max_choices or late:
             not_counted += 1
             continue
+        home = row["home_node_fingerprint"]
+        if home is not None:
+            if row["envelope_json"] is None or not envelope_content_visible(
+                db, row["envelope_json"], author_cache=authors
+            ):
+                not_counted += 1
+                continue
+            if per_node.get(home, 0) >= MAX_COUNTED_VOTERS_PER_NODE:
+                not_counted += 1
+                continue
+            per_node[home] = per_node.get(home, 0) + 1
         voters += 1
         for choice in choices:
             counts[choice] += 1
@@ -414,6 +450,10 @@ def close_poll(db: Database, poll: Poll, post_author_user_id: int | None, board:
     db.connection.execute(
         "UPDATE board_polls SET closed_at = ? WHERE root_post_id = ? AND closed_at IS NULL", (now, poll.root_post_id)
     )
+    if current.link_root_id is not None:
+        # A Linked poll's close travels as its closing date, which an edit
+        # of its post carries (`netbbs.link.polls.closing_field`).
+        db.connection.execute("UPDATE board_polls SET closes_at = ? WHERE root_post_id = ?", (now, poll.root_post_id))
     db.connection.commit()
     return now
 

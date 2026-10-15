@@ -73,11 +73,13 @@ from netbbs.link.channels import (
     materialize_carried_channel_message,
 )
 from netbbs.boards.content_id import ContentIdError
+from netbbs.link.polls import materialize_carried_board_poll_vote
 from netbbs.link.events import (
     event_content_id,
     BOARD_CLOSURE_OBJECT_TYPE,
     BOARD_GENESIS_OBJECT_TYPE,
     BOARD_POSTING_OBJECT_TYPE,
+    BOARD_POLL_VOTE_OBJECT_TYPE,
     BOARD_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
     BOARD_POST_EDIT_OBJECT_TYPE,
     BOARD_POST_MODERATOR_EDIT_OBJECT_TYPE,
@@ -95,6 +97,7 @@ from netbbs.link.events import (
     LINK_MESSAGE_OBJECT_TYPE,
     BoardClosure,
     BoardPosting,
+    BoardPollVote,
     BoardGenesis,
     BoardOriginTransferAccepted,
     BoardOriginTransferOffer,
@@ -559,6 +562,9 @@ async def persist_accepted_events(
         # object type here still has between save_event and its own
         # follow-up (materialize_carried_board's own docstring notes
         # this same gap, not fixed for genesis).
+        if object_type == BOARD_POLL_VOTE_OBJECT_TYPE:
+            await _persist_board_poll_vote(lane, node, content_id, envelope, sender_fingerprint=sender_fingerprint)
+            continue
         if object_type == BOARD_POST_OBJECT_TYPE:
             initial_status = "approved"
             if enforce_trust_policy:
@@ -778,6 +784,20 @@ async def persist_accepted_events(
             # Design doc §9.3, issue #993: who may post here now.
             await lane.run(materialize_carried_board_posting, BoardPosting.from_dict(envelope))
     await persist_stale_copy_changes(lane, node)
+
+
+async def _persist_board_poll_vote(
+    lane: DatabaseLane, node: LinkNode, content_id: str, envelope: dict, *, sender_fingerprint: str
+) -> None:
+    """Issue #1299: count a received vote, keeping its signed bytes, or
+    forget it when nothing was kept (a board not carried here, an older vote
+    than the one counted)."""
+    kept = await lane.run(
+        materialize_carried_board_poll_vote, BoardPollVote.from_dict(envelope),
+        sender_fingerprint=sender_fingerprint, own_fingerprint=node.identity.fingerprint,
+    )
+    if not kept:
+        await _forget_unless_stored(lane, node, content_id)
 
 
 async def persist_stale_copy_changes(lane: DatabaseLane, node: LinkNode) -> None:
