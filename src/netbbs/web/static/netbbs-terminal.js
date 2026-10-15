@@ -52,7 +52,67 @@
   }
   fitAddon.fit();
 
-  var scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+  // The bell (issue #1302): BEL plays a short tone, the caller's chat bell
+  // level having already decided what reaches here, and a door's own BEL
+  // sounds too. Browsers allow sound only after the page has been used, so
+  // the AudioContext is made on the first key or click; until then a bell
+  // is silent. While the tab is hidden a bell also puts "(!)" in front of
+  // the title, until the tab has focus again.
+  function installBell(term, win, doc) {
+    var audio = null;
+    var marked = false;
+    function unlock() {
+      if (audio) return;
+      var Context = win.AudioContext || win.webkitAudioContext;
+      if (!Context) return;
+      try {
+        audio = new Context();
+      } catch (e) {
+        audio = null;
+      }
+    }
+    function tone() {
+      if (!audio) return;
+      try {
+        if (audio.state === "suspended") audio.resume();
+        var now = audio.currentTime;
+        var oscillator = audio.createOscillator();
+        var gain = audio.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.15, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+        oscillator.connect(gain);
+        gain.connect(audio.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.22);
+      } catch (e) {
+        // No sound is better than a broken terminal.
+      }
+    }
+    function unmark() {
+      if (!marked) return;
+      marked = false;
+      if (doc.title.indexOf("(!) ") === 0) doc.title = doc.title.slice(4);
+    }
+    doc.addEventListener("keydown", unlock, true);
+    doc.addEventListener("click", unlock, true);
+    win.addEventListener("focus", unmark);
+    doc.addEventListener("visibilitychange", function () {
+      if (!doc.hidden) unmark();
+    });
+    term.onBell(function () {
+      tone();
+      if (doc.hidden && !marked) {
+        marked = true;
+        doc.title = "(!) " + doc.title;
+      }
+    });
+  }
+  installBell(term, window, document);
+
+  var scheme =window.location.protocol === "https:" ? "wss:" : "ws:";
   var ws = new WebSocket(scheme + "//" + window.location.host + "/ws");
   var doorStream = null;
   var doorDecoder = null;

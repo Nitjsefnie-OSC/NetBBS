@@ -143,6 +143,10 @@ class MrcNotice:
     from_user: str = ""
     handle: str = ""
     message: str = ""
+    # Issue #1302: the explicit bell flag -- the sender a private line is
+    # from -- set only on a private line itself, never on a notice about
+    # private lines (one saying some were dropped).
+    ring: str | None = None
 
 
 def _sender_fields(body: str, from_user: str, sender: str, message: str) -> dict[str, str]:
@@ -2189,6 +2193,7 @@ class MrcBridge:
 
     async def _deliver_reply(
         self, username: str, text: str, *, kind: str = "reply", sender_fields: dict[str, str] | None = None,
+        ring: str | None = None,
     ) -> bool:
         """One line of the hub's reply to `username` (or, `kind="private"`,
         a private line for them), under that caller's own reply
@@ -2217,7 +2222,9 @@ class MrcBridge:
         if bucket.has_tokens(self._reply_burst / 2):
             self._reply_truncated.discard((username, kind))
         bucket.consume()
-        await self._deliver_to_caller(username, MrcNotice(text, utc_now_iso(), kind=kind, **(sender_fields or {})))
+        await self._deliver_to_caller(
+            username, MrcNotice(text, utc_now_iso(), kind=kind, ring=ring, **(sender_fields or {})),
+        )
         return True
 
     # --- open rooms (issue #300) ---------------------------------------------
@@ -2743,6 +2750,7 @@ class MrcBridge:
         if not await self._deliver_reply(
             username, f"{sender}: {text}", kind="private",
             sender_fields=_sender_fields(packet.body.strip(), packet.from_user, sender, text),
+            ring=f"mrc:{packet.from_user}@{packet.from_site}",
         ):
             return  # `/mrc r` answers the last line they saw, never one they did not
         self._last_private_sender[username] = (packet.from_user, packet.from_site)
