@@ -266,7 +266,7 @@ def test_profile_account_password_field_reaches_the_screen(db, lane, alice):
     assert _logs_in(db, "alice", "via-profile")
     text = _visible(_written_text(session))
     assert "24 Password:" in text
-    assert "[01-24] change" in text
+    assert "[01-25] change" in text
 
 
 def test_profile_shows_whether_a_password_is_set(db, lane):

@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass, replace
 
 from netbbs.net.art_prompt import clear_prompt_in_art, end_choice_line, mark_prompt_in_art
+from netbbs.auth.renames import acknowledge_refusal_notices, ended_session_notice, pending_refusal_notices
 from netbbs.auth.users import (
     SYSOP_LEVEL, User, current_account, describe_staff_permissions, is_usable_sysop, list_users,
 )
@@ -996,6 +997,11 @@ async def _main_menu_loop(
                 moderation_lines, moderation_ids = pending_moderation_notices(db, user)
                 for outcome, text in moderation_lines:
                     announce(session, text, tone="success" if outcome == "approved" else "error")
+                # A refused request for a new username, with the SysOp's
+                # reason, told once (issue #1306, design doc §16 #1111).
+                rename_lines, rename_ids = pending_refusal_notices(db, user)
+                for text in rename_lines:
+                    announce(session, text, tone="error")
                 # Mail's notices are told together, the Inbox first (issue
                 # #823): what waits there at login, what the cap removed
                 # from it, then the caller's own Link mail that came back.
@@ -1035,6 +1041,7 @@ async def _main_menu_loop(
                     mail_arrived.clear()
                 await _draw_main_menu(session, db, mailbox, user, node_controls=node_controls, notice=notice)
                 acknowledge_moderation_notices(db, moderation_ids)
+                acknowledge_refusal_notices(db, rename_ids)
                 acknowledge_delivery_notices(db, delivery_ids)
                 acknowledge_eviction_notice(db, user, evicted)
                 notice = None
@@ -1134,9 +1141,8 @@ async def _main_menu_loop(
                 # check at its own equivalent boundary (GitHub issue #29,
                 # reopened) -- a session that never returns to this menu
                 # (e.g. staying in chat) still gets revalidated there.
-                await session.write_line(
-                    colored("\r\nYour account is no longer active. Disconnecting.", fg_color=MUTED_COLOR)
-                )
+                # Issue #1306: a rename ends the session too, and says so.
+                await session.write_line(colored("\r\n" + ended_session_notice(db, user), fg_color=MUTED_COLOR))
                 return False
             if _access_change_notice(user, fresh) is not None:
                 # Issue #659: the key was pressed against a menu drawn for

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 import json
+import logging
 from typing import Any
 
 from netbbs.link.trust import (
@@ -21,8 +22,11 @@ from netbbs.link.trust import (
     record_activity,
     register_subject,
 )
+from netbbs.link.user_renames import is_retired_identity
 from netbbs.storage.database import Database
 from netbbs.timeutil import utc_now_iso
+
+_logger = logging.getLogger(__name__)
 
 
 class LinkPolicyAction(StrEnum):
@@ -45,6 +49,9 @@ REASON_NODE_PROBATIONARY = "link_policy_node_probationary_read_only"
 REASON_USER_QUARANTINED = "link_policy_user_quarantined"
 REASON_USER_PROBATIONARY = "link_policy_user_probationary_approval_required"
 REASON_PROBATION_BUDGET = "link_policy_probation_budget_exceeded"
+#: Issue #1306 (design doc §16 #1111 Decision 5): signed as a name its home
+#: node renamed away from, after the rename.
+REASON_RETIRED_IDENTITY = "link_policy_retired_identity"
 
 PROBATION_INVENTORY_BUDGET_DIVISOR = 4
 
@@ -256,6 +263,16 @@ def decide_event_authorship(
     author = event_author(envelope)
     if author is None:
         return decide_node_action(db, transport_peer_fingerprint, LinkPolicyAction.EVENTS)
+    if author.kind == "user" and is_retired_identity(
+        db, author.node_fingerprint, author.opaque_user_id or "", (inner.get("payload") or {}).get("created_at"),
+    ):
+        # The home node renamed this user away from the name before signing
+        # this: names are retired at home, so an honest node never does.
+        _logger.warning(
+            "Refused %s signed as %s@%s, a name that node renamed away from before signing it",
+            object_type, author.opaque_user_id, author.node_fingerprint,
+        )
+        return LinkPolicyDecision(False, REASON_RETIRED_IDENTITY, TrustState.BLOCKED)
     if author.kind == "user" and object_type == "link_message":
         return decide_link_mail_sender(db, author.node_fingerprint, author.opaque_user_id or "")
     if author.kind == "user":

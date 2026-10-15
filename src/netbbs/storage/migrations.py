@@ -4407,6 +4407,82 @@ MIGRATIONS = [
     ),
     Migration(
         description=(
+            "Issue #1306 (design #1111): renaming a username. "
+            "`retired_usernames.user_id` names the account a held name now belongs to: a "
+            "rename retires the old name under #594's rule and records the renamed "
+            "account, so Link mail, FTN netmail and /msg to the old name reach it. A name "
+            "held for a deleted account records none (and a rename-held name loses its "
+            "account if that account is deleted later), and bounces as before. "
+            "`username_change_requests` holds a caller's request, one open per account, and "
+            "a refusal until the caller has been told its reason at login. "
+            "`username_changes` is every rename that happened, for the 30-day limit, the "
+            "account's former names and the `user_renames` list the endpoint descriptor "
+            "announces; its user id goes NULL with the account and the row stays, because "
+            "the rename still happened. "
+            "`channel_messages.author_user_id` is the one chat table's account id: written "
+            "for every new local line, and backfilled by name only where the account that "
+            "holds the name now already existed when the line was written. A line older "
+            "than its account was written by a former holder of a freed name: it gets 0, "
+            "which resolves to nobody. NULL is left on lines no account wrote (bots, doors, "
+            "MRC, Link speakers), which keep resolving by label as before. "
+            "`link_user_aliases` is what a peer learned from another node's `user_renames`: "
+            "keyed by that node and the old name, never re-read from the descriptor, since "
+            "entries age out of it."
+        ),
+        sql="""
+        ALTER TABLE retired_usernames ADD COLUMN user_id INTEGER
+            REFERENCES users(id) ON DELETE SET NULL;
+
+        CREATE TABLE username_change_requests (
+            id                  INTEGER PRIMARY KEY,
+            user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            requested_username  TEXT NOT NULL,
+            requested_at        TEXT NOT NULL,
+            status              TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'refused')),
+            reason              TEXT,
+            decided_at          TEXT,
+            CHECK ((status = 'open') = (decided_at IS NULL))
+        );
+        CREATE UNIQUE INDEX idx_username_change_requests_open
+            ON username_change_requests(user_id) WHERE status = 'open';
+
+        CREATE TABLE username_changes (
+            id            INTEGER PRIMARY KEY,
+            user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            old_username  TEXT NOT NULL,
+            new_username  TEXT NOT NULL,
+            renamed_at    TEXT NOT NULL,
+            requested     INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_username_changes_user ON username_changes(user_id, renamed_at);
+        CREATE INDEX idx_username_changes_renamed_at ON username_changes(renamed_at);
+
+        ALTER TABLE channel_messages ADD COLUMN author_user_id INTEGER;
+        UPDATE channel_messages
+           SET author_user_id = COALESCE((
+               SELECT u.id FROM users AS u
+                WHERE u.username = channel_messages.author_label COLLATE NOCASE
+                  AND u.created_at <= channel_messages.created_at
+           ), 0)
+         WHERE external_source IS NULL
+           AND author_kind = 'user'
+           AND kind <> 'daybreak'
+           AND instr(author_label, '@') = 0
+           AND (link_content_id IS NULL OR link_event_json IS NOT NULL);
+
+        CREATE TABLE link_user_aliases (
+            node_fingerprint  TEXT NOT NULL,
+            old_user_id       TEXT NOT NULL,
+            new_user_id       TEXT NOT NULL,
+            renamed_at        TEXT NOT NULL,
+            learned_at        TEXT NOT NULL,
+            PRIMARY KEY (node_fingerprint, old_user_id)
+        );
+        CREATE INDEX idx_link_user_aliases_new ON link_user_aliases(node_fingerprint, new_user_id);
+        """,
+    ),
+    Migration(
+        description=(
             "Issue #1298: cross-posting -- posts.crosspost_group ties the copies of one post on "
             "several boards (a carried copy's group is '<id>@<home node fingerprint>')."
         ),

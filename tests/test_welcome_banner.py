@@ -315,6 +315,9 @@ def _run_login(db, session) -> None:
     from netbbs.net.maintenance import MaintenanceMode
     from netbbs.net.session_registry import ActiveSessionRegistry
 
+    # The timeout only guards against a hang. Three failed logins each verify
+    # a password hash, which under a parallel full suite took over 5 s, so the
+    # bound is generous: it costs nothing when the login finishes early.
     asyncio.run(
         asyncio.wait_for(
             handle_session(
@@ -328,7 +331,7 @@ def _run_login(db, session) -> None:
                 ActiveSessionRegistry(),
                 MaintenanceMode(),
             ),
-            timeout=5,
+            timeout=60,
         )
     )
 
