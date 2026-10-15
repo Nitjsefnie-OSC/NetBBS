@@ -887,7 +887,10 @@ def test_a_running_door_reads_its_receipt_before_it_exits(db, lane, sysop, board
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             for path in pathlib.Path(hook["results"]).glob("*.result.json"):
-                receipt = json.loads(path.read_text())
+                try:
+                    receipt = json.loads(path.read_text())
+                except (OSError, ValueError):
+                    continue  # a file just renamed into place can refuse a read for a moment on Windows
                 if receipt["request"] == "live":
                     print("RECEIPT", receipt["status"], flush=True)
                     sys.exit(0)
