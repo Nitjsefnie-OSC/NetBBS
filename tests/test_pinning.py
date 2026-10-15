@@ -573,7 +573,7 @@ def test_the_pending_post_screen_reports_a_refused_pin(db, mod):
     """Approved and removed by someone else while this moderator sat on
     the pending screen: the pin is refused and the screen goes on."""
     from netbbs.boards.posts import approve_post, tombstone_post
-    from netbbs.net.admin_flow import _post_action_screen
+    from netbbs.net.admin_moderation import _post_action_screen
 
     board = _board(db, mod, moderated=True)
     grant_permissions(
@@ -593,7 +593,7 @@ def test_the_pending_post_screen_reports_a_refused_pin(db, mod):
 
 
 def test_the_pending_file_screen_reports_a_refused_pin(db, mod):
-    from netbbs.net.admin_flow import _file_action_screen
+    from netbbs.net.admin_moderation import _file_action_screen
 
     area = create_file_area(db, "downloads", creator=mod, moderated=True)
     grant_permissions(

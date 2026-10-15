@@ -1083,7 +1083,7 @@ async def _board_screen(
         """The board's moderation queue, on the console's own screens. The
         board page reads through `db`; those screens run on a lane, opened
         for as long as the queue is."""
-        from netbbs.net.admin_flow import _pending_posts_screen
+        from netbbs.net.admin_moderation import _pending_posts_screen
 
         lane = DatabaseLane(db.path)
         try:

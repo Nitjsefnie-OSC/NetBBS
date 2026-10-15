@@ -158,7 +158,7 @@ def test_the_main_menu_tells_it_once(db, sysop, alice, board):
 
 
 def test_rejecting_from_the_pending_screen_asks_for_a_reason(db, sysop, alice, board):
-    from netbbs.net.admin_flow import _post_action_screen
+    from netbbs.net.admin_moderation import _post_action_screen
 
     held = create_post(db, board, alice, "Hello", "x")
     lane = DatabaseLane(db.path)

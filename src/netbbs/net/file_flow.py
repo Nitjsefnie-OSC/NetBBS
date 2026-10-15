@@ -1203,7 +1203,7 @@ async def _area_screen(
         return await lane.run(count_pending_files, area) if can_approve else 0
 
     async def _open_queue() -> None:
-        from netbbs.net.admin_flow import _pending_files_screen
+        from netbbs.net.admin_moderation import _pending_files_screen
 
         await _pending_files_screen(session, lane, user, area, link_context=link_context, transfers=transfers)
 

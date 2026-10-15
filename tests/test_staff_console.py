@@ -29,7 +29,8 @@ from netbbs.moderation.roles import (
     grant_permissions,
     list_grants_for_user,
 )
-from netbbs.net.admin_flow import _grant_moderator_screen, moderation_queue, staff_menu
+from netbbs.net.admin_flow import _grant_moderator_screen, staff_menu
+from netbbs.net.admin_moderation import moderation_queue
 from netbbs.net.main_menu import _draw_main_menu
 from netbbs.net.notices import pending_notices
 from netbbs.permissions import InsufficientLevelError
