@@ -29,6 +29,7 @@ from netbbs.link.events import build_channel_genesis
 from netbbs.link.node_identity import bootstrap_node_identity
 from netbbs.mrc.settings import OpenRoomSettings, materialize_open_room, save_open_room_settings
 from netbbs.net import admin_flow, chat_flow
+from netbbs.net import admin_chat
 from netbbs.net import admin_ui
 from netbbs.net.char_input import InputHistory
 from netbbs.net.notices import pending_notices
@@ -345,7 +346,7 @@ def test_deleting_a_channel_moves_its_callers_out(db, lane, hub, sysop):
     queue = hub.join("lobby", ParticipantId("alice", 1))
     session = AdminSession(["lobby"])
 
-    assert asyncio.run(admin_flow._delete_channel_screen(session, lane, sysop, channel, chat_hub=hub)) is True
+    assert asyncio.run(admin_chat._delete_channel_screen(session, lane, sysop, channel, chat_hub=hub)) is True
 
     assert isinstance(queue.get_nowait(), ChannelClosed)
     notices = strip_ansi("".join(admin_ui._take_notices(session)))
@@ -358,7 +359,7 @@ def test_deleting_a_carried_channel_hides_it_and_moves_its_callers_out(db, lane,
     queue = hub.join("lobby", ParticipantId("alice", 1))
     session = AdminSession(["lobby"])
 
-    assert asyncio.run(admin_flow._delete_channel_screen(
+    assert asyncio.run(admin_chat._delete_channel_screen(
         session, lane, sysop, channel, own_fingerprint=own.fingerprint, chat_hub=hub,
     )) is True
 
@@ -370,7 +371,7 @@ def test_a_cancelled_delete_moves_nobody(db, lane, hub, sysop):
     channel = create_channel(db, "lobby", creator=sysop)
     queue = hub.join("lobby", ParticipantId("alice", 1))
 
-    assert asyncio.run(admin_flow._delete_channel_screen(
+    assert asyncio.run(admin_chat._delete_channel_screen(
         AdminSession(["not it"]), lane, sysop, channel, chat_hub=hub,
     )) is False
 
@@ -383,7 +384,7 @@ def test_retiring_an_open_mrc_room_moves_its_callers_out(db, lane, hub, sysop):
     queue = hub.join(channel.name, ParticipantId("alice", 1))
     session = AdminSession(["y"])
 
-    assert asyncio.run(admin_flow._retire_open_room_screen(
+    assert asyncio.run(admin_chat._retire_open_room_screen(
         session, lane, sysop, channel, mrc_bridge=None, chat_hub=hub,
     )) is True
 

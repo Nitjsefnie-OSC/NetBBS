@@ -22,6 +22,7 @@ from netbbs.moderation.log import list_recent_actions
 from netbbs.mrc.bridge import MrcBridge, MrcState
 from netbbs.mrc.settings import MrcSettings, get_mrc_mapping, load_mrc_settings, save_mrc_settings, set_mrc_room
 from netbbs.net import admin_flow
+from netbbs.net import admin_chat
 from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu
 from netbbs.net.maintenance import MaintenanceMode
@@ -164,7 +165,7 @@ def test_mrc_settings_save_reconnects_the_running_bridge(db, lane, sysop, lobby)
 
 
 async def _open_channel_detail(session, lane, sysop, lobby, *, mrc_bridge=None):
-    await admin_flow._channel_detail_screen(session, lane, sysop, lobby, mrc_bridge=mrc_bridge)
+    await admin_chat._channel_detail_screen(session, lane, sysop, lobby, mrc_bridge=mrc_bridge)
 
 
 def test_channel_detail_maps_pauses_and_unmaps_a_room(db, lane, sysop, lobby):

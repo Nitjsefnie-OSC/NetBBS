@@ -24,6 +24,7 @@ from netbbs.mrc.settings import (
     save_open_room_settings,
 )
 from netbbs.net import admin_flow
+from netbbs.net import admin_chat
 from netbbs.net import admin_system
 from netbbs.net import admin_ui
 from netbbs.net.admin_flow import admin_menu
@@ -82,7 +83,7 @@ def test_open_room_detail_offers_adopt_and_retire_but_never_link_or_unbridge(db,
     # The detail screen with Link available: no [L]ink, no [U]nbridge,
     # no [M]RC room for an open room; "l"/"u"/"m" are rejected keys.
     session = FakeSession(["PAGE_UP", "l", "u", "m", "b"])
-    asyncio.run(admin_flow._channel_detail_screen(session, lane, sysop, channel, link_context=_Link(), mrc_bridge=None))
+    asyncio.run(admin_chat._channel_detail_screen(session, lane, sysop, channel, link_context=_Link(), mrc_bridge=None))
     text = _visible(_written_text(session))
     assert "open room -- opened by a caller" in text
     assert "[A]dopt" in text and "[C]lose room" in text
@@ -91,7 +92,7 @@ def test_open_room_detail_offers_adopt_and_retire_but_never_link_or_unbridge(db,
 
     # Adopt: origin cleared, scrollback kept, sweeper ignores it from now on.
     session = FakeSession(["a", "PAGE_UP", "b"])
-    asyncio.run(admin_flow._channel_detail_screen(session, lane, sysop, channel, mrc_bridge=None))
+    asyncio.run(admin_chat._channel_detail_screen(session, lane, sysop, channel, mrc_bridge=None))
     text = " ".join(_visible(_written_text(session)).split())
     assert "Adopted: 'mrc:lobby' stays bridged to MRC room #lobby" in text
     mapping = get_mrc_mapping(db, channel)
@@ -104,7 +105,7 @@ def test_the_unlisted_pause_key_is_rejected_for_an_open_room(db, lane, sysop):
     settings = save_open_room_settings(db, OpenRoomSettings(enabled=True))
     channel = materialize_open_room(db, "lobby", open_settings=settings).channel
     session = FakeSession(["p", "b"])
-    asyncio.run(admin_flow._channel_detail_screen(session, lane, sysop, channel, mrc_bridge=None))
+    asyncio.run(admin_chat._channel_detail_screen(session, lane, sysop, channel, mrc_bridge=None))
     text = _visible(_written_text(session))
     assert "paused" not in text
     mapping = get_mrc_mapping(db, channel)
@@ -116,7 +117,7 @@ def test_retire_asks_first_and_then_removes_the_room(db, lane, sysop):
     channel = materialize_open_room(db, "lobby", open_settings=settings).channel
     # c/n: close, declined -> still there; c/y: close, confirmed -> gone.
     session = FakeSession(["c", "n", "c", "y"])
-    asyncio.run(admin_flow._channel_detail_screen(session, lane, sysop, channel, mrc_bridge=None))
+    asyncio.run(admin_chat._channel_detail_screen(session, lane, sysop, channel, mrc_bridge=None))
     text = _visible(_written_text(session))
     assert "Close mrc:lobby and delete its scrollback now?" in text
     # Entered directly, so the outcome is still queued for the menu that would
