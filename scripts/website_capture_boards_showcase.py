@@ -9,7 +9,8 @@ moderated board with a held post and a board carried over NetBBS Link from
 another node, then walks a caller and a SysOp through the production screens
 -- the board list, a post list, a reply, the editor, New scan, Find, the
 moderation queue, a post's revision history and the console's board
-settings. A temp database, no sockets, no network.
+settings -- and, for `poll`, adds a poll with eight votes on it and reads
+it after voting. A temp database, no sockets, no network.
 """
 
 from __future__ import annotations
@@ -417,6 +418,55 @@ async def shot_editor(node: Node) -> str:
                           "wrote")
 
 
+#: The evening the poll is read, pinned so "Closes ... (in N days)" reads
+#: the same whenever the capture is made.
+POLL_NOW = "2026-09-28T21:04:00.000000Z"
+
+POLL_QUESTION = "What should the swap meet's workshop table be?"
+POLL_BODY = ("Keeper here. One table is left at the October meet for a hands-on\n"
+             "corner. Pick up to two; the top answer gets the table.")
+POLL_ANSWERS = ("Recapping clinic", "Floppy drive alignment", "Amiga demo night",
+                "Modem museum: 300 baud to 56k")
+# voter -> answers picked (positions in POLL_ANSWERS); alice votes last, so
+# her reader shows the results with her own answers ticked.
+POLL_VOTES = {
+    "wren": (1, 2), "otto": (0,), "marla": (2, 3), "keeper": (0, 3),
+    "ivy": (0, 1), "joss": (2,), "pike": (0, 2), "alice": (0, 3),
+}
+
+
+async def shot_poll(node: Node) -> str:
+    """Reading a poll after voting: the question, the bars, the voter count."""
+    from netbbs.boards import polls as polls_module
+    from netbbs.boards.polls import PollSpec, cast_vote, get_poll
+    from netbbs.net import poll_view as poll_view_module
+    from netbbs.net.board_flow import _show_board
+
+    db = node.db
+    board = node.boards["Retro Computing"]
+    clock = {"now": "2026-09-27T19:12:00.000000Z"}
+    pinned = (lambda: clock["now"])
+    saved = (posts_module.utc_now_iso, polls_module.utc_now_iso, poll_view_module.utc_now_iso)
+    posts_module.utc_now_iso = polls_module.utc_now_iso = poll_view_module.utc_now_iso = pinned
+    try:
+        for name in ("ivy", "joss", "pike"):
+            node.people[name] = create_user(db, name, password="hunter2", user_level=20)
+        post = create_post(db, board, node.people["keeper"], POLL_QUESTION, POLL_BODY,
+                           poll=PollSpec(options=POLL_ANSWERS, max_choices=2,
+                                         closes_at="2026-10-04T19:12:00.000000Z"))
+        poll = get_poll(db, post.root_post_id)
+        for n, (voter, picked) in enumerate(POLL_VOTES.items()):
+            clock["now"] = f"2026-09-28T18:{7 * n:02d}:00.000000Z"
+            cast_vote(db, poll, board, node.people[voter], picked)
+        clock["now"] = POLL_NOW
+
+        session = Walker(["1", "0"])  # the poll is row 10, the newest post
+        session.location = ("Message boards", "Hobbies")  # where the walk came from
+        return await snapshot(session, _show_board(session, db, board, node.people["alice"]), "voters")
+    finally:
+        posts_module.utc_now_iso, polls_module.utc_now_iso, poll_view_module.utc_now_iso = saved
+
+
 SHOTS = {
     "list": shot_list,
     "board": shot_board,
@@ -428,6 +478,7 @@ SHOTS = {
     "queue": shot_queue,
     "history": shot_history,
     "settings": shot_settings,
+    "poll": shot_poll,
 }
 
 
