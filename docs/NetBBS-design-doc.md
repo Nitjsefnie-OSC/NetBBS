@@ -6507,7 +6507,10 @@ positions, signed by the voter's home node. It depends only on the board's
 genesis: the poll's post may come later, and the vote is kept and counted when
 it does. Each node keeps one vote per author identity and poll -- the latest by
 `created_at`, the content id breaking a tie -- and drops the signed bytes of a
-vote it replaced. A vote is refused where the board's posting setting would
+vote it replaced. A voter renamed on their home node is one voter: votes
+under the old and the new name resolve through the aliases #1306 keeps, the
+latest wins, and the per-node cap counts them once; a vote signed under a
+name already renamed away is refused, as other content is. A vote is refused where the board's posting setting would
 refuse the voter's reply, and on a closed board. A node counts:
 - no vote dated after the poll closes;
 - no vote whose author or home node trust hides (§12), as their posts are hidden;
