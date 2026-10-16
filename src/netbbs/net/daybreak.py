@@ -245,7 +245,11 @@ async def run_daybreak_announcer(
         midnight = current + datetime.timedelta(seconds=until_midnight)
         # Issue #1354: the clocks changing before then is announced first.
         change = _next_offset_change(current, midnight, tz)
-        if change is not None:
+        # A zone that changes at midnight itself (Santiago, Havana) still has
+        # that midnight announced, the change right after it (Claude review
+        # of #1355: the day's message was lost).
+        at_midnight = change is not None and change >= midnight
+        if change is not None and not at_midnight:
             await sleep((change - current).total_seconds())
             floor = change
             try:
@@ -263,6 +267,11 @@ async def run_daybreak_announcer(
         next_local_date = current_local.date() + datetime.timedelta(days=1)
         try:
             await announce_new_day(db, hub, local_date=next_local_date)
+            if at_midnight:
+                await announce_clock_change(
+                    db, hub, before=current_local.utcoffset() or datetime.timedelta(0),
+                    after_local=midnight.astimezone(tz),
+                )
         except asyncio.CancelledError:
             raise
         except Exception:

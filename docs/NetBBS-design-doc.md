@@ -15636,7 +15636,9 @@ scrollback as kind `daybreak`.
   offset change before then, found to the second by bisection (a zone
   changes at most once in a day). It wakes for whichever comes first. It
   also never schedules before the moment it last announced, so a sleep that
-  wakes a hair early cannot announce the same midnight twice.
+  wakes a hair early cannot announce the same midnight twice. A zone that
+  changes at midnight itself (Santiago, Havana) gets that day's message
+  first and the clock change right after it.
 - **No setting.** The daily message has none, and these follow it.
 
 ## 17. Maintaining this document

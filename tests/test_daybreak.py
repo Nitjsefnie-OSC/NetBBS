@@ -452,3 +452,38 @@ def test_a_sleep_that_wakes_early_never_announces_the_same_midnight_twice(db, al
     assert "April 4th" in notice.text
     assert queue.empty()
     assert sleep_calls[1] == 24 * 3600.0  # the next midnight, not the one just announced
+
+
+def test_a_clock_change_at_midnight_still_announces_the_day_first(db, alice):
+    # Claude review of #1355: Santiago springs forward at 00:00 local, and
+    # that midnight's message was lost to the clock change.
+    set_display_timezone(db, "America/Santiago")
+    channel = create_channel(db, "lobby", creator=alice)
+    hub = ChatHub()
+    queue = hub.join(channel.name, ParticipantId(username="alice", session_key=1))
+    sleep_calls: list[float] = []
+    parked = asyncio.Event()
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        if len(sleep_calls) > 1:
+            await parked.wait()
+
+    def fake_now() -> datetime.datetime:
+        # 2026-09-05 23:00 -04 in Santiago; at 00:00 the clocks jump to 01:00.
+        return datetime.datetime(2026, 9, 6, 3, 0, 0, tzinfo=_UTC)
+
+    async def scenario():
+        task = asyncio.create_task(run_daybreak_announcer(db, hub, now=fake_now, sleep=fake_sleep))
+        notices = [await asyncio.wait_for(queue.get(), timeout=2) for _ in range(2)]
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return notices
+
+    day, clock = asyncio.run(scenario())
+    assert sleep_calls[0] == 3600.0
+    assert "September 6th, 2026" in day.text
+    assert "Clocks just went forward an hour" in clock.text and "01:00" in clock.text
