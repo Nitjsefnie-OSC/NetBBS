@@ -936,6 +936,12 @@ async def _banners_menu(
             await session.write_line("")
             await _slot_menu(session, lane, actor, _NEW_ACCOUNT_AFTER)
             await _draw_banners_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
+        elif choice == "n":
+            from netbbs.net.admin_welcome_letter import welcome_letter_screen
+
+            await session.write_line("")
+            await welcome_letter_screen(session, lane, actor)
+            await _draw_banners_menu(session, lane, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == HELP_KEY:
             await session.write_line("")
             await _banner_router_help_screen(session, header_color=header_color, unicode_style=unicode_style)
@@ -955,7 +961,7 @@ async def _draw_banners_menu(
     await _write_wrapped_subtitle(
         session,
         "Optional banners shown throughout a caller's session -- first login, signing off, "
-        "and starting/finishing self-service signup.",
+        "and starting/finishing self-service signup -- and the letter waiting in a new account's mailbox.",
     )
     await session.write_line(
         "\r\n" + _menu_row(
@@ -964,6 +970,7 @@ async def _draw_banners_menu(
                 MenuEntry(label=menu_key("L", "ogoff banner"), brief="Shown on an intentional Log off"),
                 MenuEntry(label=menu_key("P", "re-signup"), brief="Shown once, before Create account"),
                 MenuEntry(label=menu_key("A", "fter signup"), brief="Shown once signup succeeds"),
+                MenuEntry(label=menu_key("N", "ew-account letter"), brief="Mail every new account finds"),
                 MenuEntry(label=menu_key("B", "ack"), brief="Return to Mastheads & banners"),
             ],
             description_level,

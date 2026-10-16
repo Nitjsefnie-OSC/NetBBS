@@ -188,6 +188,7 @@ from netbbs.net.admin_boards import _board_detail_screen
 from netbbs.net.admin_files import _area_detail_screen
 from netbbs.net.admin_chat import _channel_detail_screen
 from netbbs.net.admin_doors import _door_detail_screen
+from netbbs.welcome_letter import send_welcome_letter
 
 
 def _can_verify_label(target: User) -> str:
@@ -1077,6 +1078,8 @@ async def _create_user_screen(session: Session, lane: DatabaseLane, actor: User)
         # on. Every new account starts with it on, however it was made
         # (issue #840).
         await lane.run(start_new_account_redrawing_in_place, new_user)
+        # Issue #1352: an account made here gets the welcome letter too.
+        await lane.run(send_welcome_letter, new_user)
         return new_user
 
     redraw_in_place, redraw_hint = await lane.run(_resolve_redraw_preference, actor)
@@ -2237,7 +2240,12 @@ async def _user_detail_screen(
                     except UserManagementError as exc:
                         _announce_line(session, colored(str(exc), fg_color=MUTED_COLOR))
                     else:
-                        _announce_line(session, f"{target.username!r} approved.")
+                        # Issue #1352: approved is when the account can sign
+                        # in, so it is when the welcome letter goes.
+                        sent = await lane.run(send_welcome_letter, target)
+                        _announce_line(session, f"{target.username!r} approved." + (
+                            " The welcome letter is in their mailbox." if sent else ""
+                        ))
                 blocked = await _redraw()
             elif choice == "l":
                 # One style for a number (issue #845, F136): the value opens in

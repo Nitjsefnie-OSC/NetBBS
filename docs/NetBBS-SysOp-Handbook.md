@@ -3070,6 +3070,31 @@ Classic terminals:
 - A caller whose terminal wasn't recognised is asked once which of two sample
   lines looks right.
 
+### A welcome letter for new accounts
+
+**Settings ▸ Mastheads & banners ▸ Session banners ▸ New-account letter** sets
+up a letter that every new account finds unread in its mailbox.
+
+- **When it arrives:** as soon as the account can sign in. That is right away
+  when anyone may sign up, when you approve the account if signups need
+  approval, and when you create the account on the console. Accounts that
+  already exist never get it, and no account gets it twice.
+- **Who it's from:** a real account, so a reply reaches a person. Whoever
+  switches the letter on is the sender until you pick another with
+  <kbd>F</kbd> **From**: any SysOp or staff account that may write mail.
+- **What it says:** <kbd>E</kbd> **Edit text** opens the letter in the mail
+  editor, and <kbd>S</kbd> **Subject** changes its subject. `{user}`, `{node}`
+  and `{date}` are filled in for each new account. A letter already sent stays
+  as it was when you change the text.
+- **Before you switch it on:** it starts off, with a sample text to rewrite.
+  <kbd>P</kbd> **Preview** shows it as a new caller will read it, and
+  <kbd>O</kbd> **On/off** switches it.
+
+> [!NOTE]
+> A letter that can't be sent never stops the account. If the sender has
+> lost its staff access or can no longer write mail, the account is created
+> without a letter, and the screen shows what went wrong and when.
+
 ## State, backup, and recovery
 
 | At a glance | |

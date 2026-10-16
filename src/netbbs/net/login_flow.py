@@ -89,6 +89,7 @@ from netbbs.net.throttle import LoginThrottle
 # a few sentences, which lose nothing by being narrow.
 _PRE_NEGOTIATION_WIDTH = 40
 from netbbs.net.color_depth_preference import apply_color_depth, color_depth_override
+from netbbs.welcome_letter import send_welcome_letter
 from netbbs.net.unicode_style_preference import (
     apply_charset_preference,
     charset_preference,
@@ -1674,6 +1675,10 @@ async def _register_new_account(
         # which would silently change behavior for every existing
         # account with an unset preference too, not just new ones.
         start_new_account_redrawing_in_place(db, new_user)
+        # Issue #1352: an account that can sign in now finds the SysOp's
+        # welcome letter waiting; a pending one gets it on approval.
+        if not require_approval:
+            send_welcome_letter(db, new_user)
 
         # GitHub issue #177: covers both successful outcomes below (an
         # account created and immediately usable, or created but pending
