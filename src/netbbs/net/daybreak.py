@@ -4,6 +4,8 @@ Local per-node "new day" chat announcement (design doc).
 Once per local midnight (the node's configured display timezone --
 `netbbs.timeutil.get_node_timezone`), broadcasts a short system message
 into every channel that currently has at least one live participant --
+on January 1st a New Year one (issue #1354), and, at the moment that
+timezone's clocks go forward or back, one saying so --
 deliberately *not* into empty channels, so a node with dozens of
 dormant channels doesn't spam scrollback nobody is even present to
 read.
@@ -53,13 +55,63 @@ def format_daybreak_message(local_date: datetime.date) -> str:
     """The announcement text for `local_date` -- e.g. "Good morning,
     chatters! A new day has just begun: where this node lives, it is
     now Monday, April 3rd, 2029." (Thiesi's own example, matched
-    exactly)."""
+    exactly). January 1st says a new year has begun instead (issue
+    #1354)."""
     weekday_and_month = local_date.strftime("%A, %B")
     day = local_date.day
+    when = f"where this node lives, it is now {weekday_and_month} {day}{_ordinal_suffix(day)}, {local_date.year}."
+    if (local_date.month, local_date.day) == (1, 1):
+        return f"Happy New Year, chatters! A new year has just begun: {when}"
+    return f"Good morning, chatters! A new day has just begun: {when}"
+
+
+def _amount(seconds: int) -> str:
+    if seconds == 3600:
+        return "an hour"
+    if seconds == 1800:
+        return "half an hour"
+    hours, minutes = divmod(seconds // 60, 60)
+    if not minutes:
+        return f"{hours} hours"
+    return f"{seconds // 60} minutes"
+
+
+def format_clock_change_message(before: datetime.timedelta, after_local: datetime.datetime) -> str:
+    """The announcement for the node's clocks changing from UTC offset
+    `before` to `after_local`'s, at `after_local` -- e.g. "Clocks just
+    went forward an hour: where this node lives, it is now 03:00 CEST."
+    Direction and amount come from the offsets and the abbreviation from
+    the tz data; no "summer time" words, which tzdata reverses for a few
+    zones (issue #1354)."""
+    after = after_local.utcoffset() or datetime.timedelta(0)
+    change = int((after - before).total_seconds())
+    direction = "forward" if change > 0 else "back"
+    zone = after_local.tzname() or ""
     return (
-        "Good morning, chatters! A new day has just begun: where this "
-        f"node lives, it is now {weekday_and_month} {day}{_ordinal_suffix(day)}, {local_date.year}."
+        f"Clocks just went {direction} {_amount(abs(change))}: where this node lives, "
+        f"it is now {after_local:%H:%M}{f' {zone}' if zone else ''}."
     )
+
+
+def _next_offset_change(
+    start: datetime.datetime, end: datetime.datetime, tz: datetime.tzinfo,
+) -> datetime.datetime | None:
+    """The first moment after `start` and no later than `end` (both UTC)
+    at which `tz`'s UTC offset differs from its offset at `start`, to the
+    second, or `None`. A zone changes its offset at most once in the day
+    this is asked about, so comparing the two ends is enough to know."""
+    before = start.astimezone(tz).utcoffset()
+    if end.astimezone(tz).utcoffset() == before:
+        return None
+    low, high = int(start.timestamp()), int(end.timestamp())
+    while high - low > 1:
+        middle = (low + high) // 2
+        moment = datetime.datetime.fromtimestamp(middle, datetime.timezone.utc)
+        if moment.astimezone(tz).utcoffset() == before:
+            low = middle
+        else:
+            high = middle
+    return datetime.datetime.fromtimestamp(high, datetime.timezone.utc)
 
 
 def _seconds_until_next_local_midnight(current_local: datetime.datetime) -> float:
@@ -124,7 +176,18 @@ async def announce_new_day(db: Database, hub: ChatHub, *, local_date: datetime.d
     """
     if local_date is None:
         local_date = datetime.datetime.now(get_node_timezone(db)).date()
-    text = format_daybreak_message(local_date)
+    await _announce(db, hub, format_daybreak_message(local_date))
+
+
+async def announce_clock_change(
+    db: Database, hub: ChatHub, *, before: datetime.timedelta, after_local: datetime.datetime,
+) -> None:
+    """Broadcast and record that the node's clocks just changed (issue
+    #1354), the same way and to the same channels as the daybreak."""
+    await _announce(db, hub, format_clock_change_message(before, after_local))
+
+
+async def _announce(db: Database, hub: ChatHub, text: str) -> None:
     rendered = colored(sanitize_text(text), fg_color=MUTED_COLOR)
     for channel in _channels_with_participants(db, hub):
         recorded = record_message(db, channel, kind="daybreak", author_label="system", body=text)
@@ -162,17 +225,41 @@ async def run_daybreak_announcer(
     second source of truth and untestable with a fake `now` that
     doesn't actually advance.
     """
+    # The moment last announced: a sleep that wakes a hair early must not
+    # find the same midnight, or clock change, ahead of it again.
+    floor: datetime.datetime | None = None
     while True:
         # Issue #1059: a database error (a lock held by another connection,
         # most likely) costs one announcement, not the rest of the uptime.
         try:
             tz = get_node_timezone(db)
-            current_local = now().astimezone(tz)
+            current = now().astimezone(datetime.timezone.utc)
+            if floor is not None and current < floor:
+                current = floor
+            current_local = current.astimezone(tz)
         except Exception:
             _logger.exception("Daybreak announcer could not read the node's time zone; trying again in a minute")
             await sleep(60)
             continue
-        await sleep(_seconds_until_next_local_midnight(current_local))
+        until_midnight = _seconds_until_next_local_midnight(current_local)
+        midnight = current + datetime.timedelta(seconds=until_midnight)
+        # Issue #1354: the clocks changing before then is announced first.
+        change = _next_offset_change(current, midnight, tz)
+        if change is not None:
+            await sleep((change - current).total_seconds())
+            floor = change
+            try:
+                await announce_clock_change(
+                    db, hub, before=current_local.utcoffset() or datetime.timedelta(0),
+                    after_local=change.astimezone(tz),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _logger.exception("Clock change announcement for %s failed", change)
+            continue
+        await sleep(until_midnight)
+        floor = midnight
         next_local_date = current_local.date() + datetime.timedelta(days=1)
         try:
             await announce_new_day(db, hub, local_date=next_local_date)

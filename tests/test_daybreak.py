@@ -25,9 +25,11 @@ from netbbs.chat.scrollback import get_scrollback, record_message
 from netbbs.net.chat_flow import _TimestampedNotice, _render_scrollback_message
 from netbbs.net.daybreak import (
     _channels_with_participants,
+    _next_offset_change,
     _ordinal_suffix,
     _seconds_until_next_local_midnight,
     announce_new_day,
+    format_clock_change_message,
     format_daybreak_message,
     run_daybreak_announcer,
 )
@@ -273,8 +275,9 @@ def test_announcer_sleeps_until_midnight_then_announces(db, alice):
 
 def test_announcer_sleep_call_reflects_dst_shortened_day(db, alice):
     """GitHub issue #47, end-to-end through the actual scheduling loop:
-    on Europe/Berlin's spring-forward day, the announcer's first
-    `sleep()` call must receive 23 hours, not a flat 24."""
+    on Europe/Berlin's spring-forward day, the announcer sleeps the 23
+    real hours to the next midnight, not a flat 24 -- since issue #1354
+    in two parts, waking at 02:00 CET to say the clocks went forward."""
     set_display_timezone(db, "Europe/Berlin")
     channel = create_channel(db, "lobby", creator=alice)
     hub = ChatHub()
@@ -285,7 +288,7 @@ def test_announcer_sleep_call_reflects_dst_shortened_day(db, alice):
 
     async def fake_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
-        if len(sleep_calls) > 1:
+        if len(sleep_calls) > 2:
             await parked.wait()
 
     def fake_now() -> datetime.datetime:
@@ -296,16 +299,20 @@ def test_announcer_sleep_call_reflects_dst_shortened_day(db, alice):
         task = asyncio.create_task(
             run_daybreak_announcer(db, hub, now=fake_now, sleep=fake_sleep)
         )
-        await asyncio.wait_for(queue.get(), timeout=2)
+        notices = [await asyncio.wait_for(queue.get(), timeout=2) for _ in range(2)]
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
+        return notices
 
-    asyncio.run(scenario())
+    clock, day = asyncio.run(scenario())
 
-    assert sleep_calls[0] == 23 * 3600.0
+    assert sleep_calls[:2] == [2 * 3600.0, 21 * 3600.0]
+    assert sum(sleep_calls[:2]) == 23 * 3600.0
+    assert "Clocks just went forward an hour" in clock.text and "03:00 CEST" in clock.text
+    assert "March 30th, 2026" in day.text
 
 
 def test_announcer_stops_cleanly_on_cancellation_while_sleeping(db):
@@ -361,3 +368,87 @@ def test_scrollback_replay_renders_daybreak_with_no_author(db, alice):
     assert "Good morning, chatters!" in rendered
     assert "system" not in rendered
     assert "<" not in rendered  # no "<author>" tag, unlike an ordinary message
+
+
+# -- issue #1354: the new year, and the clocks changing -----------------------
+
+
+def test_january_first_announces_a_new_year():
+    assert format_daybreak_message(datetime.date(2027, 1, 1)) == (
+        "Happy New Year, chatters! A new year has just begun: where this node lives, "
+        "it is now Friday, January 1st, 2027."
+    )
+    assert format_daybreak_message(datetime.date(2027, 1, 2)).startswith("Good morning, chatters!")
+
+
+_UTC = datetime.timezone.utc
+
+
+@pytest.mark.parametrize(
+    ("zone", "start", "end", "change", "text"),
+    [
+        ("Europe/Berlin", (2026, 3, 28, 23), (2026, 3, 29, 22), (2026, 3, 29, 1),
+         "Clocks just went forward an hour: where this node lives, it is now 03:00 CEST."),
+        ("Europe/Berlin", (2026, 10, 24, 22), (2026, 10, 25, 23), (2026, 10, 25, 1),
+         "Clocks just went back an hour: where this node lives, it is now 02:00 CET."),
+        ("America/New_York", (2026, 3, 8, 5), (2026, 3, 9, 4), (2026, 3, 8, 7),
+         "Clocks just went forward an hour: where this node lives, it is now 03:00 EDT."),
+        ("America/New_York", (2026, 11, 1, 4), (2026, 11, 2, 5), (2026, 11, 1, 6),
+         "Clocks just went back an hour: where this node lives, it is now 01:00 EST."),
+    ],
+)
+def test_the_clock_change_is_found_to_the_second_and_described(zone, start, end, change, text):
+    tz = ZoneInfo(zone)
+    start_utc = datetime.datetime(*start, tzinfo=_UTC)
+    found = _next_offset_change(start_utc, datetime.datetime(*end, tzinfo=_UTC), tz)
+    assert found == datetime.datetime(*change, tzinfo=_UTC)
+    before = start_utc.astimezone(tz).utcoffset()
+    assert format_clock_change_message(before, found.astimezone(tz)) == text
+
+
+def test_a_zone_without_daylight_saving_never_changes():
+    tz = ZoneInfo("Asia/Tokyo")
+    start = datetime.datetime(2026, 3, 1, tzinfo=_UTC)
+    assert _next_offset_change(start, start + datetime.timedelta(days=1), tz) is None
+
+
+def test_a_half_hour_change_says_so():
+    tz = ZoneInfo("Australia/Lord_Howe")  # +10:30 standard, +11 in summer
+    start = datetime.datetime(2026, 10, 3, 12, tzinfo=_UTC)
+    found = _next_offset_change(start, start + datetime.timedelta(days=1), tz)
+    assert found is not None
+    message = format_clock_change_message(start.astimezone(tz).utcoffset(), found.astimezone(tz))
+    assert message.startswith("Clocks just went forward half an hour")
+
+
+def test_a_sleep_that_wakes_early_never_announces_the_same_midnight_twice(db, alice):
+    channel = create_channel(db, "lobby", creator=alice)
+    hub = ChatHub()
+    queue = hub.join(channel.name, ParticipantId(username="alice", session_key=1))
+    sleep_calls: list[float] = []
+    parked = asyncio.Event()
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        if len(sleep_calls) > 1:
+            await parked.wait()
+
+    def fake_now() -> datetime.datetime:
+        # Never advances: every wake looks like a hair before midnight.
+        return datetime.datetime(2029, 4, 3, 23, 59, 59, tzinfo=_UTC)
+
+    async def scenario():
+        task = asyncio.create_task(run_daybreak_announcer(db, hub, now=fake_now, sleep=fake_sleep))
+        notice = await asyncio.wait_for(queue.get(), timeout=2)
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return notice
+
+    notice = asyncio.run(scenario())
+    assert "April 4th" in notice.text
+    assert queue.empty()
+    assert sleep_calls[1] == 24 * 3600.0  # the next midnight, not the one just announced
