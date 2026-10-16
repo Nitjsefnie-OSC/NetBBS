@@ -73,7 +73,7 @@ import json
 import re
 import sqlite3
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Awaitable, Callable, Sequence
 
 from netbbs.rendering.menu import continue_prompt
@@ -2055,23 +2055,34 @@ class _HubReplyBlock:
         # #1257 -- one shared pager slot let the second overwrite the
         # first's unread pages).
         self.waiting: list[tuple[str, str, list[str]]] = []
-        # The footer under the page drawn last, while it is still in the
-        # chat's kept lines (`retire_footer`).
-        self.footer: str | None = None
+        # The pager's own lines around the page drawn last -- a later
+        # page's `3/11` title, the footer -- while they are still in the
+        # chat's kept lines (`retire_frame`).
+        self.frame: list[str] = []
 
-    def retire_footer(self, session: Session) -> None:
-        """Take the last page's footer out of the kept lines, once the next
-        page or a typed line has made it stale: scrolled back to, or drawn
-        again after a resize, `PgDn more` under a page long turned read as
-        a second pager inside the first."""
-        footer, self.footer = self.footer, None
-        transcript = getattr(session, "line_transcript", None)
-        if footer is None or not transcript:
+    def retire_frame(self, session: Session) -> None:
+        """Take the last page's frame out of the kept lines, once the next
+        page, the end of the answer or a typed line has made it stale.
+        Scrolled back to, or drawn again after a resize, the answer then
+        reads as one block under its first title: `PgDn more` under a page
+        long turned read as a second pager inside the first, and a `10/11`
+        title cut the list in pieces."""
+        frame, self.frame = self.frame, []
+        _drop_kept_lines(session, frame)
+
+    def settle(self, session: Session) -> None:
+        """After a page is drawn: when it was the answer's last, its title
+        is already stale, and so is its frame unless another answer waits
+        -- then the footer saying so stays until that answer is shown
+        (Claude review of #1351: a typed line in between left the title
+        behind for good)."""
+        if self.held is not None:
             return
-        for index in range(len(transcript) - 1, -1, -1):
-            if transcript[index] is footer:
-                del transcript[index]
-                return
+        if not self.waiting:
+            self.retire_frame(session)
+        elif len(self.frame) > 1:
+            _drop_kept_lines(session, self.frame[:-1])
+            self.frame = self.frame[-1:]
 
     def expect(self, label: str) -> None:
         if self.rows:
@@ -2109,6 +2120,32 @@ class _HubReplyBlock:
         return taken
 
 
+def _kept_index(session: Session, line: str) -> int | None:
+    """Where the chat's kept lines hold `line` itself -- that very string,
+    not an equal one -- newest first, or `None`."""
+    transcript = getattr(session, "line_transcript", None) or ()
+    for index in range(len(transcript) - 1, -1, -1):
+        if transcript[index] is line:
+            return index
+    return None
+
+
+def _drop_kept_lines(session: Session, lines: Sequence[str]) -> None:
+    """Take a pager's own lines out of the chat's kept lines (scrolled back
+    to and drawn again after a resize), so what was paged reads as one
+    block there."""
+    for line in lines:
+        index = _kept_index(session, line)
+        if index is not None:
+            del session.line_transcript[index]
+
+
+def _replace_kept_line(session: Session, line: str, replacement: str) -> None:
+    index = _kept_index(session, line)
+    if index is not None:
+        session.line_transcript[index] = replacement
+
+
 @dataclass
 class _HeldPages:
     """The rest of an answer taller than the chat area -- the hub's or a
@@ -2122,7 +2159,9 @@ class _HeldPages:
     footer: Callable[[int, int, int, str | None], Awaitable[str]]
     page: int = 0
     pages: int = 0
-    footer_line: str | None = None  # the footer under the page drawn last
+    # The page drawn last's own frame: its title when it is not the first
+    # page, and its footer.
+    frame_lines: list[str] = field(default_factory=list)
 
 
 async def _next_held_page(session: Session, held: _HeldPages, *, waiting: str | None) -> list[str]:
@@ -2134,11 +2173,13 @@ async def _next_held_page(session: Session, held: _HeldPages, *, waiting: str | 
     held.page += 1
     # A resize since the first page changes how many are left.
     held.pages = held.page + _hub_reply_page_count(held.rows, capacity, width)
-    lines = [await held.title(held.page, held.pages, width), *page]
-    held.footer_line = None
+    title = await held.title(held.page, held.pages, width)
+    lines = [title, *page]
+    held.frame_lines = [title] if held.page > 1 else []
     if held.rows or waiting is not None:
-        held.footer_line = await held.footer(held.page, held.pages, width, None if held.rows else waiting)
-        lines.append(held.footer_line)
+        footer = await held.footer(held.page, held.pages, width, None if held.rows else waiting)
+        lines.append(footer)
+        held.frame_lines.append(footer)
     return lines
 
 
@@ -2874,6 +2915,7 @@ async def _show_help_pages(
     all_entries = list(entries)
     remaining = [_HelpEntryState(syntax, description) for syntax, description in all_entries]
     page_number = 1
+    previous_prompt: list[str] = []
     while remaining or message is not None:
         width = max(1, getattr(session, "terminal_width", 80))
         height = max(1, getattr(session, "terminal_height", 24))
@@ -2922,6 +2964,14 @@ async def _show_help_pages(
             lines.append(colored(footer, fg_color=MUTED_COLOR))
         if not await write_page(lines, width, height, pinned):
             continue
+        # Kept for scrolling back and redrawing, the help reads as one list
+        # under one heading: a later page's heading and the prompt before
+        # it go, and the first heading loses its page count.
+        if page_number == 1 and suffix:
+            _replace_kept_line(session, lines[0], colored("Chat commands", fg_color=header_color, bold=True))
+        elif page_number > 1:
+            _drop_kept_lines(session, [*lines[:3], *previous_prompt])
+        previous_prompt = lines[-1:] if next_remaining else []
         remaining = next_remaining
         if remaining:
             await session.read_any_key(echo=False)
@@ -4295,9 +4345,9 @@ async def _write_block(
             await ctx.session.write_line(line)
         return
     # Claimed before the first write, which can yield to the receive loop.
-    holder.retire_footer(ctx.session)
+    holder.retire_frame(ctx.session)
     holder.held = held if held.rows else None
-    holder.footer = held.footer_line
+    holder.frame = held.frame_lines
     for line in page:
         await ctx.session.write_line(line)
 
@@ -6213,7 +6263,7 @@ async def _chat_loop(
                     view.offset = view.unseen = 0
                 elif hub_reply.held is not None:
                     hub_reply.held = None
-                    hub_reply.retire_footer(session)
+                    hub_reply.retire_frame(session)
                     await print_lines([colored("(the rest of that answer is skipped)", fg_color=MUTED_COLOR)])
                 return
             if key == "PAGE_UP" or view.offset:
@@ -6228,6 +6278,7 @@ async def _chat_loop(
             if hub_reply.held is not None or hub_reply.waiting:
                 answer = None if hub_reply.held is not None else hub_reply.waiting.pop(0)
                 await print_lines(await hub_reply_page(answer))
+                hub_reply.settle(session)
 
         async def hub_reply_page(answer: tuple[str, str, list[str]] | None = None) -> list[str]:
             """The next page as screen lines: the first of `answer`, a
@@ -6251,9 +6302,9 @@ async def _chat_loop(
             lines = await _next_held_page(
                 session, held, waiting=hub_reply.waiting[0][0] if hub_reply.waiting else None,
             )
-            hub_reply.retire_footer(session)
+            hub_reply.retire_frame(session)
             hub_reply.held = held if held.rows else None
-            hub_reply.footer = held.footer_line
+            hub_reply.frame = held.frame_lines
             return lines
 
         async def hub_reply_complete() -> None:
@@ -6452,7 +6503,7 @@ async def _chat_loop(
                         view.offset = 0
                 if line and hub_reply.held is not None:
                     hub_reply.held = None
-                    hub_reply.retire_footer(session)
+                    hub_reply.retire_frame(session)
 
                 # Help is modal because it reads page-turn keys. Prepare its
                 # result through ordinary command dispatch, then render each
@@ -6557,6 +6608,7 @@ async def _chat_loop(
                                 answer = None if hub_reply.held is not None else hub_reply.waiting.pop(0)
                                 for page_line in await hub_reply_page(answer):
                                     await session.write_line(page_line)
+                                hub_reply.settle(session)
                             continue
                         if mrc_bridge is not None and _mrc_helper_carries_a_secret(strip_pipe_codes(line).lstrip()):
                             history.forget(raw_line)  # read_line recorded it before we saw it

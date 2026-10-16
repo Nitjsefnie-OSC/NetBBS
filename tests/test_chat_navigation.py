@@ -6,6 +6,7 @@ like the MRC hub's answers."""
 from __future__ import annotations
 
 import asyncio
+import types
 from types import SimpleNamespace
 
 import aiohttp
@@ -255,6 +256,35 @@ def test_a_turned_page_leaves_no_footer_in_the_kept_lines(db, lane, hub, presenc
     asyncio.run(scenario())
 
 
+def test_a_paged_answer_read_to_the_end_is_one_block_in_the_kept_lines(db, lane, hub, presence, channel, alice, sysop):
+    """Scrolled back over an answer read to its last page, a `3/5` title cut
+    the list in pieces: only the first title stays, above every row."""
+    for n in range(30):
+        create_channel(db, f"room-{n:02}", creator=sysop)
+
+    async def scenario():
+        task, _participant = await _in_chat(lane, hub, presence, channel, alice, session)
+        try:
+            session.inputs.put_nowait("/list")
+            assert await eventually(lambda: "page 1 of" in session.text())
+            for _turn in range(10):
+                if "room-29" in session.text():
+                    break
+                await session.navigate("PAGE_DOWN")
+            assert "room-29" in session.text()
+            kept = [strip_ansi(line) for line in session.line_transcript]
+            titles = [line for line in kept if "Channels" in line]
+            assert len(titles) == 1 and "/" not in titles[0].split("Channels", 1)[1]
+            assert not [line for line in kept if "PgDn" in line]
+            rooms = [line for line in kept if "room-" in line]
+            assert len(rooms) == 30 and kept.index(titles[0]) < kept.index(rooms[0])
+        finally:
+            await _leave(session, task)
+
+    session = _NavSession(height=12)
+    asyncio.run(scenario())
+
+
 def test_a_short_command_reply_is_not_paged(lane, hub, presence, channel, alice):
     async def scenario():
         session = _NavSession(height=24)
@@ -356,3 +386,20 @@ def test_a_command_reply_leaves_the_pager_to_a_hub_answer_that_landed_meanwhile(
     text = session.text()
     assert holder.held is hub_pages, "the hub answer keeps its pages"
     assert "#room-29" in text and "page 1 of" not in text, "the reply is shown whole instead"
+
+
+def test_a_last_page_with_an_answer_waiting_keeps_only_its_footer():
+    # Claude review of #1351: the last page of one answer, another waiting
+    # behind it. Its title is stale at once; the footer saying PgDn shows
+    # the next answer stays until it does.
+    session = types.SimpleNamespace(line_transcript=chat_flow._new_transcript())
+    title, footer = "── MRC hub · /mrc bbses ── 11/11 ──", "── PgDn: the answer to /mrc motd ──"
+    session.line_transcript.extend(["row", title, "last row", footer])
+    block = chat_flow._HubReplyBlock(lambda: 0.0)
+    block.frame = [title, footer]
+    block.waiting = [("/mrc motd", "", ["motd"])]
+    block.settle(session)
+    assert list(session.line_transcript) == ["row", "last row", footer]
+    block.waiting = []
+    block.retire_frame(session)
+    assert list(session.line_transcript) == ["row", "last row"]
