@@ -362,3 +362,26 @@ def test_help_for_one_command_does_not_repeat_the_disclosure(db, lane, hub, pres
 
 def test_the_disclosure_fits_the_narrowest_supported_terminal():
     assert len(chat_flow.SNOOP_DISCLOSURE) <= 40
+
+
+class _KeptLinesSession(PagingSession):
+    """Notes the chat's kept lines as they are when `/quit` is read."""
+
+    async def read_line(self, *args, **kwargs):
+        line = await super().read_line(*args, **kwargs)
+        if line == "/quit":
+            self.kept = [strip_ansi(text) for text in self.line_transcript]
+        return line
+
+
+def test_paged_help_is_one_list_under_one_heading_in_the_kept_lines(db, lane, hub, presence, alice, channel):
+    # Scrolled back to, the help read as pages: a "More [1/3]" prompt and a
+    # fresh heading between every screenful.
+    session = _KeptLinesSession(["/help", "/quit"], height=12)
+    asyncio.run(_run(lane, hub, presence, channel, alice, [], session=session))
+    assert session.page_turns >= 2
+    headings = [line for line in session.kept if line.startswith("Chat commands")]
+    assert headings == ["Chat commands"]
+    assert not [line for line in session.kept if line.startswith("More [")]
+    assert sum(line.startswith("COMMAND") for line in session.kept) == 1
+    assert any("/quit" in line for line in session.kept)
