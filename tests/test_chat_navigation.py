@@ -6,6 +6,7 @@ like the MRC hub's answers."""
 from __future__ import annotations
 
 import asyncio
+import types
 from types import SimpleNamespace
 
 import aiohttp
@@ -385,3 +386,20 @@ def test_a_command_reply_leaves_the_pager_to_a_hub_answer_that_landed_meanwhile(
     text = session.text()
     assert holder.held is hub_pages, "the hub answer keeps its pages"
     assert "#room-29" in text and "page 1 of" not in text, "the reply is shown whole instead"
+
+
+def test_a_last_page_with_an_answer_waiting_keeps_only_its_footer():
+    # Claude review of #1351: the last page of one answer, another waiting
+    # behind it. Its title is stale at once; the footer saying PgDn shows
+    # the next answer stays until it does.
+    session = types.SimpleNamespace(line_transcript=chat_flow._new_transcript())
+    title, footer = "── MRC hub · /mrc bbses ── 11/11 ──", "── PgDn: the answer to /mrc motd ──"
+    session.line_transcript.extend(["row", title, "last row", footer])
+    block = chat_flow._HubReplyBlock(lambda: 0.0)
+    block.frame = [title, footer]
+    block.waiting = [("/mrc motd", "", ["motd"])]
+    block.settle(session)
+    assert list(session.line_transcript) == ["row", "last row", footer]
+    block.waiting = []
+    block.retire_frame(session)
+    assert list(session.line_transcript) == ["row", "last row"]

@@ -2071,10 +2071,18 @@ class _HubReplyBlock:
         _drop_kept_lines(session, frame)
 
     def settle(self, session: Session) -> None:
-        """After a page is drawn: when nothing follows it, its frame is
-        already stale."""
-        if self.held is None and not self.waiting:
+        """After a page is drawn: when it was the answer's last, its title
+        is already stale, and so is its frame unless another answer waits
+        -- then the footer saying so stays until that answer is shown
+        (Claude review of #1351: a typed line in between left the title
+        behind for good)."""
+        if self.held is not None:
+            return
+        if not self.waiting:
             self.retire_frame(session)
+        elif len(self.frame) > 1:
+            _drop_kept_lines(session, self.frame[:-1])
+            self.frame = self.frame[-1:]
 
     def expect(self, label: str) -> None:
         if self.rows:
