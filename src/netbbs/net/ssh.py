@@ -82,6 +82,7 @@ from netbbs.rendering import strip_ansi
 from netbbs.rendering.charset import ASCII, UTF8, map_text
 from netbbs.rendering.pipe_codes import PastedColor
 from netbbs.storage.database import Database
+from netbbs.welcome_letter import send_welcome_letter
 
 _logger = logging.getLogger(__name__)
 
@@ -869,6 +870,10 @@ class _NetBBSSSHServer(asyncssh.SSHServer):
             return await self._finish_registration(f"Could not create account: {exc}")
         if question is not None:
             save_signup_answer(self._db, new_user.id, question=question, answer=answer)
+        # Issue #1352, as on Telnet and the web: the welcome letter waits
+        # for an account that can sign in, and comes on approval otherwise.
+        if not require_approval:
+            send_welcome_letter(self._db, new_user)
 
         # GitHub issue #177's own "after" banner -- covers both successful
         # outcomes below (immediate vs. pending-approval), matching

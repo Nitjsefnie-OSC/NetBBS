@@ -661,6 +661,34 @@ before, registration after, and logoff use distinct compositions and
 copy suited to that moment rather than re-labeling the main-menu
 masthead collection.
 
+**Welcome letter (issue #1352).** Beside those banners, Session banners
+holds a letter the SysOp writes once and every new account finds unread in
+its mailbox (`netbbs.welcome_letter`). The decisions:
+
+- **An ordinary letter from a real account.** The sender is a SysOp or staff
+  account that may write mail, chosen by the SysOp, and defaults to whoever
+  switches the letter on. A reply then reaches a person. A synthetic "System"
+  sender was rejected because nobody would read the reply.
+- **Sent when the account becomes usable**, never before: at creation under
+  open registration (Telnet/web and SSH alike), at approval under
+  approval-required registration, so a pending account collects nothing, and
+  for an account created on the console. The first SysOp, made from the
+  command line, gets none. A per-account mark (`user_preferences`
+  `welcome_letter_received`) means no path sends a second, and nothing is
+  retroactive.
+- **Frozen copies.** `{user}`, `{node}` and `{date}` are filled in at delivery
+  and nothing else in braces is touched. Each copy is a normal mail row, so a
+  later edit of the template changes only letters still to come. No file
+  attachments.
+- **Never in the way of an account.** The letter, its mark and the delivery
+  count commit together, after the account exists. A sender that lost its
+  standing, or a template that no longer validates, leaves the account made
+  without a letter. The failure goes to the log and to the console screen.
+- **Stored in `node_config`** (on/off, sender id, subject, body, count, last
+  recipient, last failure) and changed only on its console screen, with every
+  change audited as `set_welcome_letter`. It is off by default, and its text
+  starts as an editable sample.
+
 Every caller-confirmed Log off also shows a final call summary immediately
 before the ordinary signed-out notice. It uses the same persisted session row
 that owns disconnect cleanup to report the node-formatted connection and
