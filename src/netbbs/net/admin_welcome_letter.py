@@ -59,7 +59,7 @@ _PREVIEW_NAME = "NewCaller"
 
 _ACTIONS = (
     MenuEntry(label=menu_key("O", "n/off"), brief="Send it to new accounts, or stop"),
-    MenuEntry(label=menu_key("E", "dit text"), brief="Write the letter in the mail editor"),
+    MenuEntry(label=menu_key("E", "dit text"), brief="Write it in the mail editor"),
     MenuEntry(label=menu_key("S", "ubject"), brief="Change the letter's subject"),
     MenuEntry(label=menu_key("F", "rom"), brief="Who the letter comes from"),
     MenuEntry(label=menu_key("P", "review"), brief="Read it as a new caller will"),
