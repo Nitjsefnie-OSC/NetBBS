@@ -185,21 +185,33 @@ async def _edit_text(session: Session, lane: DatabaseLane, actor: User, letter: 
 
     await session.write_line("")
     draft_path = await lane.run(lambda db: drafts_directory(db) / f"welcome_letter_{actor.id}.draft")
-    body = await _compose_mail_body(session, lane, actor, initial_text=letter.body, draft_path=draft_path,
+    # A draft kept last time is where the text picks up (Claude review of
+    # #1353: the draft is gone only once its text is saved).
+    initial = draft_path.read_text(encoding="utf-8") if draft_path.exists() else letter.body
+    body = await _compose_mail_body(session, lane, actor, initial_text=initial, draft_path=draft_path,
                                     cursor_at_end=True)
-    await lane.run(lambda db: delete_draft(draft_path))
     if body is None:
-        _announce_line(session, colored("Letter unchanged.", fg_color=MUTED_COLOR))
+        if draft_path.exists():
+            _announce_line(session, colored("Draft kept; [E]dit text picks it up again. Letter unchanged.",
+                                            fg_color=MUTED_COLOR))
+        else:
+            _announce_line(session, colored("Letter unchanged.", fg_color=MUTED_COLOR))
         return
+    problem = None
     try:
         validate_mail_fields(letter.subject, body)
     except MailError as exc:
-        _announce_line(session, colored(f"{exc}. Letter unchanged.", fg_color=ERROR_COLOR))
-        return
-    if not body.strip():
-        _announce_line(session, colored("A letter needs some text. Letter unchanged.", fg_color=ERROR_COLOR))
+        problem = f"{exc}."
+    if problem is None and not body.strip():
+        problem = "A letter needs some text."
+    if problem is not None:
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
+        draft_path.write_text(body, encoding="utf-8")
+        _announce_line(session, colored(f"{problem} Letter unchanged; your text is kept as a draft for [E]dit text.",
+                                        fg_color=ERROR_COLOR))
         return
     await lane.run(_save, actor, {BODY_KEY: body}, detail="text changed")
+    delete_draft(draft_path)
     _announce_line(session, colored("Letter saved. New accounts get it from now on.", fg_color=SUCCESS_COLOR))
 
 

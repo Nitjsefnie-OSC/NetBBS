@@ -173,6 +173,9 @@ def send_welcome_letter(db: Database, recipient: User) -> bool:
             )
             set_config_without_commit(db, _SENT_COUNT_KEY, str(letter.sent + 1))
             set_config_without_commit(db, _LAST_SENT_KEY, json.dumps({"user": recipient.username, "at": now}))
+            # A letter sent means whatever stopped the last one is fixed
+            # (Claude review of #1353: the warning outlived its cause).
+            db.connection.execute("DELETE FROM node_config WHERE key = ?", (_LAST_FAILURE_KEY,))
         except BaseException:
             db.connection.rollback()
             raise

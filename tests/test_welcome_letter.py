@@ -190,3 +190,36 @@ def test_subject_and_preview(db, lane, sysop):
     assert load_welcome_letter(db).subject == "Hello {user} from {node}"
     text = _written_text(session)
     assert "Subject: Hello NewCaller from" in text and "To: NewCaller" in text
+
+
+def test_a_letter_sent_clears_the_last_failure(db, sysop):
+    # Claude review of #1353: the warning outlived what caused it.
+    plain = create_user(db, "plain", password="hunter2pw")
+    _turn_on(db, plain)
+    send_welcome_letter(db, create_user(db, "alice", password="hunter2pw"))
+    assert load_welcome_letter(db).last_failure
+    set_config(db, SENDER_KEY, str(sysop.id))
+    assert send_welcome_letter(db, create_user(db, "bob", password="hunter2pw")) is True
+    assert load_welcome_letter(db).last_failure is None
+
+
+def test_a_kept_draft_survives_and_is_picked_up_again(db, lane, sysop, monkeypatch):
+    # Claude review of #1353: "Keep draft & exit" lost the text.
+    from netbbs.net import mail_flow
+    from netbbs.net.draft_storage import drafts_directory
+
+    draft = drafts_directory(db) / f"welcome_letter_{sysop.id}.draft"
+    seen: list[str] = []
+
+    async def keep_draft(session, lane, user, *, initial_text, draft_path, **kwargs):
+        seen.append(initial_text)
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
+        draft_path.write_text("half-written welcome", encoding="utf-8")
+        return None
+
+    monkeypatch.setattr(mail_flow, "_compose_mail_body", keep_draft)
+    session = AdminSession([*_TO_SCREEN, "e", "e", *_OUT])
+    run_console(session, lane, sysop)
+    assert draft.read_text(encoding="utf-8") == "half-written welcome"
+    assert seen[1] == "half-written welcome"
+    assert "Draft kept" in _written_text(session)
