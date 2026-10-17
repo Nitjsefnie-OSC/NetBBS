@@ -13,7 +13,9 @@ per-message trust-filtered scrollback (issue #164) shipped in v5.3.0.
 
 Read these in order before substantial work:
 
-1. `docs/NetBBS-design-doc.md` — current product and architecture decisions.
+1. `docs/NetBBS-design-doc.md` — current product and architecture decisions:
+   the current status and a map of every section. Follow its links into
+   `docs/design/` for the areas your work touches.
 2. Current GitHub issues — active work, dependencies, and acceptance criteria.
 3. `docs/NetBBS-worklog.md` — curated engineering invariants, implementation
    traps, operational constraints, and durable lessons.
@@ -31,6 +33,23 @@ what users or nodes may rely on, or how a future protocol must behave. Keep one
 current normative answer per topic. Explain important rationale and rejected
 alternatives, but replace superseded wording rather than piling corrections
 under it.
+
+The design document is split by area (issue #1394):
+
+- `docs/NetBBS-design-doc.md` is the entry point. It holds the current status
+  and the section map, and nothing normative of its own.
+- Each top-level section lives in `docs/design/NN-<area>.md`, where `NN` is
+  its section number. Section numbers and headings never change when text
+  moves; a new subsection takes the next free number in its section, and
+  gets a line in the section map.
+- Each §16 decision lives in its own file, `docs/design/decisions/NNNN-<slug>.md`,
+  named after its issue (zero-padded), with a row in
+  `docs/design/16-decisions.md`. A decision that has no issue of its own is
+  named by its slug alone, `docs/design/decisions/<slug>.md`, and its row
+  shows no issue number. A scoping decision adds a new file and a row;
+  it never grows another decision's file. Write the resulting rule into the
+  area section it changes as well: the area text is the normative answer, and
+  the decision file keeps the reasoning and the rejected alternatives.
 
 ### Engineering record
 
