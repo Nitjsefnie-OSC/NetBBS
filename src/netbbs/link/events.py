@@ -251,7 +251,9 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
     return result
 
 
-def strict_json_loads(data: str | bytes) -> Any:
+def strict_json_loads(
+    data: str | bytes, *, parse_float=None, parse_int=None
+) -> Any:
     """
     Parse untrusted wire JSON for anything that will be canonicalized,
     signed, or verified (design doc §7.2, issue #11's "duplicate-key ...
@@ -273,7 +275,12 @@ def strict_json_loads(data: str | bytes) -> Any:
     validating after the fact — by the time a plain `json.loads` result
     reaches this module, the duplicate key is already gone.
     """
-    return json.loads(data, object_pairs_hook=_reject_duplicate_keys)
+    return json.loads(
+        data,
+        object_pairs_hook=_reject_duplicate_keys,
+        parse_float=parse_float,
+        parse_int=parse_int,
+    )
 
 
 @dataclass(frozen=True)

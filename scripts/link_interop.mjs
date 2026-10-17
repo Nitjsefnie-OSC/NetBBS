@@ -253,10 +253,11 @@ async function main() {
   }
   for (const vector of corpus.wire_vectors ?? []) {
     let accepted = false;
-    try { parseWireJson(vector.json); accepted = true; } catch { /* expected corpus outcome */ }
+    const raw = vector.json_hex ? Buffer.from(vector.json_hex, "hex") : vector.json;
+    try { parseWireJson(raw); accepted = true; } catch { /* expected corpus outcome */ }
     let matches = accepted === vector.accepted;
     if (matches && accepted && vector.canonical_hex) {
-      try { matches = canonicalBytes(parseWireJson(vector.json)).toString("hex") === vector.canonical_hex; }
+      try { matches = canonicalBytes(parseWireJson(raw)).toString("hex") === vector.canonical_hex; }
       catch { matches = false; }
     }
     if (!matches) { console.error(`FAIL ${vector.name}`); failures++; }

@@ -127,6 +127,8 @@
   "wire_vectors": [
     { "name": "valid_unknown_field_is_retained", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"future\":true}}", "accepted": true },
     { "name": "__proto___wire_field_is_retained", "json": "{\"__proto__\":{\"netbbs_protocol\":1,\"payload\":\"kept\"},\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{}}", "canonical_hex": "7b225f5f70726f746f5f5f223a7b226e65746262735f70726f746f636f6c223a312c227061796c6f6164223a226b657074227d2c226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a2278222c227061796c6f6164223a7b7d7d", "accepted": true },
+    { "name": "invalid_utf8_bytes", "json_hex": "7b226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a2278222c227061796c6f6164223aff227d", "accepted": false },
+    { "name": "non_json_whitespace", "json_hex": "7bc2a0226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a2278222c227061796c6f6164223a7b7d7d", "accepted": false },
     { "name": "duplicate_nested_key", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":1,\"a\":2}}", "accepted": false },
     { "name": "float_is_rejected", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":1.0}}", "accepted": false },
     { "name": "unsafe_integer_is_rejected", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":9007199254740992}}", "accepted": false },
