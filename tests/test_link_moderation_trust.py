@@ -108,6 +108,7 @@ def test_a_quarantined_origins_roster_grants_nothing_here(db, origin, here):
     _distrust(db, TrustSubject.node(origin.fingerprint), TrustState.QUARANTINED)
     assert not holds_link_permission(db, mod, object_type="channel", object_id=channel.id,
                                      permission=ChannelPermission.MODERATE)
+    assert link_moderator_lines(db, "channel", channel.id) == []
 
 
 def _label(db, identity):
@@ -140,7 +141,7 @@ def test_an_applied_mute_is_in_the_channels_history(db, origin, here):
     assert restriction_in_force(db, CHANNEL_ID, "e" * 64, "troll") is not None
     [entry] = [e for e in list_recent_actions(db, object_type="channel", object_id=channel.id)
                if e.action == "link_mute"]
-    assert "troll@" in entry.detail and "(its origin)" in entry.detail
+    assert entry.detail == f"troll@{'e' * 64} by {origin.fingerprint} (its origin)"
 
 
 def test_a_refused_mute_is_not_applied_and_not_logged(db, origin, here):
@@ -173,3 +174,19 @@ def test_a_channels_moderators_name_channel_permissions_and_link_delegates(db, o
     lines = _moderator_lines(db, "channel", channel.id)
     assert lines[0] == "local: moderate"
     assert lines[1].startswith("far@") and lines[1].endswith(": topic (Link)")
+
+
+def test_a_long_link_roster_is_capped_in_the_moderator_lines(db, origin, here):
+    from netbbs.net.admin_resources import _MODERATORS_SHOWN, _moderator_lines
+
+    channel = _carried(db, origin)
+    roster = build_link_moderators(
+        signing_identity=origin.signing_key, origin_fingerprint=origin.fingerprint,
+        entries=[{"moderator": _who("f" * 64, f"m{i}"), "scope": "origin", "permissions": ["topic"]}
+                 for i in range(_MODERATORS_SHOWN + 3)],
+        created_at="2026-10-01T00:00:00.000000Z",
+    )
+    store_received_roster(db, envelope=roster.to_dict(), content_id=roster.content_id,
+                          own_fingerprint=here.fingerprint)
+    lines = _moderator_lines(db, "channel", channel.id)
+    assert len(lines) == _MODERATORS_SHOWN + 1 and lines[-1] == "...and 3 more (Link)"

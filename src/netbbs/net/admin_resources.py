@@ -378,7 +378,12 @@ def _moderator_lines(db: Database, object_type: str, object_id: int) -> list[str
 
     grants = list_grants_for_object(db, object_type=object_type, object_id=object_id)
     # Issue #1359: users of other nodes the origin's roster names.
-    link_lines = [sanitize_text(line) for line in link_moderator_lines(db, object_type, object_id)]
+    # At most `_MODERATORS_SHOWN` of them: the roster is another node's, up
+    # to 200 entries, and this heading has no rows to spare (review of #1367).
+    link_all = link_moderator_lines(db, object_type, object_id)
+    link_lines = [sanitize_text(line) for line in link_all[:_MODERATORS_SHOWN]]
+    if len(link_all) > _MODERATORS_SHOWN:
+        link_lines.append(f"...and {len(link_all) - _MODERATORS_SHOWN} more (Link)")
     if not grants:
         return link_lines or ["none: only SysOps moderate here"]
     flags = ChannelPermission if object_type == "channel" else BoardPermission

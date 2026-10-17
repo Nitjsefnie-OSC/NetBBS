@@ -546,7 +546,10 @@ _HISTORY_ACTIONS = {
 def record_received_moderation(db: Database, envelope: dict) -> None:
     """Note a received Link moderation action that took effect here in the
     linked board's or channel's history (Decision 9; issue #1359): what, on
-    whom, and who signed it -- a delegate by name, else the origin."""
+    whom, and who signed it -- a delegate by name, else the origin. Nodes are
+    named by fingerprint: a friendly name is the node's own claim and may
+    change, so it is resolved when shown, never stored (§4.4; review of
+    #1367)."""
     from netbbs.moderation.log import record_action
 
     inner = envelope["envelope"]
@@ -554,8 +557,8 @@ def record_received_moderation(db: Database, envelope: dict) -> None:
     object_type = inner["object_type"]
     moderator = payload.get("moderator")
     by = (
-        _who(db, moderator.get("home_node_fingerprint"), moderator.get("local_user_id"))
-        if isinstance(moderator, dict) else f"{_who(db, _event_origin(db, payload))} (its origin)"
+        f"{moderator.get('local_user_id')}@{moderator.get('home_node_fingerprint')}"
+        if isinstance(moderator, dict) else f"{_event_origin(db, payload)} (its origin)"
     )
     if "channel_id" in payload:
         row = db.connection.execute("SELECT id FROM channels WHERE channel_id = ?", (payload["channel_id"],)).fetchone()
@@ -568,7 +571,7 @@ def record_received_moderation(db: Database, envelope: dict) -> None:
     if object_type == "channel_restriction":
         target = payload["target"]
         action = _HISTORY_ACTIONS[(payload["kind"], payload["action"])]
-        detail = f"{_who(db, target['home_node_fingerprint'], target['local_user_id'])} by {by}"
+        detail = f"{target['local_user_id']}@{target['home_node_fingerprint']} by {by}"
         if payload.get("until"):
             detail += f", until {payload['until']}"
         if payload.get("reason"):
@@ -593,6 +596,8 @@ def link_moderator_lines(db: Database, object_type: str, object_id: int) -> list
     if resource is None:
         return []
     resource_id, origin = resource
+    if _untrusted(db, origin):
+        return []  # Its roster is not applied here (review of #1367).
     communities = _listing_communities(db, origin, object_type + "s", resource_id)
     lines = []
     for entry in _roster_entries(db, origin):
