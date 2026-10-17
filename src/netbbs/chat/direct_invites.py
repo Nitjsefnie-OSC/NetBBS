@@ -61,9 +61,26 @@ class DirectChatInvite:
     agree on one shared, unique room without needing any way to look up
     the *other* side's own identifiers first."""
 
-    inviter: User
+    inviter: "User | RemotePeer"
     outcome: "asyncio.Future[str]"
     room_token: str
+    # Issue #1368: for an invitation from a caller of another node, the
+    # Link half of it (`netbbs.link.realtime_dm.IncomingChatInvite`); the
+    # accepting session opens the room through it.
+    remote: object | None = None
+
+
+@dataclass(frozen=True)
+class RemotePeer:
+    """A caller of another node in a direct chat (issue #1368), shaped like
+    the `User` a local direct chat names: `username` is the label to show,
+    `name@TheirBBS`. `caution` is the identity-change caution for their
+    node, if one stands."""
+
+    username: str
+    user_id: str
+    node_fingerprint: str
+    caution: str | None = None
 
 
 class DirectChatInvites:
@@ -142,7 +159,9 @@ class DirectChatInvites:
         if event is not None:
             event.clear()
 
-    def send(self, inviter: User, target_session: object) -> DirectChatInvite | None:
+    def send(
+        self, inviter: "User | RemotePeer", target_session: object, *, remote: object | None = None,
+    ) -> DirectChatInvite | None:
         """Registers a new invite for `target_session`. Returns `None`
         without registering anything if `target_session` already has a
         pending invite -- deliberately never stacks a second invite on
@@ -158,6 +177,7 @@ class DirectChatInvites:
             inviter=inviter,
             outcome=loop.create_future(),
             room_token=secrets.token_hex(8),
+            remote=remote,
         )
         self._pending[target_session] = invite
         self.arrival_event(target_session).set()

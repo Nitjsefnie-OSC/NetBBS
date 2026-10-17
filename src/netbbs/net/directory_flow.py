@@ -392,10 +392,9 @@ async def _caller_who_screen(
     (`link_context.realtime_bridge.remote_node_presence()`) is mixed
     into the same list, not shown as a separate section -- "who's
     online" should mean the whole reachable mesh, the "no wrong-node
-    friction" bar this initiative is held to. Messaging/inviting a
-    remote entry isn't offered, though: Link-wide live private chat
-    isn't built yet (issue #168) -- selecting one says so plainly
-    instead of silently doing nothing or pretending the action exists.
+    friction" bar this initiative is held to. A remote entry offers a live
+    one-off message (issue #168) and, when their node takes one, a direct
+    chat (issue #1368).
 
     A target who has opted out, or who blocks the caller
     (`netbbs.messaging_preferences.live_message_refusal`, issue #925),
@@ -498,10 +497,16 @@ async def _caller_who_screen(
         mail_open = lane is not None and await mail_open_to(session, lane, user)
         if isinstance(selected, _RemoteWhoEntry):
             # Issue #168: a one-off live message across nodes, over a direct
-            # or relayed real-time session; chat invites stay local-only.
+            # or relayed real-time session; issue #1368: and a direct chat,
+            # when their node takes one.
+            from netbbs.net.chat_flow import run_remote_direct_chat_invite_flow
             from netbbs.net.link_direct import send_live_direct_message
 
             live = lane is not None and link_context is not None and link_context.direct_chat is not None
+            remote_chats = getattr(link_context, "direct_chats", None)
+            offer_remote_invite = live and remote_chats is not None and remote_chats.peer_capable(
+                selected.node_fingerprint,
+            )
             # Link mail goes to their stable `user@<fingerprint>`, checked
             # like a Link reply's address (issue #805).
             offer_mail = mail_open and link_context is not None
@@ -518,8 +523,8 @@ async def _caller_who_screen(
             # Issue #282: selecting a remote caller used to drop straight
             # into the message prompt, so someone who picked the name only
             # to see where they were connected had to Enter past a blank
-            # line to get out. Same [M]essage/[B]ack shape as a local entry
-            # (minus the chat invite, which stays local-only).
+            # line to get out. Same [M]essage/[B]ack shape as a local entry,
+            # with [I]nvite when their node takes a direct chat (#1368).
             async def _remote_header() -> None:
                 await session.write_line(
                     "\r\n" + screen_title(
@@ -543,6 +548,8 @@ async def _caller_who_screen(
             options = []
             if live:
                 options.append(("m", MenuEntry(label=menu_key("M", "essage"), brief="Send a one-off live message")))
+            if offer_remote_invite:
+                options.append(("i", MenuEntry(label=menu_key("I", "nvite to chat"), brief="Invite them to a direct chat")))
             if offer_mail:
                 options.append(_E_MAIL)
             if lane is not None:
@@ -559,6 +566,12 @@ async def _caller_who_screen(
                 await mail_someone(
                     session, lane, user, link_address=f"{selected.username}@{selected.node_fingerprint}",
                     link_context=link_context,
+                )
+                return
+            if action == "i":
+                await run_remote_direct_chat_invite_flow(
+                    session, lane, hub, presence, user, f"{selected.username}@{selected.node_fingerprint}",
+                    link_context=link_context, report=_report,
                 )
                 return
             assert lane is not None and link_context is not None  # live's own condition

@@ -452,8 +452,9 @@ file catalogues/on-demand chunks, ordinary home-node-encrypted mail, trust
 signals, real-time chat/presence, and Link Communities (design reference
 §6.5). Board origin transfer and origin-authorized post moderation exist. Do
 not infer channel/file-area origin succession, Community origin transfer,
-delegated Link moderation, client-side mail decryption, or cross-node `/dm`
-invites from a generic event envelope.
+client-side mail decryption from a generic event envelope. Delegated Link
+moderation, channel origin succession and cross-node `/dm` chats are their
+own event and frame types (design reference §16, issues #1357 and #1368).
 
 ### Canonical bytes and signed identities
 
@@ -575,7 +576,8 @@ other; a relay does not acquire the endpoint's identity. One- and two-relay
 paths are implemented. Live subscriptions carry chat/presence and bounded
 scrollback-on-join, alongside asynchronous durable synchronization.
 A session has one active chat surface; background simultaneous memberships
-and cross-node invitation chats are not implemented.
+are not implemented. Cross-node invitation chats use the `direct_chat_*`
+frames, sent only to peers advertising `direct_chat_v1` (issue #1368).
 
 ### Interoperability evidence
 

@@ -417,6 +417,11 @@ async def browse_channels(
             # On return, keep `channel` unchanged: the loop's normal
             # authorization check runs again and re-enters it cleanly.
             assert direct_invites is not None and session_registry is not None
+            if action.address is not None:
+                await run_remote_direct_chat_invite_flow(
+                    session, lane, hub, presence, user, action.address, link_context=link_context,
+                )
+                continue
             await run_direct_chat_invite_flow(
                 session,
                 lane,
@@ -2281,9 +2286,13 @@ class _EnterDirectChat:
     `browse_channels`: direct chat is an exclusive fullscreen screen,
     so it cannot run inside `_chat_loop`'s send task while the channel
     receive/clock tasks and pinned UI remain live (issue #118).
+
+    `address` (issue #1368): a caller of another node, `name@TheirBBS`,
+    in place of `target`.
     """
 
-    target: User
+    target: User | None
+    address: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2740,6 +2749,15 @@ async def _handle_dm(ctx: ChatCommandContext, args: str) -> ChatAction | None:
     if not target_name:
         await _show_usage(ctx.session, "dm")
         return None
+    if "@" in target_name:
+        # Issue #1368: a caller of another node. Reachability is checked
+        # after the channel has unwound, by the invitation flow itself.
+        if ctx.link_context is None or ctx.link_context.direct_chats is None:
+            await ctx.session.write_line(colored(
+                "Direct chats with callers of other BBSes aren't available here.", fg_color=MUTED_COLOR,
+            ))
+            return None
+        return _EnterDirectChat(None, address=target_name)
 
     target = await _resolve_target(ctx.session, ctx.lane, target_name)
     if target is None:
@@ -4971,7 +4989,7 @@ _COMMAND_INFO: dict[str, tuple[str, str]] = {
     "msg": ("/msg <user> <text>", "Send a one-off private message; quote a user@node name containing spaces."),
     "private": ("/private <user>", "Enter a private conversation with an online user (name@TheirBBS for someone on a linked BBS)."),
     "close": ("/close", "Leave the current private conversation."),
-    "dm": ("/dm <user>", "Invite an online user to a live, fullscreen direct chat."),
+    "dm": ("/dm <user>", "Invite an online user, or user@TheirBBS, to a live, fullscreen direct chat."),
     "help": ("/help [command]", "List available commands, or show detail for one."),
     "me": ("/me <action>", 'Send an action message (e.g. "* alice waves").'),
     "nick": ("/nick [name]", "Set a display alias, shown as alias (username); a bare /nick clears it."),
@@ -7553,10 +7571,15 @@ async def run_direct_chat_loop(
     truecolor: bool | None = None,
     bell: str = DEFAULT_BELL_LEVEL,
     nick: str | None = None,
+    remote_room=None,
 ) -> None:
     """
     Real-time 1:1 direct chat, until either side types `/close`, the
     connection drops, or the other side leaves first.
+
+    `remote_room` (issue #1368): with a caller of another node, this
+    node's half of the room (`netbbs.link.realtime_dm.RemoteDirectRoom`)
+    takes the hub room's place, and `other_user` is their `RemotePeer`.
 
     `bell` is the caller's chat bell level and `nick` their alias, read by
     whoever opened it (issue #1302): a `/dm` invitation from someone else
@@ -7566,7 +7589,7 @@ async def run_direct_chat_loop(
     effective_tc = getattr(session, "supports_truecolor", False) if truecolor is None else truecolor
     room = f"{_DM_CHANNEL_PREFIX}{room_token}"
     participant_id = ParticipantId(username=user.username, session_key=id(session))
-    queue = hub.join(room, participant_id)
+    queue = hub.join(room, participant_id) if remote_room is None else None
     pinned_ui: _DirectChatPinnedUIState | None = None
     try:
         initial_height = session.terminal_height
@@ -7636,7 +7659,28 @@ async def run_direct_chat_loop(
         session.pinned_notice_hook = deliver
         session.chat_bell_hook = ring_private
 
+        async def receive_remote() -> None:
+            from netbbs.link.realtime_dm import LINE, LOST
+
+            while True:
+                kind, value = await remote_room.events.get()
+                if kind == LINE:
+                    rendered = _render_direct_chat_message(
+                        other_user.username, value, self_message=False, accent=accent_color,
+                    )
+                    await deliver(rendered, ring=_direct_chat_mention(rendered, other_user, user, nick, bell))
+                    continue
+                text = (
+                    f"\r\n*** The connection to {sanitize_text(other_user.username)} was lost."
+                    if kind == LOST else f"\r\n*** {sanitize_text(other_user.username)} has left the direct chat."
+                )
+                await deliver(colored(text, fg_color=MUTED_COLOR))
+                return
+
         async def receive_loop() -> None:
+            if remote_room is not None:
+                await receive_remote()
+                return
             while True:
                 message = await queue.get()
                 if isinstance(message, _DirectChatClosedNotice):
@@ -7692,6 +7736,19 @@ async def run_direct_chat_loop(
                     await session.write_line(
                         _render_direct_chat_message("you", line, self_message=True, accent=accent_color)
                     )
+                    if remote_room is not None:
+                        # Issue #1368: a line the link cannot carry ends
+                        # the chat as lost, through the receive side.
+                        from netbbs.net.link_direct import MAX_DIRECT_MESSAGE_BODY_BYTES
+
+                        if len(line.encode("utf-8")) > MAX_DIRECT_MESSAGE_BODY_BYTES:
+                            await session.write_line(colored(
+                                f"That line is too long to send to another BBS (at most "
+                                f"{MAX_DIRECT_MESSAGE_BODY_BYTES} bytes).", fg_color=MUTED_COLOR,
+                            ))
+                            continue
+                        await remote_room.send_line(line)
+                        continue
                     rendered_for_other = _render_direct_chat_message(
                         user.username, line, self_message=False, accent=accent_color
                     )
@@ -7738,17 +7795,20 @@ async def run_direct_chat_loop(
                 await session.write(reset_scroll_region() + clear_screen())
             except SessionClosedError:
                 pass
-        hub.leave(room, participant_id)
-        # Issue #120: this is a mandatory room-lifecycle transition, not
-        # lossy chat traffic. A full peer queue may evict an older line
-        # to make room, but must never substitute QueueOverflowNotice for
-        # the close sentinel and leave the peer stuck in a dead room.
-        await hub.broadcast(
-            room,
-            _DirectChatClosedNotice(),
-            exclude={participant_id},
-            priority=True,
-        )
+        if remote_room is not None:
+            await remote_room.leave()
+        else:
+            hub.leave(room, participant_id)
+            # Issue #120: this is a mandatory room-lifecycle transition, not
+            # lossy chat traffic. A full peer queue may evict an older line
+            # to make room, but must never substitute QueueOverflowNotice for
+            # the close sentinel and leave the peer stuck in a dead room.
+            await hub.broadcast(
+                room,
+                _DirectChatClosedNotice(),
+                exclude={participant_id},
+                priority=True,
+            )
 
 
 async def run_direct_chat_invite_flow(
@@ -7943,4 +8003,141 @@ async def run_direct_chat_invite_flow(
         await report(
             colored(f"\r\n{sanitize_text(target.username)} didn't respond in time.", fg_color=MUTED_COLOR)
         )
+    return False
+
+
+#: Issue #1368: how long a caller waits for another node's caller to answer,
+#: the same as for a local invitation. This side's clock decides.
+REMOTE_INVITE_TIMEOUT_SECONDS = 60.0
+
+
+async def run_remote_direct_chat_invite_flow(
+    session: Session,
+    lane: DatabaseLane,
+    hub: ChatHub,
+    presence: PresenceRegistry,
+    user: User,
+    address: str,
+    *,
+    link_context: LinkContext | None,
+    report: Callable[[str], Awaitable[None]] | None = None,
+) -> bool:
+    """`/dm name@TheirBBS` and Who's [I]nvite on a remote entry (issue
+    #1368): invite a caller of another node to a direct chat and run the
+    handshake, as `run_direct_chat_invite_flow` does for a local one --
+    the same waiting screen, C to cancel, and outcomes. A caller who
+    blocks this one, has opted out, or is not online reads as not
+    reachable, never as a reason. Returns whether a chat ran."""
+    from netbbs.chat.direct_invites import RemotePeer
+    from netbbs.link.node_profiles import link_address_label
+    from netbbs.link.realtime_dm import LOST, DirectChatRefused
+    from netbbs.net.link_direct import (
+        UNREACHABLE_NOTE,
+        _identity_caution,
+        _node_label,
+        check_live_reachability,
+        parse_remote_address,
+    )
+
+    report = report or session.write_line
+    chats = link_context.direct_chats if link_context is not None else None
+    if chats is None:
+        await report(colored("Direct chats with callers of other BBSes aren't available here.", fg_color=MUTED_COLOR))
+        return False
+    fingerprint = await check_live_reachability(session, address, link_context=link_context, report=report)
+    if fingerprint is None:
+        return False
+    target_user, _node = parse_remote_address(address)
+    node_label = sanitize_text(_node_label(link_context, fingerprint))
+    label = link_address_label(sanitize_text(target_user), node_label)
+    if not chats.peer_capable(fingerprint):
+        await report(colored(
+            f"{node_label} doesn't support direct chats yet; /msg {label} still works.", fg_color=MUTED_COLOR,
+        ))
+        return False
+    caution = await lane.run(_identity_caution, fingerprint)
+    if caution:
+        await session.write_line(colored(sanitize_text(caution), fg_color=MUTED_COLOR, bold=True))
+    try:
+        invite = await chats.invite(
+            fingerprint, from_user=user.username,
+            from_label=sanitize_text(await lane.run(display_label, user)), to_user=target_user, peer_label=label,
+        )
+    except DirectChatRefused:
+        await report(colored(f"{label} {UNREACHABLE_NOTE}", fg_color=MUTED_COLOR))
+        return False
+
+    with entered(session, "Direct chat"):
+        heading = screen_title(
+            "Invitation sent",
+            breadcrumb=crumbs(session),
+            subtitle=f"Waiting for {label} to respond",
+            width=session.terminal_width,
+            clear=await lane.run(redraw_in_place_enabled, user),
+            unicode_style=await lane.run(unicode_style_enabled, user),
+            collapsed=await lane.run(breadcrumb_collapsed_enabled, user),
+            header_color=await lane.run(effective_header_color_256),
+        node_name_gradient=session.node_name_gradient)
+    await session.write_line(f"\r\n{heading}")
+    await session.write(f"{menu_key('C', 'ancel')}: ")
+
+    # The same precedence as a local invitation: an acceptance beats this
+    # caller's C in the same turn; the other side was told it is accepted.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + REMOTE_INVITE_TIMEOUT_SECONDS
+    outcome: str | None = None
+    while outcome is None:
+        key_task = asyncio.create_task(session.read_key())
+        try:
+            done, _pending = await asyncio.wait(
+                {key_task, invite.answer}, timeout=max(0.0, deadline - loop.time()),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except asyncio.CancelledError:
+            key_task.cancel()
+            await asyncio.gather(key_task, return_exceptions=True)
+            await chats.withdraw(invite, "cancelled")
+            raise
+        if invite.answer.done():
+            outcome = invite.answer.result()
+        elif key_task in done and key_task.result().lower() == "c":
+            await chats.withdraw(invite, "cancelled")
+            await report(colored("\r\nInvitation cancelled.", fg_color=MUTED_COLOR))
+            return False
+        elif not done:
+            await chats.withdraw(invite, "timed_out")
+            outcome = "timed_out"
+        elif key_task in done:
+            await session.write(reject_unhandled_key(key_task.result()))
+        if key_task not in done:
+            key_task.cancel()
+            await asyncio.gather(key_task, return_exceptions=True)
+
+    if outcome == "accepted" and invite.room is not None:
+        await session.write_line(colored(f"\r\n{label} accepted.", fg_color=SUCCESS_COLOR))
+        await run_direct_chat_loop(
+            session, hub, presence, user,
+            RemotePeer(username=label, user_id=target_user, node_fingerprint=fingerprint, caution=caution),
+            invite.chat_id,
+            redraw_in_place=await lane.run(redraw_in_place_enabled, user),
+            unicode_style=await lane.run(unicode_style_enabled, user),
+            collapsed=await lane.run(breadcrumb_collapsed_enabled, user),
+            accent_color=await lane.run(effective_accent_color_256),
+            header_color=await lane.run(effective_header_color_256),
+            bell=await lane.run(bell_level, user),
+            nick=await lane.run(get_nick, user),
+            remote_room=invite.room,
+        )
+        return True
+    if outcome == "declined":
+        await report(colored(f"\r\n{label} declined.", fg_color=MUTED_COLOR))
+    elif outcome == "busy":
+        await report(colored(
+            f"\r\n{label} is currently deciding on another invite -- try again shortly.", fg_color=MUTED_COLOR,
+        ))
+    elif outcome == "timed_out":
+        await report(colored(f"\r\n{label} didn't respond in time.", fg_color=MUTED_COLOR))
+    else:  # unavailable, or the link was lost
+        note = UNREACHABLE_NOTE if outcome != LOST else "could not be reached: the connection was lost."
+        await report(colored(f"\r\n{label} {note}", fg_color=MUTED_COLOR))
     return False

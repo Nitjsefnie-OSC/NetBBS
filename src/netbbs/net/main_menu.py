@@ -1435,6 +1435,9 @@ async def _handle_incoming_invite(
             fg_color=ALERT_COLOR, bold=True,
         )
     )
+    caution = getattr(invite.inviter, "caution", None)
+    if caution:
+        await session.write_line(colored(sanitize_text(caution), fg_color=MUTED_COLOR, bold=True))
     accepted = await prompt_yes_no(session, "Accept?", default=False)
     if not direct_invites.respond(session, accepted=accepted):
         # Expired/cancelled between the prompt being shown and this
@@ -1442,9 +1445,17 @@ async def _handle_incoming_invite(
         # in this feature (netbbs.chat.direct_invites's own docstrings).
         announce(session, "That invitation is no longer valid.", tone="muted")
         return
+    remote_room = None
+    if accepted and invite.remote is not None:
+        # Issue #1368: from another node's caller -- the room opens there
+        # too, unless they gave up meanwhile.
+        remote_room = await invite.remote.accept()
+        if remote_room is None:
+            announce(session, "That invitation is no longer valid.", tone="muted")
+            return
     if accepted:
         await run_direct_chat_loop(
-            session, hub, presence, user, invite.inviter, invite.room_token,
+            session, hub, presence, user, invite.inviter, invite.room_token, remote_room=remote_room,
             redraw_in_place=redraw_in_place_enabled(db, user),
             unicode_style=unicode_style_enabled(db, user),
             collapsed=breadcrumb_collapsed_enabled(db, user),

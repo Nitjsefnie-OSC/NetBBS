@@ -38,8 +38,9 @@ reading this design reference first.
   #131's human/operational checks and sustained dogfood (#83). Independent
   implementation compatibility remains unclaimed (#71).
 - Phase 5 has authenticated live chat, presence, scrollback-on-join, live
-  private messages, and one-/two-relay paths. Cross-node `/dm` invitations and
-  simultaneous background channel memberships are not implemented.
+  private messages, cross-node `/dm` direct chats (issue #1368), and
+  one-/two-relay paths. Simultaneous background channel memberships are not
+  implemented.
 - Phase 7 has native, DOSBox-X, VM (qemu) and remote door adapters, three bundled games,
   companion services, and door API 4 with optional outbound board posting and
   chat lines. Compatibility is bounded to the documented host/game profiles.
@@ -5930,6 +5931,9 @@ per-session replay window. The first implementation supports:
 - `relay_request`, `relay_waiting`, `relay_ready`, `relay_reject` (issue
   #168, §8.10.3 -- the live-relay rendezvous);
 - `direct_message` (issue #168, §8.10.3);
+- `direct_chat_invite`, `direct_chat_answer`, `direct_chat_line`,
+  `direct_chat_end` (issue #1368 -- only to a peer advertising
+  `direct_chat_v1`);
 - `ping`, `pong`, `error`, and `close`.
 
 One node owns at most one live session per remote fingerprint. If simultaneous
@@ -6174,7 +6178,7 @@ Caller-facing (Decision 3): `/msg user@node-fingerprint <text>` and
 entry in Who's online. When no path exists, whatever the reason, the
 caller sees one reason-free refusal -- "can't be reached for live chat
 right now" -- pointing at Link mail; nothing fails silently. Cross-node
-`/dm` invites stay local-only in this vertical.
+`/dm` invites stayed local-only in this vertical; issue #1368 added them.
 
 ---
 
@@ -9772,7 +9776,7 @@ No public/untrusted federation claim precedes this phase.
   (§8.10, #148), node-wide presence (#164), bounded trusted scrollback-on-join
   (#194), live private messages and relay (#168/#219), and chained relays plus
   cross-node `/private` (#270).
-- Not implemented: cross-node `/dm` invitation chats.
+- Cross-node `/dm` invitation chats: built (§16, issue #1368).
 - Deliberately deferred: simultaneous channel memberships with background
   delivery; the existing durable unread model remains available.
 
@@ -15826,6 +15830,58 @@ its restrictions in force.
   resources already exist.
 - **The audit board and live feed:** a later Phase 6 item (Decision 7).
 - **Implementation:** its own issue.
+
+### Issue #1368 — Link DMs: cross-node `/dm` direct chats — decided and built
+
+§16 issue #270, Decision 4, left a fullscreen direct chat between callers of
+two nodes for later: it "needs mutual invite/accept frames and a shared room
+spanning two nodes". This builds it.
+
+**Decision 1 — the same feature, wider reach.** `/dm name@TheirBBS` and Who's
+online **[I]nvite to chat** on a remote entry behave as a local direct chat
+does (§6.3): the waiting screen, the 60-second timeout, C to cancel, the
+main-menu interrupt and the one-line notice elsewhere (#843), the outcome
+above Who's list (#1124), the pinned row and `/close`.
+
+**Decision 2 — a capability, not a version bump.** `direct_chat_v1` and four
+real-time frames: `direct_chat_invite {chat_id, to_user_id, from_user_id,
+from_display_label, created_at}`, `direct_chat_answer {chat_id, outcome}`,
+`direct_chat_line {chat_id, body, created_at}` and `direct_chat_end {chat_id,
+reason}`. An unknown frame type closes the whole real-time session
+(`RealtimeFrame.from_json_bytes` raises before the strike path), so a peer that
+does not advertise the capability is never sent one; its caller is told the
+BBS does not support direct chats yet. A version bump would have broken every
+mixed pair's channels and relays as well.
+
+**Decision 3 — refusals do not leak.** The answer is `accepted`, `declined`,
+`busy` or `unavailable`. A block, an opt-out from live messages, an unknown
+name or an offline caller all read as `unavailable`, which the inviter sees as
+the reason-free "can't be reached for live chat right now". The block and
+opt-out check is repeated for every line, and a block made mid-chat ends it.
+
+**Decision 4 — each node keeps its own half.** `netbbs.link.realtime_dm`
+maps the inviter's `chat_id`, keyed by the peer's authenticated fingerprint,
+to a `RemoteDirectRoom` that the direct-chat screen reads in place of a hub
+room. No third node can write into it, and no peer names a local hub channel.
+
+**Decision 5 — the inviter's clock decides.** An acceptance arriving after
+the inviter cancelled or timed out is answered with `direct_chat_end`, so the
+accepting caller sees the chat close at once rather than wait alone.
+
+**Decision 6 — a dropped link is not someone leaving** (§8.10.2). When the
+session closes and none comes back within five seconds, an invitation in
+flight lapses and an open chat ends with "the connection to name@TheirBBS was
+lost".
+
+**Decision 7 — bounds.** Lines of 4,000 bytes and identifiers of 128 bytes,
+as for live messages; one pending invitation per target session; at most 16
+pending invitations and 16 open chats per peer; five seconds between one remote
+caller's invitations to the same local caller.
+
+**Decision 8 — trust.** The real-time policy is checked on every received
+frame and before every send; the identity-change caution shows on both sides;
+every remote label and line is sanitized.
+
 
 ## 17. Maintaining this document
 

@@ -474,7 +474,7 @@ Choose a chat channel to join the conversation. Type a line and press
 | `/msg user text` | Send a live private message |
 | `/away text` | Set an away message |
 | `/nick name` | Set a chat alias; a bare `/nick` clears it |
-| `/dm user` | Invite someone online to a private direct chat |
+| `/dm user` | Invite someone online to a private direct chat; `user@TheirBBS` for someone on a linked BBS |
 | `/bell` | Show when chat rings your bell; `/bell off`, `/bell private` or `/bell mentions` sets it |
 
 > [!TIP]
@@ -509,6 +509,15 @@ channel started on.
 A direct-chat invitation opens on your main menu. If you are somewhere else
 on the board, a line tells you who invited you; go back to the main menu
 within a minute to answer.
+
+You can also chat this way with someone on a linked BBS: `/dm name@TheirBBS`
+in chat, or <kbd>I</kbd> **Invite to chat** on their entry in Who's online.
+Their invitations to you open the same way, named `name@TheirBBS`.
+
+- If their BBS doesn't support it yet, you are told so; `/msg` still works.
+- If they can't be reached, they don't take live messages, or they block you,
+  you are only told they can't be reached right now.
+- If the connection between the two BBSes drops, the chat ends and says so.
 
 Live private messages need the recipient to be online. **E-mail** keeps a
 message for later.

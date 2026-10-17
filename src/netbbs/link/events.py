@@ -454,10 +454,17 @@ on it. Rosters are pushed to, declared to and served to such a peer only: an
 older one would keep a roster as an opaque event it cannot place, and be
 offered it again on every pass."""
 
+DIRECT_CHAT_CAPABILITY = "direct_chat_v1"
+"""Issue #1368: this node takes the `direct_chat_invite`, `_answer`, `_line`
+and `_end` real-time frames, a direct chat between callers of two nodes. An
+older node would close the whole real-time session on an unknown frame type,
+so they are only ever sent to a peer that advertises this."""
+
 LINK_CAPABILITIES: tuple[str, ...] = (
     INVENTORY_NOT_CARRIED_CAPABILITY, INVENTORY_PAGES_CAPABILITY, CHANNEL_RELAY_CAPABILITY, CHAT_BOTS_CAPABILITY,
     SEALED_ATTESTATIONS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY,
     PRESENCE_RELAY_CAPABILITY, LINK_COMMUNITIES_CAPABILITY, LINK_MODERATION_CAPABILITY,
+    DIRECT_CHAT_CAPABILITY,
 )
 """Every optional behaviour this version advertises in its own descriptor."""
 

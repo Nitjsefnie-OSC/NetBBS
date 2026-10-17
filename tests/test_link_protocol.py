@@ -47,6 +47,7 @@ from netbbs.link.protocol import (
     build_channel_message_frame,
     build_close_frame,
     build_direct_message_frame,
+    build_direct_chat_frame,
     build_relay_ready_frame,
     build_relay_reject_frame,
     build_relay_request_frame,
@@ -204,6 +205,16 @@ def test_build_frame_helpers_produce_payloads_that_pass_their_own_validator():
             to_user_id="bob", from_user_id="alice", from_display_label="Alice", body="hi",
             created_at="2026-01-01T00:00:00+00:00",
         ),
+        # Issue #1368
+        build_direct_chat_frame("direct_chat_invite", {
+            "chat_id": "c1", "to_user_id": "bob", "from_user_id": "alice", "from_display_label": "Alice",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }),
+        build_direct_chat_frame("direct_chat_answer", {"chat_id": "c1", "outcome": "accepted"}),
+        build_direct_chat_frame("direct_chat_line", {
+            "chat_id": "c1", "body": "hi", "created_at": "2026-01-01T00:00:00+00:00",
+        }),
+        build_direct_chat_frame("direct_chat_end", {"chat_id": "c1", "reason": "left"}),
     ]
 
     assert {frame.type for frame in frames} == REALTIME_FRAME_TYPES
