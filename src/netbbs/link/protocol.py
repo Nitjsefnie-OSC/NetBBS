@@ -97,6 +97,10 @@ from netbbs.link.events import (
     FILE_AREA_GENESIS_OBJECT_TYPE,
     FILE_DESCRIPTOR_OBJECT_TYPE,
     KEY_TRANSITION_OBJECT_TYPE,
+    LINK_MODERATORS_OBJECT_TYPE,
+    LinkModerators,
+    link_moderators_problem,
+    verify_link_moderators,
     LINK_MESSAGE_ACCEPTED_OBJECT_TYPE,
     LINK_MESSAGE_BOUNCED_OBJECT_TYPE,
     LINK_MESSAGE_OBJECT_TYPE,
@@ -1896,6 +1900,7 @@ KNOWN_EVENT_OBJECT_TYPES = frozenset({
     COMMUNITY_GENESIS_OBJECT_TYPE,
     COMMUNITY_MEMBERS_OBJECT_TYPE,
     COMMUNITY_CLOSURE_OBJECT_TYPE,
+    LINK_MODERATORS_OBJECT_TYPE,
 })
 # Issue #1299: the most a `board_post`'s or an edit's `"poll"` field may
 # take, as JSON. Ten answers of at most 200 bytes and the settings fit with
@@ -5083,6 +5088,10 @@ class LinkNode:
                 community_id = self._accept_community_event(object_type, raw)
                 if community_id is not None:
                     accepted.append(community_id)
+            elif object_type == LINK_MODERATORS_OBJECT_TYPE:
+                content_id = self._accept_link_moderators(raw)
+                if content_id is not None:
+                    accepted.append(content_id)
             elif object_type == BOARD_POLL_VOTE_OBJECT_TYPE:
                 # Issue #1299: a vote on a poll on a Linked board, signed by
                 # the voter's home node like a post. Only the board's genesis
@@ -5224,6 +5233,39 @@ class LinkNode:
             self.community_events.record_genesis(event)
         elif object_type == COMMUNITY_CLOSURE_OBJECT_TYPE:
             self.community_events.closures[community_id] = event
+        self.known_event_ids.add(event.content_id)
+        self.events[event.content_id] = raw
+        return event.content_id
+
+    def _accept_link_moderators(self, raw: dict) -> str | None:
+        """Issue #1357, Decision 1: an origin's roster of delegated
+        moderators. Signed by that origin and verified against its keys, so a
+        carrier may relay one (served with the origin's resources) but never
+        author one. Which roster is in force is decided where it is stored,
+        by effective time (`netbbs.link.moderators.store_received_roster`).
+        Returns the content ID when newly accepted, `None` when known."""
+        event = LinkModerators.from_dict(raw)
+        if event.content_id in self.known_event_ids:
+            return None
+        payload = event.payload
+        origin = payload.get("origin_fingerprint")
+        if not isinstance(origin, str) or not origin:
+            raise LinkProtocolError("link_moderators names no origin")
+        problem = link_moderators_problem(payload.get("entries"))
+        if problem is not None:
+            raise LinkProtocolError(f"link_moderators from {origin}: {problem}")
+        if not isinstance(payload.get("created_at"), str):
+            raise LinkProtocolError(f"link_moderators from {origin} has no created_at")
+        origin_peer = self.known_identity(origin)
+        if origin_peer is None:
+            raise MissingDependency(
+                f"received a link_moderators of {origin}, which has no completed hello with this "
+                "node -- refusing (no relay from a stranger)",
+                missing_identity=origin,
+            )
+        signing_verify_keys = self._resolve_sender_content_keys(origin_peer, origin, LINK_MODERATORS_OBJECT_TYPE)
+        if not any(verify_link_moderators(event, key) for key in signing_verify_keys):
+            raise LinkProtocolError(f"link_moderators from origin {origin} does not verify against its signing keys")
         self.known_event_ids.add(event.content_id)
         self.events[event.content_id] = raw
         return event.content_id

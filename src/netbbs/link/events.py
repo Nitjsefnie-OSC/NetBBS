@@ -441,10 +441,17 @@ and refuse the request), and pushes its own community events only to such a
 peer. A responder answers with community events only to a request that
 carries the `communities` map, which says the requester understands them."""
 
+LINK_MODERATION_CAPABILITY = "link_moderation"
+"""Issue #1357 (Decision 9): this node understands Link moderation -- an
+origin's `link_moderators` roster, and the delegated moderation events built
+on it. Rosters are pushed to, declared to and served to such a peer only: an
+older one would keep a roster as an opaque event it cannot place, and be
+offered it again on every pass."""
+
 LINK_CAPABILITIES: tuple[str, ...] = (
     INVENTORY_NOT_CARRIED_CAPABILITY, INVENTORY_PAGES_CAPABILITY, CHANNEL_RELAY_CAPABILITY, CHAT_BOTS_CAPABILITY,
     SEALED_ATTESTATIONS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY,
-    PRESENCE_RELAY_CAPABILITY, LINK_COMMUNITIES_CAPABILITY,
+    PRESENCE_RELAY_CAPABILITY, LINK_COMMUNITIES_CAPABILITY, LINK_MODERATION_CAPABILITY,
 )
 """Every optional behaviour this version advertises in its own descriptor."""
 
@@ -2988,3 +2995,143 @@ def verify_relay_consent_response(
     *current signing key* — same division of responsibility as
     `verify_relay_consent_request`."""
     return verify_signature(signing_verify_key, canonical_bytes(response.envelope), response.signature)
+
+
+# -- Link moderation (design doc §16, issue #1357) ----------------------------
+
+LINK_MODERATORS_OBJECT_TYPE = "link_moderators"
+"""Issue #1357, Decision 1: an origin's whole roster of delegated moderators."""
+
+MAX_LINK_MODERATORS = 200
+"""The most entries one roster holds (Decision 9)."""
+
+LINK_MODERATOR_SCOPE_KINDS = ("board", "channel")
+"""A single resource a roster entry may name; a Community and the whole
+origin are the other two scopes."""
+
+LINK_MODERATOR_PERMISSIONS = {
+    "board": ("delete", "edit"),
+    "channel": ("moderate", "topic"),
+}
+"""What a delegate may be given, per kind of resource (Decision 1): board
+post edits and removals, channel mute/ban and topic. A Community or origin
+scope may carry any of the four, each applying to the resources it fits."""
+
+ALL_LINK_MODERATOR_PERMISSIONS = ("delete", "edit", "moderate", "topic")
+
+MAX_LINK_MODERATOR_FIELD_LENGTH = 128
+"""The longest id or user name an entry may carry: the same bound as a
+Community's member ids."""
+
+LINK_EVENT_FUTURE_SKEW_SECONDS = 300
+"""How far ahead of the receiver's clock a signed `created_at` may be before
+it counts as its arrival time instead (Decision 8): the skew Link's signed
+requests allow, as for a received letter (§10)."""
+
+
+@dataclass(frozen=True)
+class LinkModerators(_SignedEvent):
+    """One signed `link_moderators` (issue #1357, Decision 1): the whole
+    roster of moderators an origin delegates, each with a scope and its
+    permissions. It replaces the previous roster rather than editing it, and
+    is not chained: the newest effective time from the origin wins, as for
+    `community_members`, so a removed entry is the revocation and a lost
+    update is repaired by the next one."""
+
+
+def link_moderator_entry_problem(entry: object) -> str | None:
+    """Why one roster entry is malformed, or `None`."""
+    if not isinstance(entry, dict) or set(entry) != {"moderator", "scope", "permissions"}:
+        return "an entry must have exactly moderator, scope and permissions"
+    moderator = entry["moderator"]
+    if (
+        not isinstance(moderator, dict)
+        or set(moderator) != {"kind", "home_node_fingerprint", "local_user_id"}
+        or moderator["kind"] != "node_vouched_user"
+    ):
+        return "an entry's moderator must be a node_vouched_user"
+    for field in ("home_node_fingerprint", "local_user_id"):
+        value = moderator[field]
+        if not isinstance(value, str) or not 0 < len(value) <= MAX_LINK_MODERATOR_FIELD_LENGTH:
+            return f"an entry's moderator has no valid {field}"
+    scope = entry["scope"]
+    if scope == "origin":
+        allowed = ALL_LINK_MODERATOR_PERMISSIONS
+    elif isinstance(scope, dict) and set(scope) == {"community"}:
+        if not isinstance(scope["community"], str) or not 0 < len(scope["community"]) <= MAX_LINK_MODERATOR_FIELD_LENGTH:
+            return "an entry's Community scope names no Community"
+        allowed = ALL_LINK_MODERATOR_PERMISSIONS
+    elif isinstance(scope, dict) and set(scope) == {"kind", "id"} and scope["kind"] in LINK_MODERATOR_SCOPE_KINDS:
+        if not isinstance(scope["id"], str) or not 0 < len(scope["id"]) <= MAX_LINK_MODERATOR_FIELD_LENGTH:
+            return "an entry's scope names no resource"
+        allowed = LINK_MODERATOR_PERMISSIONS[scope["kind"]]
+    else:
+        return "an entry's scope must be a board, a channel, a Community or the origin"
+    permissions = entry["permissions"]
+    if (
+        not isinstance(permissions, list)
+        or not permissions
+        or permissions != sorted(set(permissions))
+        or not set(permissions) <= set(allowed)
+    ):
+        return f"an entry's permissions must be a sorted, non-empty selection of {', '.join(allowed)}"
+    return None
+
+
+def link_moderator_scope_key(scope: object) -> tuple:
+    """A hashable form of an entry's scope, for telling entries apart."""
+    if scope == "origin":
+        return ("origin",)
+    if isinstance(scope, dict) and "community" in scope:
+        return ("community", scope["community"])
+    return (scope["kind"], scope["id"])
+
+
+def link_moderators_problem(entries: object) -> str | None:
+    """Why a roster is malformed, or `None`: a list of at most
+    `MAX_LINK_MODERATORS` well-formed entries, no moderator listed twice for
+    the same scope."""
+    if not isinstance(entries, list):
+        return "entries must be a list"
+    if len(entries) > MAX_LINK_MODERATORS:
+        return f"the roster has {len(entries)} entries, more than {MAX_LINK_MODERATORS}"
+    seen: set[tuple] = set()
+    for entry in entries:
+        problem = link_moderator_entry_problem(entry)
+        if problem is not None:
+            return problem
+        moderator = entry["moderator"]
+        key = (moderator["home_node_fingerprint"], moderator["local_user_id"], link_moderator_scope_key(entry["scope"]))
+        if key in seen:
+            return "the roster lists one moderator twice for the same scope"
+        seen.add(key)
+    return None
+
+
+def build_link_moderators(
+    *,
+    signing_identity: Identity,
+    origin_fingerprint: str,
+    entries: list[dict],
+    created_at: str,
+    nonce: str | None = None,
+) -> LinkModerators:
+    """Build and sign an origin's roster with its current signing key. Refuses
+    a roster a receiver would refuse."""
+    problem = link_moderators_problem(entries)
+    if problem is not None:
+        raise EventError(problem)
+    payload = {
+        "origin_fingerprint": origin_fingerprint,
+        "entries": entries,
+        "created_at": created_at,
+        "nonce": nonce if nonce is not None else secrets.token_hex(16),
+    }
+    envelope = build_envelope(LINK_MODERATORS_OBJECT_TYPE, payload)
+    return LinkModerators(envelope=envelope, signature=signing_identity.sign(canonical_bytes(envelope)))
+
+
+def verify_link_moderators(event: LinkModerators, signing_verify_key: nacl.signing.VerifyKey) -> bool:
+    """Verify a roster's signature against its origin's signing key;
+    resolving that key is the caller's job."""
+    return verify_signature(signing_verify_key, canonical_bytes(event.envelope), event.signature)

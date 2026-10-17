@@ -4588,4 +4588,36 @@ MIGRATIONS = [
             WHERE home_node_fingerprint IS NOT NULL;
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1357/#1359 (design doc §16, Link moderation, Decision 1): "
+            "`link_moderator_grants`, the moderation of this node's linked boards and channels "
+            "it delegates to users of other nodes (one row per moderator and scope: a board, a "
+            "channel, a Link Community or the whole origin), signed whole as this node's "
+            "`link_moderators` roster; and `link_moderator_rosters`, the one roster in force per "
+            "origin, this node's own and others' received, replaced only by a newer one by "
+            "effective time (Decision 8). Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE link_moderator_grants (
+            id                     INTEGER PRIMARY KEY,
+            home_node_fingerprint  TEXT NOT NULL,
+            local_user_id          TEXT NOT NULL,
+            scope_kind             TEXT NOT NULL CHECK (scope_kind IN ('board', 'channel', 'community', 'origin')),
+            scope_id               TEXT,
+            permissions            TEXT NOT NULL,
+            granted_at             TEXT NOT NULL,
+            CHECK ((scope_kind = 'origin') = (scope_id IS NULL))
+        );
+        CREATE UNIQUE INDEX idx_link_moderator_grants_one
+            ON link_moderator_grants(home_node_fingerprint, local_user_id, scope_kind, IFNULL(scope_id, ''));
+        CREATE TABLE link_moderator_rosters (
+            origin_fingerprint  TEXT PRIMARY KEY,
+            content_id          TEXT NOT NULL,
+            envelope_json       TEXT NOT NULL,
+            effective_at        TEXT NOT NULL,
+            received_at         TEXT NOT NULL
+        );
+        """,
+    ),
 ]

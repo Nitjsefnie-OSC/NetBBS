@@ -90,6 +90,9 @@ from netbbs.link.events import (
     COMMUNITY_CLOSURE_OBJECT_TYPE,
     COMMUNITY_GENESIS_OBJECT_TYPE,
     COMMUNITY_MEMBERS_OBJECT_TYPE,
+    LINK_MODERATORS_OBJECT_TYPE,
+    LINK_MODERATION_CAPABILITY,
+    descriptor_has_capability,
     FILE_AREA_GENESIS_OBJECT_TYPE,
     FILE_DESCRIPTOR_OBJECT_TYPE,
     LINK_MESSAGE_ACCEPTED_OBJECT_TYPE,
@@ -187,6 +190,7 @@ from netbbs.link.protocol import (
     validate_realtime_frame_payload,
 )
 from netbbs.link.carry import KIND_LABELS, accept_genesis, genesis_kind
+from netbbs.link.moderators import all_roster_content_ids, store_received_roster
 from netbbs.link.communities import (
     CarryCaps,
     accept_community_genesis,
@@ -525,6 +529,16 @@ async def persist_accepted_events(
             if not kept:
                 node.known_event_ids.discard(content_id)
                 node.events.pop(content_id, None)
+            continue
+        if object_type == LINK_MODERATORS_OBJECT_TYPE:
+            # Issue #1357: one roster per origin, the newest by effective time
+            # in force; an older one is simply not kept.
+            try:
+                await lane.run(store_received_roster, envelope=envelope, content_id=content_id)
+            except BaseException:
+                node.known_event_ids.discard(content_id)
+                node.events.pop(content_id, None)
+                raise
             continue
         mail_decision = (
             await lane.run(
@@ -2357,6 +2371,11 @@ class LinkServer:
         # sent the `communities` map (it understands them). At most three
         # events per Community, so they cannot crowd out the rest, while
         # behind a board backlog they would wait for it to drain.
+        # Issue #1357: rosters go only to a requester that understands them.
+        requester = self._node.peers.get(fingerprint)
+        rosters = requester is not None and descriptor_has_capability(
+            requester.descriptor, LINK_MODERATION_CAPABILITY,
+        )
         if inventory_request.communities is not None:
             community_events, community_truncated = await self._lane.run(
                 community_event_diff, inventory_request.communities, limit=response_limit,
@@ -2370,7 +2389,7 @@ class LinkServer:
             board_events, board_truncated = await self._lane.run(
                 board_event_diff, inventory_request.boards, limit=board_limit,
                 not_carried=not_carried.get("boards", ()), page=inventory_request.page,
-                page_salt=inventory_request.nonce,
+                page_salt=inventory_request.nonce, rosters=rosters,
             )
         else:
             board_events, board_truncated = [], True
@@ -2379,7 +2398,7 @@ class LinkServer:
             channel_events, channel_truncated = await self._lane.run(
                 channel_event_diff, inventory_request.channels, limit=remaining,
                 not_carried=not_carried.get("channels", ()), page=inventory_request.page,
-                page_salt=inventory_request.nonce,
+                page_salt=inventory_request.nonce, rosters=rosters,
             )
         else:
             channel_events, channel_truncated = [], True
