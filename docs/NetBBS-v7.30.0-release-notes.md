@@ -107,10 +107,19 @@ not that NetBBS interoperates with any other software.
   migrates from schema 134 to 139. The new tables start empty, and nothing
   changes until someone grants a Link moderator, sends a mute or topic, or
   offers a channel.
-- **Rollback to v7.29.0 — MANUAL:** v7.29.0 refuses a database at schema 139,
-  so restore the backup taken before upgrading, then install the previous
-  wheel. Grants, Link mutes and bans, topics and channel handoffs made since
-  the upgrade are lost from this node; other nodes keep theirs.
+- **Rollback to v7.29.0 — MANUAL:** v7.29.0 refuses a database newer than
+  schema 134 ("database schema version 139 is newer than this NetBBS build
+  supports (134)"). Stop NetBBS, install the v7.29.0 wheel, then restore the
+  backup taken before the upgrade with `python -m netbbs.backup restore`. In
+  that order: a restore run by v7.30.0 would migrate the backup straight back
+  to 139. Anything since the upgrade is lost with it: moderator grants, Link
+  mutes, bans and topics, channel handoffs, and every other post, message and
+  setting.
+- **What peers learned does not roll back with you.** Other nodes keep the
+  grants, mutes, bans and topics this node signed, and a channel handoff it
+  took part in. **MANUAL —** do not roll back after this node accepted or
+  offered a channel's origin: peers would go on treating the new origin as
+  authoritative while this node no longer knows it.
 - **Mixed versions:** a node on v7.29.0 or earlier is never sent the new
   events or frames. It keeps showing what newer nodes hide, and its callers
   can't be invited to a cross-node direct chat.
