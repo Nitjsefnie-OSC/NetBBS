@@ -44,7 +44,9 @@ The design document is split by area (issue #1394):
   gets a line in the section map.
 - Each §16 decision lives in its own file, `docs/design/decisions/NNNN-<slug>.md`,
   named after its issue (zero-padded), with a row in
-  `docs/design/16-decisions.md`. A scoping decision adds a new file and a row;
+  `docs/design/16-decisions.md`. A decision that has no issue of its own is
+  named by its slug alone, `docs/design/decisions/<slug>.md`, and its row
+  shows no issue number. A scoping decision adds a new file and a row;
   it never grows another decision's file. Write the resulting rule into the
   area section it changes as well: the area text is the normative answer, and
   the decision file keeps the reasoning and the rejected alternatives.

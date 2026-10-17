@@ -31,7 +31,8 @@ developer handbook) were updated.
 **Decision 4 — one file per decision.** Each §16 entry lives in
 `docs/design/decisions/NNNN-<slug>.md`, named after its issue zero-padded so
 the directory lists in issue order, and `16-decisions.md` is an index table
-(issue, decision, state). A new scoping decision adds a file and a row; it
+(issue, decision, state). The few decisions that never had an issue of their
+own are named by their slug alone and listed after the numbered ones. A new scoping decision adds a file and a row; it
 does not edit anyone else's. Rejected:
 - **keeping §16 as one file**, which left a 5,700-line file in place and the
   collisions with it;
