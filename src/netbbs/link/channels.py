@@ -10,13 +10,11 @@ Mirrors `netbbs.link.boards` as closely as the underlying local
 resources allow -- see that module's own docstring for the "why here,
 not in netbbs.chat" reasoning, unchanged for channels. Two real
 differences, both inherited from how local channels already differ from
-local boards, not invented for Link:
-
-- no edit chain (`channel_message_edit` doesn't exist -- chat messages
-  have no local edit concept at all, design doc §9.6);
-- no origin-succession event types yet (`channel_origin_transfer_offer`/
-  `_accepted` aren't built in this issue -- §9.4's model applies
-  unchanged by reference if a future issue ever needs it).
+local boards, not invented for Link: there is no edit chain
+(`channel_message_edit` doesn't exist -- chat messages have no local edit
+concept at all, design doc §9.6). Origin succession
+(`channel_origin_transfer_offer`/`_accepted`, issue #1359) follows §9.4's
+board model and is at the end of this module.
 
 Every function here is plain and synchronous, `db`-first, same calling
 convention as `netbbs.link.boards`.
@@ -31,10 +29,16 @@ from netbbs.chat.channels import OPEN_ROOM_NAME_PREFIX, Channel
 from netbbs.chat.scrollback import ChannelMessage as LocalChannelMessage, get_scrollback_limit
 from netbbs.link.events import (
     CHANNEL_MESSAGE_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE,
     ChannelGenesis,
     ChannelMessage,
+    ChannelOriginTransferAccepted,
+    ChannelOriginTransferOffer,
     build_channel_genesis,
     build_channel_message,
+    build_channel_origin_transfer_accepted,
+    build_channel_origin_transfer_offer,
+    event_content_id,
 )
 from netbbs.link.local_names import free_local_name
 from netbbs.link.node_identity import NodeIdentity
@@ -191,16 +195,23 @@ def get_channel_by_channel_id(db: Database, channel_id: str) -> Channel | None:
 
 
 def channel_origin_fingerprint(db: Database, channel: Channel) -> str | None:
-    """`channel`'s `channel_genesis.payload["origin_fingerprint"]`, or
-    `None` if `channel` isn't Linked at all -- Phase 5's real-time
-    subscribe path (design doc §8.10.2) dials/subscribes to a linked
-    channel's origin node specifically, the same node async catch-up
-    already treats as authoritative for it."""
+    """The node currently authoritative for linked `channel`, or `None` if
+    it isn't Linked at all: the new origin once a transfer completed (issue
+    #1359), else its genesis's. Phase 5's real-time subscribe path (design
+    doc §8.10.2) dials this node, the same one async catch-up treats as
+    authoritative."""
+    return channel_origin_by_id(db, channel.channel_id)
+
+
+def channel_origin_by_id(db: Database, channel_id: str) -> str | None:
+    """`channel_origin_fingerprint`, by the channel's Link id."""
     row = db.connection.execute(
-        "SELECT link_genesis_json FROM channels WHERE id = ?", (channel.id,)
+        "SELECT link_origin_fingerprint, link_genesis_json FROM channels WHERE channel_id = ?", (channel_id,)
     ).fetchone()
     if row is None or row["link_genesis_json"] is None:
         return None
+    if row["link_origin_fingerprint"] is not None:
+        return row["link_origin_fingerprint"]
     return json.loads(row["link_genesis_json"])["envelope"]["payload"]["origin_fingerprint"]
 
 
@@ -511,8 +522,8 @@ def load_own_channel_events(db: Database, own_fingerprint: str) -> list[ChannelG
     This node's own originated `channel_genesis`/`channel_message`
     events, read directly off the `channels`/`channel_messages` tables'
     own columns -- mirrors `netbbs.link.boards.load_own_board_events`
-    exactly, minus the lifecycle-event half (no origin succession for
-    channels yet, see module docstring).
+    exactly, minus the lifecycle-event half, which
+    `load_own_channel_lifecycle_events` supplies (issue #1359).
     """
     events: list[ChannelGenesis | ChannelMessage] = []
     for row in db.connection.execute(
@@ -527,4 +538,96 @@ def load_own_channel_events(db: Database, own_fingerprint: str) -> list[ChannelG
             WHERE m.link_event_json IS NOT NULL AND c.link_hidden_at IS NULL"""
     ):
         events.append(ChannelMessage.from_dict(json.loads(row["link_event_json"])))
+    return events
+
+
+# -- origin succession (issue #1359, design doc §16 issue #1357, Decision 5) -----
+
+
+def _channel_lifecycle_head(db: Database, channel: Channel) -> str:
+    """The content id this node's next lifecycle event for `channel` names as
+    `previous_event_id`: its own latest one on file, else the genesis --
+    `netbbs.link.boards._current_lifecycle_head`, for a channel."""
+    row = db.connection.execute(
+        "SELECT link_genesis_json, link_lifecycle_json FROM channels WHERE id = ?", (channel.id,)
+    ).fetchone()
+    if row["link_lifecycle_json"] is not None:
+        return event_content_id(json.loads(row["link_lifecycle_json"])["envelope"])
+    return ChannelGenesis.from_dict(json.loads(row["link_genesis_json"])).content_id
+
+
+def offer_channel_origin_transfer(
+    db: Database, channel: Channel, *, node_identity: NodeIdentity, new_origin_fingerprint: str,
+) -> ChannelOriginTransferOffer:
+    """Sign and keep an offer handing linked `channel` to
+    `new_origin_fingerprint`, as `offer_board_origin_transfer` does for a
+    board: only from its current origin, and one offer at a time."""
+    current_origin = channel_origin_fingerprint(db, channel)
+    if current_origin is None:
+        raise LinkChannelsError(f"channel {channel.name!r} is not Linked")
+    if current_origin != node_identity.fingerprint:
+        raise LinkChannelsError(f"this node is not channel {channel.name!r}'s current origin")
+    row = db.connection.execute("SELECT link_lifecycle_json FROM channels WHERE id = ?", (channel.id,)).fetchone()
+    if row["link_lifecycle_json"] is not None and json.loads(row["link_lifecycle_json"])["envelope"][
+        "object_type"
+    ] == CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE:
+        raise LinkChannelsError(f"channel {channel.name!r} already has an outstanding, unaccepted transfer offer")
+    offer = build_channel_origin_transfer_offer(
+        signing_identity=node_identity.signing_key, channel_id=channel.channel_id,
+        previous_event_id=_channel_lifecycle_head(db, channel), old_origin_fingerprint=current_origin,
+        new_origin_fingerprint=new_origin_fingerprint, created_at=utc_now_iso(),
+    )
+    db.connection.execute(
+        "UPDATE channels SET link_lifecycle_json = ? WHERE id = ?", (json.dumps(offer.to_dict()), channel.id)
+    )
+    db.connection.commit()
+    return offer
+
+
+def accept_channel_origin_transfer(
+    db: Database, channel: Channel, *, node_identity: NodeIdentity, offer: ChannelOriginTransferOffer,
+) -> ChannelOriginTransferAccepted:
+    """Sign and keep this node's acceptance of `offer`, which must name it,
+    and record it as `channel`'s origin from now on."""
+    if offer.payload.get("new_origin_fingerprint") != node_identity.fingerprint:
+        raise LinkChannelsError("this offer does not name this node as the proposed new origin")
+    accepted = build_channel_origin_transfer_accepted(
+        signing_identity=node_identity.signing_key, channel_id=channel.channel_id,
+        previous_event_id=offer.content_id, new_origin_fingerprint=node_identity.fingerprint,
+        created_at=utc_now_iso(),
+    )
+    db.connection.execute(
+        "UPDATE channels SET link_lifecycle_json = ? WHERE id = ?", (json.dumps(accepted.to_dict()), channel.id)
+    )
+    db.connection.commit()
+    record_channel_origin_change(db, channel.channel_id, node_identity.fingerprint)
+    return accepted
+
+
+def record_channel_origin_change(db: Database, channel_id: str, new_origin_fingerprint: str) -> None:
+    """Persist a verified handoff of linked channel `channel_id` to
+    `new_origin_fingerprint`, whether this node took part or only witnessed
+    it -- `record_board_origin_change`, for a channel. A no-op for a
+    channel not here."""
+    db.connection.execute(
+        "UPDATE channels SET link_origin_fingerprint = ? WHERE channel_id = ?", (new_origin_fingerprint, channel_id)
+    )
+    db.connection.commit()
+
+
+def load_own_channel_lifecycle_events(db: Database) -> list[ChannelOriginTransferOffer | ChannelOriginTransferAccepted]:
+    """This node's own latest lifecycle event per linked channel -- its offer
+    as origin, or its acceptance as the new one -- pushed every pass until
+    every carrier has it, as for a board."""
+    events: list = []
+    for row in db.connection.execute(
+        "SELECT link_lifecycle_json FROM channels WHERE link_lifecycle_json IS NOT NULL AND link_hidden_at IS NULL"
+    ):
+        raw = json.loads(row["link_lifecycle_json"])
+        cls = (
+            ChannelOriginTransferOffer
+            if raw["envelope"]["object_type"] == CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE
+            else ChannelOriginTransferAccepted
+        )
+        events.append(cls.from_dict(raw))
     return events

@@ -272,12 +272,7 @@ def load_own_restrictions(db: Database, own_fingerprint: str) -> list[ChannelRes
             if moderator.get("home_node_fingerprint") == own_fingerprint:
                 own.append(ChannelRestriction.from_dict(raw))
             continue
-        row = db.connection.execute(
-            "SELECT link_genesis_json FROM channels WHERE channel_id = ?", (payload["channel_id"],)
-        ).fetchone()
-        if row is not None and row["link_genesis_json"] is not None and json.loads(row["link_genesis_json"])[
-            "envelope"
-        ]["payload"].get("origin_fingerprint") == own_fingerprint:
+        if _channel_origin(db, payload["channel_id"]) == own_fingerprint:
             own.append(ChannelRestriction.from_dict(raw))
     return own
 
@@ -288,12 +283,9 @@ def restriction_reach(db: Database, channel, *, node_identity, actor) -> dict | 
     (it signs as the origin), the delegated-moderator reference when the
     origin's roster lets `actor` moderate it here (Decision 2), `None` when
     it stays on this node."""
-    row = db.connection.execute(
-        "SELECT link_genesis_json FROM channels WHERE id = ?", (channel.id,)
-    ).fetchone()
-    if row is None or row["link_genesis_json"] is None:
+    origin = _channel_origin(db, channel.channel_id)
+    if origin is None:
         return None
-    origin = json.loads(row["link_genesis_json"])["envelope"]["payload"].get("origin_fingerprint")
     if origin == node_identity.fingerprint:
         return {}
     from netbbs.link.moderators import holds_link_permission
@@ -349,12 +341,10 @@ def sign_channel_restriction(
 
 
 def _channel_origin(db: Database, channel_id: str) -> str | None:
-    row = db.connection.execute(
-        "SELECT link_genesis_json FROM channels WHERE channel_id = ?", (channel_id,)
-    ).fetchone()
-    if row is None or row["link_genesis_json"] is None:
-        return None
-    return json.loads(row["link_genesis_json"])["envelope"]["payload"].get("origin_fingerprint")
+    """The linked channel's current origin (issue #1359), or `None`."""
+    from netbbs.link.channels import channel_origin_by_id
+
+    return channel_origin_by_id(db, channel_id)
 
 
 def store_received_topic(db: Database, *, envelope: dict, content_id: str, arrived_at: str | None = None) -> str:

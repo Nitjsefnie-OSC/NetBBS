@@ -94,6 +94,7 @@ from netbbs.link.events import (
     LINK_MODERATION_CAPABILITY,
     CHANNEL_RESTRICTION_OBJECT_TYPE,
     CHANNEL_TOPIC_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
     descriptor_has_capability,
     FILE_AREA_GENESIS_OBJECT_TYPE,
     FILE_DESCRIPTOR_OBJECT_TYPE,
@@ -868,6 +869,14 @@ async def persist_accepted_events(
             )
             # Issue #1308 (Decision 1): a member whose origin moved away
             # drops out of the Community's copy.
+            await lane.run(place_all_subscriptions)
+        elif object_type == CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE:
+            # Issue #1359 (Decision 5): a linked channel's handoff, witnessed
+            # or taken part in, persisted as for a board.
+            from netbbs.link.channels import record_channel_origin_change
+
+            payload = envelope["envelope"]["payload"]
+            await lane.run(record_channel_origin_change, payload["channel_id"], payload["new_origin_fingerprint"])
             await lane.run(place_all_subscriptions)
         elif object_type == BOARD_CLOSURE_OBJECT_TYPE:
             # Design doc §9.5, issue #88: a bystander witnessing someone

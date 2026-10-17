@@ -25,7 +25,7 @@ from netbbs.communities import (
 from netbbs.files.areas import FileArea
 from netbbs.link.boards import LinkContext
 from netbbs.link.enforcement import node_transport_state
-from netbbs.link.node_profiles import identity_for_peer, latest_identity_observation
+from netbbs.link.node_profiles import identity_for_peer, latest_identity_observation, presentations_confusable
 from netbbs.link.carry import KIND_LABELS, CarryDecisionError, remove_linked_or_local
 from netbbs.net.node_map_flow import own_content_at_peer
 from netbbs.moderation.roles import BoardPermission, list_grants_for_object
@@ -43,7 +43,7 @@ from netbbs.rendering import (
 from netbbs.rendering.detail import Field, Note, Section, render_sections
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
-from netbbs.net.admin_ui import _announce_line, _confirmation_refused
+from netbbs.net.admin_ui import _announce_line, _confirmation_refused, pick_item
 
 
 _MAX_REACH_ROWS = 6
@@ -301,6 +301,53 @@ async def _warn_about_changed_node_identity(
             bold=True,
         )
     )
+
+
+async def _pick_new_origin(
+    session: Session, lane: DatabaseLane, link_context: LinkContext, *, title: str,
+) -> tuple[str, str] | None:
+    """Pick the peer to hand a linked resource's origin to (§9.4; issue #1359
+    for channels): `(fingerprint, label)`, or `None` when there is none or
+    the SysOp backs out. Peers are shown by their authenticated name; one
+    whose name could be confused with another's is shown by fingerprint
+    first, so a narrow picker cannot cut away the only difference."""
+    from netbbs.net.node_theme import effective_accent_color_256, effective_header_color_256
+
+    peers = sorted(
+        link_context.link_node.peers.values(), key=lambda peer: identity_for_peer(peer).label.lower()
+    )
+    identities = {peer.fingerprint: identity_for_peer(peer) for peer in peers}
+    confusable = {
+        fingerprint for fingerprint, identity in identities.items()
+        if any(
+            presentations_confusable(identity, other)
+            for other_fingerprint, other in identities.items() if other_fingerprint != fingerprint
+        )
+    }
+
+    def _candidate_label(peer) -> str:
+        identity = identities[peer.fingerprint]
+        if peer.fingerprint in confusable:
+            return f"{peer.fingerprint} ({identity.label})"
+        return identity.label
+
+    if not peers:
+        return None
+    selected = await pick_item(
+        session, peers,
+        name_of=_candidate_label,
+        stable_id_of=lambda peer: id(peer),
+        title=title,
+        empty_message="No known peers.",
+        redraw_in_place=False,
+        unicode_style=False,
+        collapsed=False,
+        accent_color=await lane.run(effective_accent_color_256),
+        header_color=await lane.run(effective_header_color_256),
+    )
+    if selected is None:
+        return None
+    return selected.fingerprint, sanitize_text(_candidate_label(selected))
 
 
 def _linked_node_label(link_context, fingerprint) -> str:

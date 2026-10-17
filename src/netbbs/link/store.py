@@ -45,6 +45,8 @@ from netbbs.link.events import (
     BOARD_POST_MODERATOR_EDIT_OBJECT_TYPE,
     BOARD_POST_TOMBSTONE_OBJECT_TYPE,
     CHANNEL_GENESIS_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE,
     COMMUNITY_CLOSURE_OBJECT_TYPE,
     COMMUNITY_GENESIS_OBJECT_TYPE,
     COMMUNITY_MEMBERS_OBJECT_TYPE,
@@ -203,6 +205,13 @@ def load_link_node(db: Database, identity: NodeIdentity) -> LinkNode:
             node.board_origin[board_id] = own_accepted.payload["new_origin_fingerprint"]
             node.board_lifecycle_head[board_id] = own_accepted.content_id
 
+    # Issue #1359: this node's own latest channel lifecycle event, as for a
+    # board above; what peers sent follows from link_events and wins.
+    for row in db.connection.execute(
+        "SELECT link_lifecycle_json FROM channels WHERE link_lifecycle_json IS NOT NULL"
+    ):
+        _replay_channel_lifecycle(node, json.loads(row["link_lifecycle_json"]))
+
     # Issue #1022: kept opaque events are known, so a resend is not taken
     # again -- except those of a type this build understands, which
     # `rejudge_opaque_events` puts through the real checks at startup.
@@ -265,6 +274,10 @@ def load_link_node(db: Database, identity: NodeIdentity) -> LinkNode:
             board_id = peer_closure.payload["board_id"]
             node.board_closures[board_id] = peer_closure
             node.board_lifecycle_head[board_id] = peer_closure.content_id
+        elif row["object_type"] in (
+            CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE, CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
+        ):
+            _replay_channel_lifecycle(node, envelope)
         elif row["object_type"] == FILE_AREA_GENESIS_OBJECT_TYPE:
             # Design doc §11, issue #89: same restart-forgets-state
             # reasoning as CHANNEL_GENESIS_OBJECT_TYPE above, applied to
@@ -716,9 +729,38 @@ _BOARD_SCOPED_OBJECT_TYPES = frozenset(
 )
 
 
+# Issue #1359: a linked channel's lifecycle events are filed by channel, so
+# they are in its inventory.
+_CHANNEL_SCOPED_OBJECT_TYPES = frozenset({
+    CHANNEL_GENESIS_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
+})
+
+
 _COMMUNITY_OBJECT_TYPES = frozenset(
     {COMMUNITY_GENESIS_OBJECT_TYPE, COMMUNITY_MEMBERS_OBJECT_TYPE, COMMUNITY_CLOSURE_OBJECT_TYPE}
 )
+
+
+def _replay_channel_lifecycle(node, raw: dict) -> None:
+    """Put one channel lifecycle event on file back into the running node's
+    state at startup (issue #1359), as the board loop above does."""
+    from netbbs.link.events import ChannelOriginTransferAccepted, ChannelOriginTransferOffer
+
+    if raw["envelope"]["object_type"] == CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE:
+        offer = ChannelOriginTransferOffer.from_dict(raw)
+        channel_id = offer.payload["channel_id"]
+        node.channel_lifecycle.pending_origin_transfers[channel_id] = offer
+        node.channel_lifecycle.board_lifecycle_head[channel_id] = offer.content_id
+    else:
+        accepted = ChannelOriginTransferAccepted.from_dict(raw)
+        channel_id = accepted.payload["channel_id"]
+        node.channel_lifecycle.board_origin[channel_id] = accepted.payload["new_origin_fingerprint"]
+        node.channel_lifecycle.board_lifecycle_head[channel_id] = accepted.content_id
+        node.channel_lifecycle.pending_origin_transfers.pop(channel_id, None)
+    node.known_event_ids.add(event_content_id(raw["envelope"]))
+    node.events[event_content_id(raw["envelope"])] = raw
 
 
 def save_event(
@@ -767,7 +809,7 @@ def save_event(
     # once the row already conflicts and this insert is a no-op anyway.
     board_id = envelope["envelope"]["payload"].get("board_id") if object_type in _BOARD_SCOPED_OBJECT_TYPES else None
     channel_id = (
-        envelope["envelope"]["payload"].get("channel_id") if object_type == CHANNEL_GENESIS_OBJECT_TYPE else None
+        envelope["envelope"]["payload"].get("channel_id") if object_type in _CHANNEL_SCOPED_OBJECT_TYPES else None
     )
     file_area_id = (
         envelope["envelope"]["payload"].get("area_id") if object_type == FILE_AREA_GENESIS_OBJECT_TYPE else None
@@ -1609,10 +1651,10 @@ def board_event_diff(
 def _all_channel_events(db: Database, channel_id: str) -> dict[str, dict]:
     """
     Every channel-scoped event this node has on file for `channel_id`,
-    keyed by `content_id` -- mirrors `_all_board_events` exactly, minus
-    that function's own lifecycle-event source (no origin succession for
-    channels yet, design doc §9.6) and its board_post_edit branch (no
-    edit chain for channel messages):
+    keyed by `content_id` -- mirrors `_all_board_events`, minus its
+    board_post_edit branch (no edit chain for channel messages). This
+    node's own transfer offer or acceptance (`link_lifecycle_json`, issue
+    #1359) rides with source 1; a peer's is in `link_events`:
 
     1. `channels.link_genesis_json` for this channel's own row -- a
        self-originated channel's genesis (never in `link_events`) or a
@@ -1630,16 +1672,23 @@ def _all_channel_events(db: Database, channel_id: str) -> dict[str, dict]:
     events: dict[str, dict] = {}
 
     channel_row = db.connection.execute(
-        "SELECT id, link_genesis_json, link_hidden_at FROM channels WHERE channel_id = ?", (channel_id,)
+        "SELECT id, link_genesis_json, link_lifecycle_json, link_hidden_at FROM channels WHERE channel_id = ?",
+        (channel_id,)
     ).fetchone()
     if channel_row is None or channel_row["link_hidden_at"] is not None:
         return events
     if channel_row["link_genesis_json"] is not None:
         raw = json.loads(channel_row["link_genesis_json"])
         events[ChannelGenesis.from_dict(raw).content_id] = raw
-        # Issue #1357: the origin's roster, as for a board, and the mutes and
-        # bans in force in the channel.
-        events.update(roster_events_for(db, raw["envelope"]["payload"].get("origin_fingerprint")))
+        # Issue #1357: the current origin's roster, as for a board, and the
+        # mutes and bans in force in the channel.
+        from netbbs.link.channels import channel_origin_by_id
+
+        events.update(roster_events_for(db, channel_origin_by_id(db, channel_id)))
+        if channel_row["link_lifecycle_json"] is not None:
+            # Issue #1359: this node's own transfer offer or acceptance.
+            lifecycle = json.loads(channel_row["link_lifecycle_json"])
+            events[event_content_id(lifecycle["envelope"])] = lifecycle
         from netbbs.link.channel_moderation import restriction_events_for, topic_events_for
 
         events.update(restriction_events_for(db, channel_id))

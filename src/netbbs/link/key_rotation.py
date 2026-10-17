@@ -65,6 +65,7 @@ _OWN_SIGNED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("boards", "link_lifecycle_json"),
     ("posts", "link_event_json"),
     ("channels", "link_genesis_json"),
+    ("channels", "link_lifecycle_json"),
     ("channel_messages", "link_event_json"),
     ("file_areas", "link_genesis_json"),
     ("files", "link_event_json"),

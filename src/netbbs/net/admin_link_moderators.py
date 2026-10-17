@@ -84,10 +84,13 @@ def own_scopes(db: Database, own_fingerprint: str) -> list[_Scope]:
         if origin == own_fingerprint:
             scopes.append(_Scope("board", row["board_id"], f"Board {row['name']}"))
     for row in db.connection.execute(
-        "SELECT name, channel_id, link_genesis_json FROM channels WHERE link_genesis_json IS NOT NULL "
-        "ORDER BY name COLLATE NOCASE"
+        "SELECT name, channel_id, link_genesis_json, link_origin_fingerprint FROM channels "
+        "WHERE link_genesis_json IS NOT NULL ORDER BY name COLLATE NOCASE"
     ):
-        if json.loads(row["link_genesis_json"])["envelope"]["payload"].get("origin_fingerprint") == own_fingerprint:
+        origin = row["link_origin_fingerprint"] or json.loads(row["link_genesis_json"])["envelope"]["payload"].get(
+            "origin_fingerprint"
+        )
+        if origin == own_fingerprint:
             scopes.append(_Scope("channel", row["channel_id"], f"Channel #{row['name']}"))
     return scopes
 

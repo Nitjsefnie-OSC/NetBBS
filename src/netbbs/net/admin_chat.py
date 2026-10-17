@@ -34,9 +34,12 @@ from netbbs.communities import get_community
 from netbbs.link.boards import LinkContext
 from netbbs.link.channels import (
     LinkChannelsError,
+    accept_channel_origin_transfer,
+    channel_origin_fingerprint,
     is_channel_linked,
     link_channel,
     linked_channel_ids,
+    offer_channel_origin_transfer,
 )
 from netbbs.link.carry import (
     CarryDecisionError,
@@ -128,6 +131,9 @@ from netbbs.net.admin_resources import (
     _peer_reach_rows,
     _remove_resource,
     _sections_text,
+    _linked_node_label,
+    _pick_new_origin,
+    _warn_about_changed_node_identity,
 )
 from netbbs.net.admin_boards import _category_field, _community_field
 
@@ -365,6 +371,100 @@ def _channel_draft(channel: Channel | None) -> dict:
     }
 
 
+def _channel_origin_rows(link_context: LinkContext, origin: str | None, channel_id: str) -> list[Field | Note]:
+    """Who a linked channel comes from, and an origin handoff in flight
+    (issue #1359)."""
+    own = link_context.node_identity.fingerprint
+    rows: list[Field | Note] = [Field("Origin", "this node" if origin == own else _linked_node_label(link_context, origin))]
+    offer = link_context.link_node.channel_lifecycle.pending_offer(channel_id)
+    if offer is not None:
+        if offer.payload.get("new_origin_fingerprint") == own:
+            rows.append(Note(
+                f"{_linked_node_label(link_context, offer.payload.get('old_origin_fingerprint'))} offers to hand "
+                "this channel to this node. Accept transfer to take it over.",
+                color=WARNING_COLOR,
+            ))
+        elif origin == own:
+            rows.append(Note(
+                f"Your offer to hand it to {_linked_node_label(link_context, offer.payload.get('new_origin_fingerprint'))} "
+                "waits for that node to accept.",
+            ))
+    return rows
+
+
+async def _transfer_channel_origin_screen(
+    session: Session, lane: DatabaseLane, channel: Channel, link_context: LinkContext,
+) -> None:
+    """`[T]ransfer origin` (issue #1359, design doc §16 issue #1357, Decision
+    5): offer a known peer this linked channel's origin. Alone it changes
+    nothing; that peer's SysOp accepts on their node."""
+    await session.write_line(
+        colored("\r\nTransfer chat channel origin", fg_color=await lane.run(effective_header_color_256), bold=True)
+    )
+    if not link_context.link_node.peers:
+        _announce_line(session, colored("No known peers to transfer this chat channel to.", fg_color=MUTED_COLOR))
+        return
+    picked = await _pick_new_origin(session, lane, link_context, title="New chat-channel origin")
+    if picked is None:
+        return
+    target, target_label = picked
+    await _warn_about_changed_node_identity(session, lane, target, role="The proposed new origin's")
+    if not await prompt_yes_no(session, f"Offer to hand #{channel.name} off to {target_label}?", default=False):
+        _announce_line(session, "Cancelled.")
+        return
+    try:
+        offer = await lane.run(
+            offer_channel_origin_transfer, channel, node_identity=link_context.node_identity,
+            new_origin_fingerprint=target,
+        )
+    except LinkChannelsError as exc:
+        _announce_line(session, colored(f"Could not offer transfer: {exc}", fg_color=MUTED_COLOR))
+        return
+    node = link_context.link_node
+    node.channel_lifecycle.record_offer(channel.channel_id, offer)
+    node.known_event_ids.add(offer.content_id)
+    node.events[offer.content_id] = offer.to_dict()
+    _announce_line(session, "Offer sent -- it will be pushed to peers on the next sync pass.")
+
+
+async def _accept_channel_origin_transfer_screen(
+    session: Session, lane: DatabaseLane, channel: Channel, link_context: LinkContext,
+) -> None:
+    """`[A]ccept transfer` (issue #1359): take over this linked channel's
+    origin, as the pending offer naming this node proposes."""
+    node = link_context.link_node
+    offer = node.channel_lifecycle.pending_offer(channel.channel_id)
+    if offer is None or offer.payload.get("new_origin_fingerprint") != link_context.node_identity.fingerprint:
+        _announce_line(session, colored("\r\nNo pending incoming offer for this chat channel.", fg_color=MUTED_COLOR))
+        return
+    old_origin = offer.payload.get("old_origin_fingerprint")
+    await session.write_line(
+        colored("\r\nAccept chat channel origin", fg_color=await lane.run(effective_header_color_256), bold=True)
+    )
+    if isinstance(old_origin, str):
+        await _warn_about_changed_node_identity(session, lane, old_origin, role="The offering node's")
+    old_label = sanitize_text(_linked_node_label(link_context, old_origin))
+    if not await prompt_yes_no(session, f"Accept origin of #{channel.name} from {old_label}?", default=False):
+        _announce_line(session, "Cancelled.")
+        return
+    try:
+        accepted = await lane.run(
+            accept_channel_origin_transfer, channel, node_identity=link_context.node_identity, offer=offer,
+        )
+    except LinkChannelsError as exc:
+        _announce_line(session, colored(f"Could not accept transfer: {exc}", fg_color=MUTED_COLOR))
+        return
+    node.channel_lifecycle.record_acceptance(
+        channel.channel_id, new_origin_fingerprint=link_context.node_identity.fingerprint,
+        accepted_content_id=accepted.content_id,
+    )
+    node.known_event_ids.add(accepted.content_id)
+    node.events[accepted.content_id] = accepted.to_dict()
+    _announce_line(
+        session, f"Accepted -- this node is now #{channel.name}'s origin. Pushed to peers on the next sync pass.",
+    )
+
+
 async def _channel_sharing_rows(
     lane: DatabaseLane, channel: Channel, link_context: LinkContext | None, *, linked: bool,
     mrc_mapping: MrcChannelMapping | None,
@@ -374,6 +474,9 @@ async def _channel_sharing_rows(
     if link_context is not None:
         sharing.append(Field("Linked", _yes_no(linked)))
         if linked:
+            sharing.extend(_channel_origin_rows(
+                link_context, await lane.run(channel_origin_fingerprint, channel), channel.channel_id,
+            ))
             sharing.extend(
                 await _peer_reach_rows(lane, link_context, link_context.link_node.channels.get(channel.channel_id))
             )
@@ -502,6 +605,14 @@ async def _channel_screen(
             await _link_channel_screen(session, lane, actor, channel, link_context)
             return False
 
+        async def _transfer(channel: Channel) -> bool:
+            await _transfer_channel_origin_screen(session, lane, channel, link_context)
+            return False
+
+        async def _accept(channel: Channel) -> bool:
+            await _accept_channel_origin_transfer_screen(session, lane, channel, link_context)
+            return False
+
         async def _mrc_room(channel: Channel) -> bool:
             await _mrc_room_screen(session, lane, actor, channel, current["mrc"], mrc_bridge=mrc_bridge)
             return False
@@ -562,6 +673,16 @@ async def _channel_screen(
             ]
             if link_context is not None and not linked and not open_room:
                 actions.append(DetailAction("l", menu_key("L", "ink this chat channel"), _act(_link), brief="Share it via NetBBS Link"))
+            if link_context is not None and linked:
+                # Issue #1359: origin succession, as a linked board has.
+                own = link_context.node_identity.fingerprint
+                offer = link_context.link_node.channel_lifecycle.pending_offer(channel.channel_id)
+                if offer is None and await lane.run(channel_origin_fingerprint, channel) == own:
+                    actions.append(DetailAction("t", menu_key("T", "ransfer origin"), _act(_transfer),
+                                                brief="Hand it to another node"))
+                if offer is not None and offer.payload.get("new_origin_fingerprint") == own:
+                    actions.append(DetailAction("a", menu_key("A", "ccept transfer"), _act(_accept),
+                                                brief="Take over as its origin"))
             if open_room:
                 actions.append(DetailAction("a", menu_key("A", "dopt"), _act(_adopt), brief="Keep it as a bridged channel"))
                 actions.append(DetailAction("c", menu_key("C", "lose room"), _act(_retire), brief="Remove it and its scrollback now"))
