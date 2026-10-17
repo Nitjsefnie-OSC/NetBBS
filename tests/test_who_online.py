@@ -602,3 +602,33 @@ def test_profile_screen_toggles_direct_message_acceptance(tmp_path):
     assert "Direct messages: not accepted" in squeezed(_visible(session))
     lane.close()
     database.close()
+
+
+def test_who_screen_remote_entry_offers_a_direct_chat_when_their_node_takes_one(tmp_path):
+    """Issue #1368: [I]nvite to chat on a remote entry, only when that node
+    advertises direct chats."""
+    database = db(tmp_path)
+    alice = create_user(database, "alice", password="hunter2", user_level=10)
+    fingerprint = "abcdefghijklmnopqrstuvwxyz234567"
+
+    async def scenario(capable: bool) -> str:
+        node_controls = _node_controls()
+        link_context = _FakeLinkContext(
+            _FakeBridge({fingerprint: {"erin": "erin"}}), direct_chat=_FakeDirectChat(),
+            known_fingerprints=(fingerprint,),
+        )
+        link_context.direct_chats = type("_Chats", (), {"peer_capable": lambda self, fp: capable})()
+        lane = DatabaseLane(database.path)
+        session = FakeSession(["w", "0", "1", "b", "b", "l", "y"])
+        node_controls.session_registry.enter(session)
+        node_controls.session_registry.mark_authenticated(session, "alice")
+        try:
+            await _run_main_menu(session, database, alice, node_controls, lane=lane, link_context=link_context)
+        finally:
+            node_controls.session_registry.leave(session)
+            lane.close()
+        return re.sub(r"\x1b\[[0-9;]*m", "", _written_text(session))
+
+    assert "[I]nvite to chat" in asyncio.run(scenario(True))
+    assert "[I]nvite to chat" not in asyncio.run(scenario(False))
+    database.close()

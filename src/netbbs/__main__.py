@@ -864,7 +864,7 @@ async def run(
                 LinkContext(
                     link_node=link_node, link_config=link_config_snapshot,
                     realtime_registry=link_realtime_registry, realtime_bridge=link_realtime_bridge,
-                    relay=link_realtime_relay, direct_chat=link_direct_chat,
+                    relay=link_realtime_relay, direct_chat=link_direct_chat, direct_chats=link_direct_chats,
                 ) if link_node is not None else None
             ),
             direct_invites=direct_invites,
@@ -895,7 +895,7 @@ async def run(
                 LinkContext(
                     link_node=link_node, link_config=link_config_snapshot,
                     realtime_registry=link_realtime_registry, realtime_bridge=link_realtime_bridge,
-                    relay=link_realtime_relay, direct_chat=link_direct_chat,
+                    relay=link_realtime_relay, direct_chat=link_direct_chat, direct_chats=link_direct_chats,
                 ) if link_node is not None else None
             ),
             direct_invites=direct_invites,
@@ -929,6 +929,7 @@ async def run(
     link_realtime_relay = None
     link_realtime_relay_client = None
     link_direct_chat = None
+    link_direct_chats = None
     link_anchor_state = None
     own_hello_provider = None
     reliable_anchor_task: asyncio.Task | None = None
@@ -1120,6 +1121,7 @@ async def run(
         link_realtime_relay = None
         link_realtime_relay_client = None
         link_direct_chat = None
+        link_direct_chats = None
         link_anchor_state = None
         if link_node is not None:
             try:
@@ -1228,6 +1230,20 @@ async def run(
                     link_realtime_relay_client.owns_frame, link_realtime_relay_client.handle_frame
                 )
                 link_realtime_bridge.register_frame_handler(link_direct_chat.owns_frame, link_direct_chat.handle_frame)
+                # Issue #1368: direct chats with callers of other nodes.
+                from netbbs.link.realtime_dm import LinkDirectChats
+                from netbbs.net.link_direct import build_direct_chat_line_allowed, build_remote_invite_offer
+
+                link_direct_chats = LinkDirectChats(
+                    link_node=link_node, lane=background_lane, registry=link_realtime_registry,
+                    ensure_session=link_direct_chat.ensure_session,
+                    offer=build_remote_invite_offer(
+                        lane=background_lane, presence=presence, direct_invites=direct_invites,
+                        session_registry=session_registry,
+                    ),
+                    line_allowed=build_direct_chat_line_allowed(lane=background_lane),
+                )
+                link_realtime_bridge.register_frame_handler(link_direct_chats.owns_frame, link_direct_chats.handle_frame)
                 from netbbs.bots.link import BotLink
                 BotLink(bot_runtime, link_node, link_realtime_bridge, link_direct_chat, link_realtime_registry)
 
@@ -1674,6 +1690,9 @@ async def run(
             await link_realtime_registry.close_all(reason="node_shutdown")
         if link_realtime_bridge is not None:
             await link_realtime_bridge.close()
+        if link_direct_chats is not None:
+            # Issue #1368: its link watchers and pending offers.
+            await link_direct_chats.close()
         # Issue #275: LOGOFF every announced caller, SHUTDOWN, and cancel/
         # gather the connector, reader, writer and keepalive tasks --
         # bounded internally, so a dead hub can't stall the drain.

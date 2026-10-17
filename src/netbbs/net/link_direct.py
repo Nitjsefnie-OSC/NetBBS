@@ -359,3 +359,119 @@ def build_direct_message_deliverer(
         return delivered
 
     return deliver
+
+
+# -- direct chats with callers of other nodes (issue #1368) ----------------------
+
+
+def _identity_caution(db: Database, fingerprint: str) -> str | None:
+    """The identity-change caution for a node, or `None`, as live messages
+    show it."""
+    notice = latest_identity_observation(db, fingerprint)
+    if notice is None or notice.severity != "security":
+        return None
+    return (
+        "Caution: this familiar node name now has a different cryptographic identity. "
+        f"Its technical identity is {fingerprint}."
+    )
+
+
+def build_direct_chat_line_allowed(*, lane: DatabaseLane):
+    """`LinkDirectChats.line_allowed`: whether the local caller `to_user`
+    takes a direct-chat invitation or line from `from_user` of node
+    `fingerprint` -- an unknown, opted-out or blocking caller does not, and
+    the inviter is only told they can't be reached. The opt-out applies only
+    to the caller who was `invited`: one who invited someone themselves
+    chose this chat, so only a block of theirs ends it (review of #1369)."""
+    from netbbs.mail import blocks_link_sender
+
+    async def line_allowed(fingerprint: str, from_user: str, to_user: str, *, invited: bool = True) -> bool:
+        def _check(db: Database) -> bool:
+            try:
+                target = get_recipient_by_name(db, to_user)
+            except AuthError:
+                return False
+            address = f"{from_user}@{fingerprint}"
+            if not invited:
+                return not blocks_link_sender(db, target, address)
+            return live_message_refusal(db, target, sender_address=address) is None
+
+        return await lane.run(_check)
+
+    return line_allowed
+
+
+def build_remote_invite_offer(
+    *, lane: DatabaseLane, presence: PresenceRegistry, direct_invites, session_registry: ActiveSessionRegistry,
+):
+    """`LinkDirectChats.offer`: put an invitation from another node's caller
+    before every session of the local caller it names, as a local one is
+    (design doc §6.3; issue #843's one-line notice included), and settle it
+    from whichever answers. The accepting session opens the room itself
+    (`netbbs.net.main_menu._handle_incoming_invite`)."""
+    from netbbs.chat.direct_invites import RemotePeer
+    from netbbs.rendering import ALERT_COLOR
+
+    async def offer(incoming) -> None:
+        def _lookup(db: Database):
+            try:
+                target = get_recipient_by_name(db, incoming.to_user)
+            except AuthError:
+                return None, "", None
+            return target, short_node_name(db, incoming.peer_fingerprint), _identity_caution(
+                db, incoming.peer_fingerprint,
+            )
+
+        target, node_name, caution = await lane.run(_lookup)
+        if target is None or not presence.is_online(target.username):
+            await incoming.refuse("unavailable")
+            return
+        peer = RemotePeer(
+            username=link_address_label(sanitize_text(incoming.from_label), sanitize_text(node_name)),
+            user_id=incoming.from_user, node_fingerprint=incoming.peer_fingerprint, caution=caution,
+        )
+        invites = {}
+        for target_session in session_registry.sessions_for_username(target.username):
+            invite = direct_invites.send(peer, target_session, remote=incoming)
+            if invite is not None:
+                invites[target_session] = invite
+        if not invites:
+            await incoming.refuse("busy")
+            return
+        for target_session in invites:
+            if direct_invites.is_watching(target_session) or getattr(target_session, "door_active", False) or getattr(
+                target_session, "binary_transfer_active", False,
+            ):
+                continue
+            await session_registry.notify_one(
+                target_session,
+                colored(
+                    f"\r\n*** {peer.username} invites you to a direct chat. "
+                    "Go back to the main menu within a minute to answer. ***",
+                    fg_color=ALERT_COLOR, bold=True,
+                ),
+                ring=f"link:{incoming.peer_fingerprint}:{incoming.from_user}",
+            )
+        futures = {invite.outcome: target_session for target_session, invite in invites.items()}
+        withdrawn = asyncio.ensure_future(incoming.withdrawn.wait())
+        try:
+            await asyncio.wait(set(futures) | {withdrawn}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            withdrawn.cancel()
+            await asyncio.gather(withdrawn, return_exceptions=True)
+        # An acceptance landing in the same turn as a decline wins, as for
+        # a local invitation.
+        outcomes = {future.result(): futures[future] for future in futures if future.done()}
+        winner = outcomes.get("accepted")
+        for target_session in invites:
+            if target_session is not winner:
+                direct_invites.cancel(target_session)
+        if winner is not None or incoming.withdrawn.is_set():
+            return  # Accepted: the accepting session opens the room.
+        if "declined" in outcomes:
+            await incoming.refuse("declined")
+        else:
+            # Timed out here too: the inviter's own clock tells them.
+            incoming.drop()
+
+    return offer

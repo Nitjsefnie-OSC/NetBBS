@@ -99,6 +99,7 @@ if TYPE_CHECKING:
     from netbbs.link.realtime_channels import LiveChannelBridge
     from netbbs.link.transport import LinkRealtimeSessionRegistry
     from netbbs.link.realtime_direct import LiveDirectChat
+    from netbbs.link.realtime_dm import LinkDirectChats
     from netbbs.link.realtime_relay import RealtimeRelay
 
 
@@ -177,6 +178,8 @@ class LinkContext:
     # online) -- `None` under the same conditions as the two above.
     relay: RealtimeRelay | None = None
     direct_chat: LiveDirectChat | None = None
+    # Issue #1368: direct chats with callers of other nodes, beside it.
+    direct_chats: "LinkDirectChats | None" = None
 
     @property
     def node_identity(self) -> NodeIdentity:

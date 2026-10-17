@@ -50,6 +50,8 @@ HELP_EXEMPT = {
     # Waiting for the other caller to accept a direct chat; `[C]ancel` is
     # the only key, and the line says so.
     "net/chat_flow.py:run_direct_chat_invite_flow",
+    # The same wait for a caller of another node (issue #1368).
+    "net/chat_flow.py:run_remote_direct_chat_invite_flow",
 }
 
 READS = {"read_key", "read_editor_key", "_read_navigable_key", "_read_list_key", "_read_key"}

@@ -261,7 +261,10 @@ REALTIME_FRAME_TYPES = frozenset(
      "node_presence_snapshot", "node_presence_delta",
      "channel_message", "scrollback_snapshot", "ping", "pong", "error", "close",
      "relay_request", "relay_waiting", "relay_ready", "relay_reject", "direct_message",
-     "bot_request", "bot_result", "bot_presence", "bot_readers"}
+     "bot_request", "bot_result", "bot_presence", "bot_readers",
+     # Issue #1368: a direct chat between callers of two nodes, sent only to
+     # a peer advertising `DIRECT_CHAT_CAPABILITY`.
+     "direct_chat_invite", "direct_chat_answer", "direct_chat_line", "direct_chat_end"}
 )
 _REALTIME_MAX_MESSAGE_ID_BYTES = 64
 _JSON_SAFE_INTEGER = (1 << 53) - 1
@@ -936,6 +939,53 @@ def _validate_direct_message_payload(payload: dict, *, path: str) -> None:
     _parse_aware_timestamp(payload["created_at"], field_name=f"{path}.created_at")
 
 
+DIRECT_CHAT_ANSWERS = ("accepted", "declined", "busy", "unavailable")
+DIRECT_CHAT_END_REASONS = ("left", "cancelled", "timed_out")
+
+
+def _validate_direct_chat_invite_payload(payload: dict, *, path: str) -> None:
+    expected = {"chat_id", "to_user_id", "from_user_id", "from_display_label", "created_at"}
+    if set(payload) != expected:
+        raise LinkProtocolError(f"{path} must contain exactly {', '.join(sorted(expected))}")
+    for name in ("chat_id", "to_user_id", "from_user_id"):
+        _validate_bounded_id(payload[name], path=f"{path}.{name}")
+    _validate_bounded_text(
+        payload["from_display_label"], path=f"{path}.from_display_label",
+        max_bytes=_REALTIME_MAX_DISPLAY_LABEL_BYTES,
+    )
+    if not isinstance(payload["created_at"], str):
+        raise LinkProtocolError(f"{path}.created_at must be a string")
+    _parse_aware_timestamp(payload["created_at"], field_name=f"{path}.created_at")
+
+
+def _validate_direct_chat_answer_payload(payload: dict, *, path: str) -> None:
+    if set(payload) != {"chat_id", "outcome"}:
+        raise LinkProtocolError(f"{path} must contain exactly chat_id and outcome")
+    _validate_bounded_id(payload["chat_id"], path=f"{path}.chat_id")
+    if payload["outcome"] not in DIRECT_CHAT_ANSWERS:
+        raise LinkProtocolError(f"{path}.outcome is not a known answer")
+
+
+def _validate_direct_chat_line_payload(payload: dict, *, path: str) -> None:
+    if set(payload) != {"chat_id", "body", "created_at"}:
+        raise LinkProtocolError(f"{path} must contain exactly chat_id, body and created_at")
+    _validate_bounded_id(payload["chat_id"], path=f"{path}.chat_id")
+    _validate_bounded_text(payload["body"], path=f"{path}.body", max_bytes=_REALTIME_MAX_DIRECT_MESSAGE_BODY_BYTES)
+    if not payload["body"].strip():
+        raise LinkProtocolError(f"{path}.body must not be blank")
+    if not isinstance(payload["created_at"], str):
+        raise LinkProtocolError(f"{path}.created_at must be a string")
+    _parse_aware_timestamp(payload["created_at"], field_name=f"{path}.created_at")
+
+
+def _validate_direct_chat_end_payload(payload: dict, *, path: str) -> None:
+    if set(payload) != {"chat_id", "reason"}:
+        raise LinkProtocolError(f"{path} must contain exactly chat_id and reason")
+    _validate_bounded_id(payload["chat_id"], path=f"{path}.chat_id")
+    if payload["reason"] not in DIRECT_CHAT_END_REASONS:
+        raise LinkProtocolError(f"{path}.reason is not a known reason")
+
+
 def _validate_bot_request_payload(payload: dict, *, path: str) -> None:
     if set(payload) not in ({"channel_id", "bot", "caller", "text"}, {"channel_id", "bot", "caller", "text", "access"}):
         raise LinkProtocolError(f"{path} needs channel_id, bot, caller and text")
@@ -985,6 +1035,10 @@ _REALTIME_PAYLOAD_VALIDATORS = {
     "relay_ready": _validate_relay_ready_payload,
     "relay_reject": _validate_relay_reject_payload,
     "direct_message": _validate_direct_message_payload,
+    "direct_chat_invite": _validate_direct_chat_invite_payload,
+    "direct_chat_answer": _validate_direct_chat_answer_payload,
+    "direct_chat_line": _validate_direct_chat_line_payload,
+    "direct_chat_end": _validate_direct_chat_end_payload,
     "subscribe": _validate_channel_id_only_payload,
     "unsubscribe": _validate_channel_id_only_payload,
     "presence_snapshot": _validate_presence_snapshot_payload,
@@ -1203,6 +1257,15 @@ def build_relay_reject_frame(
     frame = RealtimeFrame(
         type="relay_reject", message_id=message_id or new_realtime_message_id(), payload=payload,
     )
+    validate_realtime_frame_payload(frame)
+    return frame
+
+
+def build_direct_chat_frame(type_: str, payload: dict, *, message_id: str | None = None) -> RealtimeFrame:
+    """One of issue #1368's four direct-chat frames, validated."""
+    if not type_.startswith("direct_chat_"):
+        raise LinkProtocolError(f"{type_!r} is not a direct-chat frame")
+    frame = RealtimeFrame(type=type_, message_id=message_id or new_realtime_message_id(), payload=payload)
     validate_realtime_frame_payload(frame)
     return frame
 
