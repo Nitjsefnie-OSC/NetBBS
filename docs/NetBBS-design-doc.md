@@ -10618,8 +10618,8 @@ Completing the implementation does not itself establish public federation safety
 Issue #172 established the native door model; #296/#297 added legacy and browser
 adapters. Phase 7 above records the current contract. Native doors are trusted,
 same-user programs with resource limits and supervised cleanup, not filesystem
-or network containment. Door metadata is API version 3; companion services and
-the SysOp-enabled outbound board-posting hook are implemented.
+or network containment. Door metadata is API version 4; companion services and
+the SysOp-enabled outbound board-posting and chat hook are implemented.
 
 The [developer handbook](NetBBS-Developer-Handbook.md#developing-a-native-door)
 is the integration entry point. The outbound hook posts as a distinct door label,
@@ -15787,7 +15787,17 @@ linked resource as one shared object.
   curated public audit board and the live activity feed stay a later Phase 6
   item (§15).
 
-**Decision 8 — compatibility, trust and bounds.**
+**Decision 8 — a signer's clock cannot win the future.** Every "newest
+`created_at` wins" rule here (the roster, restrictions, the topic) orders by
+an effective time: the signed `created_at`, or the arrival time when it is
+more than five minutes ahead of the receiver's clock, as for a received letter
+(§10). And for the same channel and target, or the same topic, an action the
+origin signs outranks a delegate's of equal or later effective time. Without
+the clamp, a delegate whose node signs a ban or a topic dated next year would
+win until then, and neither the origin's later lift nor any carrier could
+undo it (Decision 6).
+
+**Decision 9 — compatibility, trust and bounds.**
 - **Capability:** `link_moderation`. The new events go only to peers that
   advertise it. An older carrier keeps showing what newer ones hide, which is
   the usual cost of a new type (§7.5).
