@@ -3147,3 +3147,89 @@ def verify_link_moderators(event: LinkModerators, signing_verify_key: nacl.signi
     """Verify a roster's signature against its origin's signing key;
     resolving that key is the caller's job."""
     return verify_signature(signing_verify_key, canonical_bytes(event.envelope), event.signature)
+
+
+CHANNEL_RESTRICTION_OBJECT_TYPE = "channel_restriction"
+"""Issue #1357, Decision 3: a mute or ban of one participant in a linked
+channel, imposed or lifted by the channel's origin or a delegated moderator."""
+
+CHANNEL_RESTRICTION_KINDS = ("mute", "ban")
+CHANNEL_RESTRICTION_ACTIONS = ("impose", "lift")
+MAX_CHANNEL_RESTRICTION_REASON_BYTES = 280
+
+
+@dataclass(frozen=True)
+class ChannelRestriction(_SignedEvent):
+    """One signed `channel_restriction` (issue #1357, Decision 3). Per channel,
+    target and kind, the one in force is the origin's newest, else a
+    delegate's newest, by effective time (Decision 8): an origin's action is
+    never outranked by a delegate's."""
+
+
+def channel_restriction_problem(payload: object) -> str | None:
+    """Why a `channel_restriction` payload is malformed, or `None`."""
+    if not isinstance(payload, dict):
+        return "a channel_restriction payload must be an object"
+    if not isinstance(payload.get("channel_id"), str) or not payload["channel_id"]:
+        return "a channel_restriction names no channel"
+    target = payload.get("target")
+    if (
+        not isinstance(target, dict)
+        or set(target) != {"kind", "home_node_fingerprint", "local_user_id"}
+        or target["kind"] != "node_vouched_user"
+        or not all(isinstance(target[f], str) and 0 < len(target[f]) <= MAX_LINK_MODERATOR_FIELD_LENGTH
+                   for f in ("home_node_fingerprint", "local_user_id"))
+    ):
+        return "a channel_restriction's target must be a node_vouched_user"
+    if payload.get("kind") not in CHANNEL_RESTRICTION_KINDS:
+        return "a channel_restriction is a mute or a ban"
+    if payload.get("action") not in CHANNEL_RESTRICTION_ACTIONS:
+        return "a channel_restriction imposes or lifts"
+    if payload.get("until") is not None and not isinstance(payload["until"], str):
+        return "a channel_restriction's until must be a timestamp"
+    reason = payload.get("reason")
+    if reason is not None and (not isinstance(reason, str) or len(reason.encode("utf-8")) > MAX_CHANNEL_RESTRICTION_REASON_BYTES):
+        return f"a channel_restriction's reason must be text of at most {MAX_CHANNEL_RESTRICTION_REASON_BYTES} bytes"
+    if not isinstance(payload.get("created_at"), str):
+        return "a channel_restriction has no created_at"
+    return None
+
+
+def build_channel_restriction(
+    *,
+    signing_identity: Identity,
+    channel_id: str,
+    target: dict,
+    kind: str,
+    action: str,
+    created_at: str,
+    until: str | None = None,
+    reason: str | None = None,
+    moderator: dict | None = None,
+    nonce: str | None = None,
+) -> ChannelRestriction:
+    """Build and sign a `channel_restriction`: with the channel's origin's key,
+    or with `moderator` a delegated moderator's home node's (Decision 2)."""
+    payload: dict = {
+        "channel_id": channel_id,
+        "target": target,
+        "kind": kind,
+        "action": action,
+        "created_at": created_at,
+        "nonce": nonce if nonce is not None else secrets.token_hex(16),
+    }
+    if until is not None:
+        payload["until"] = until
+    if reason:
+        payload["reason"] = reason
+    if moderator is not None:
+        payload["moderator"] = moderator
+    problem = channel_restriction_problem(payload)
+    if problem is not None:
+        raise EventError(problem)
+    envelope = build_envelope(CHANNEL_RESTRICTION_OBJECT_TYPE, payload)
+    return ChannelRestriction(envelope=envelope, signature=signing_identity.sign(canonical_bytes(envelope)))
+
+
+def verify_channel_restriction(event: ChannelRestriction, signing_verify_key: nacl.signing.VerifyKey) -> bool:
+    return verify_signature(signing_verify_key, canonical_bytes(event.envelope), event.signature)

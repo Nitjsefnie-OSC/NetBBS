@@ -31,6 +31,7 @@ import json
 from collections import OrderedDict
 from typing import Awaitable, Callable
 
+from netbbs.link.channel_moderation import restriction_in_force
 from netbbs.chat.channels import Channel
 from netbbs.chat.hub import ChatHub
 from netbbs.chat.presence import PresenceRegistry
@@ -688,6 +689,10 @@ class LiveChannelBridge:
             relayed=author_node != session.remote_fingerprint,
         ):
             return  # Refused by this node's policy: not shown, and not passed on.
+        # Issue #1359: muted or banned in this channel -- by its origin, a
+        # delegated Link moderator, or this node -- not shown, not passed on.
+        if await self._lane.run(restriction_in_force, payload["channel_id"], author_node, payload["user_id"]):
+            return
         # A `content_id` an older sender of this capability adds is accepted
         # and ignored: it is unverified, so nothing is keyed on it.
         if not self._remember_shown(

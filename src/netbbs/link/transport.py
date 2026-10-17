@@ -92,6 +92,7 @@ from netbbs.link.events import (
     COMMUNITY_MEMBERS_OBJECT_TYPE,
     LINK_MODERATORS_OBJECT_TYPE,
     LINK_MODERATION_CAPABILITY,
+    CHANNEL_RESTRICTION_OBJECT_TYPE,
     descriptor_has_capability,
     FILE_AREA_GENESIS_OBJECT_TYPE,
     FILE_DESCRIPTOR_OBJECT_TYPE,
@@ -191,6 +192,7 @@ from netbbs.link.protocol import (
 )
 from netbbs.link.carry import KIND_LABELS, accept_genesis, genesis_kind
 from netbbs.link.moderators import all_roster_content_ids, store_received_roster
+from netbbs.link.channel_moderation import store_received_restriction
 from netbbs.link.communities import (
     CarryCaps,
     accept_community_genesis,
@@ -576,6 +578,19 @@ async def persist_accepted_events(
             if not kept:
                 node.known_event_ids.discard(content_id)
                 node.events.pop(content_id, None)
+            continue
+        if object_type == CHANNEL_RESTRICTION_OBJECT_TYPE:
+            # Issue #1357, Decision 3: one in force per channel, participant
+            # and kind; the origin's above a delegate's.
+            try:
+                await lane.run(
+                    store_received_restriction, envelope=envelope, content_id=content_id,
+                    own_fingerprint=node.identity.fingerprint,
+                )
+            except BaseException:
+                node.known_event_ids.discard(content_id)
+                node.events.pop(content_id, None)
+                raise
             continue
         if object_type == LINK_MODERATORS_OBJECT_TYPE:
             # Issue #1357: one roster per origin, the newest by effective time

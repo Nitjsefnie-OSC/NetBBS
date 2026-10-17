@@ -321,7 +321,20 @@ def _active_restriction(db: Database, channel: Channel, user: User, *, kind: str
         """,
         (channel.id, user.id, kind, utc_now_iso()),
     ).fetchone()
-    return _row_to_restriction(row) if row is not None else None
+    if row is not None:
+        return _row_to_restriction(row)
+    # Issue #1359 (design doc §16, issue #1357, Decision 3): a linked
+    # channel's origin, or a delegated Link moderator, muted or banned this
+    # node's user everywhere; their own node enforces it too.
+    from netbbs.link.channel_moderation import local_user_restricted
+
+    link = local_user_restricted(db, channel.channel_id, user.username, kind)
+    if link is None:
+        return None
+    return ChannelRestriction(
+        id=0, channel_id=channel.id, user_id=user.id, kind=kind, expires_at=link.until,
+        imposed_by_user_id=0, reason=link.reason, created_at="",
+    )
 
 
 def _get_restriction(db: Database, channel: Channel, user: User, *, kind: str) -> ChannelRestriction | None:
