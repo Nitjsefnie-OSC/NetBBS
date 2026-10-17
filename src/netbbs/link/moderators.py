@@ -344,9 +344,12 @@ def delegated_permissions(
     granted: set[str] = set()
     for entry in entries:
         moderator = entry.get("moderator", {})
-        if (moderator.get("home_node_fingerprint"), moderator.get("local_user_id")) != (
-            home_node_fingerprint, local_user_id,
-        ):
+        # A username is unique ignoring case on its node, and a SysOp elsewhere
+        # types it without seeing the account: compared ignoring case, the same
+        # way on every node (review of #1361).
+        if moderator.get("home_node_fingerprint") != home_node_fingerprint or str(
+            moderator.get("local_user_id", "")
+        ).casefold() != local_user_id.casefold():
             continue
         scope = entry.get("scope")
         if scope == SCOPE_ORIGIN:

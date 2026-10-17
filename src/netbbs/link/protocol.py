@@ -4433,6 +4433,7 @@ class LinkNode:
                         "has no verified board_genesis on file -- refusing (no relay from a "
                         "stranger yet)"
                     )
+                self._check_root_on_board(root_post_id, board_id, "board_post_moderator_edit")
                 self._check_board_post_content_size(mod_edit.payload, sender_fingerprint, "board_post_moderator_edit")
 
                 existing_chain = self.board_events.edit_chain(root_post_id)
@@ -4509,6 +4510,7 @@ class LinkNode:
                         "no verified board_genesis on file -- refusing (no relay from a stranger "
                         "yet)"
                     )
+                self._check_root_on_board(root_post_id, board_id, "board_post_tombstone")
 
                 existing_chain = self.board_events.edit_chain(root_post_id)
                 if any(existing.content_id == tombstone.content_id for existing in existing_chain):
@@ -5325,6 +5327,16 @@ class LinkNode:
         held = self.moderator_rosters.get(origin)
         if held is None or (effective_at, content_id) > (held[0], held[1]):
             self.moderator_rosters[origin] = (effective_at, content_id, list(payload["entries"]))
+
+    def _check_root_on_board(self, root_post_id: str, board_id: str, what: str) -> None:
+        """A moderator's revision is authorized for the board it names, so it
+        must be a revision of a post on that board (review of #1361): else a
+        grant on one board would reach posts on any other."""
+        root = self.events[root_post_id]["envelope"]["payload"].get("board_id")
+        if root != board_id:
+            raise LinkProtocolError(
+                f"{what} names board_id {board_id!r}, but its root post {root_post_id!r} is on {root!r}"
+            )
 
     def _delegated_board_signer(self, payload: dict, board_id: str, permission: str, what: str):
         """For a board moderator event carrying `moderator` (issue #1357,

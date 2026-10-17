@@ -272,3 +272,32 @@ def test_a_community_scope_is_checked_against_the_list_in_memory(tmp_path, clock
     )
     carol.handle_events(origin.fingerprint, [members.to_dict()])
     assert carol.handle_events(here.fingerprint, [tombstone.to_dict()]) == [tombstone.content_id]
+
+
+def test_a_removal_naming_one_board_cannot_reach_a_post_on_another(tmp_path, clock, origin, here):  # noqa: F811
+    # Review of #1361: a grant on board A must not reach a post on board B.
+    carol, _post_on_a = _receiver(tmp_path, clock, origin, here)
+    other_board = build_board_genesis(
+        signing_identity=origin.signing_key, origin_fingerprint=origin.fingerprint, board_id="d" * 64,
+        name="Elsewhere", created_at="2026-01-01T00:00:00Z",
+    )
+    post_on_b = build_board_post(
+        signing_identity=origin.signing_key, home_node_fingerprint=origin.fingerprint, local_user_id="wanderer",
+        board_id="d" * 64, subject="Other", body="other", created_at="2026-01-01T00:00:00Z",
+    )
+    carol.handle_events(origin.fingerprint, [other_board.to_dict(), post_on_b.to_dict(), _roster(origin, [
+        {"moderator": _who(here.fingerprint), "scope": {"kind": "board", "id": BOARD_ID}, "permissions": ["delete"]},
+    ]).to_dict()])
+    with pytest.raises(LinkProtocolError, match="its root post"):
+        carol.handle_events(here.fingerprint, [_tombstone(here, post_on_b, _who(here.fingerprint)).to_dict()])
+    assert not carol.board_events.is_tombstoned(post_on_b.content_id)
+
+
+def test_the_moderators_name_matches_ignoring_case_on_every_node(tmp_path, clock, origin, here):  # noqa: F811
+    # Review of #1361: the roster says "mod", the account is "Mod".
+    carol, post = _receiver(tmp_path, clock, origin, here)
+    carol.handle_events(origin.fingerprint, [_roster(origin, [
+        {"moderator": _who(here.fingerprint, "mod"), "scope": "origin", "permissions": ["delete"]},
+    ]).to_dict()])
+    tombstone = _tombstone(here, post, _who(here.fingerprint, "Mod"))
+    assert carol.handle_events(here.fingerprint, [tombstone.to_dict()]) == [tombstone.content_id]
