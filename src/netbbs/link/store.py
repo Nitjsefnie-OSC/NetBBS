@@ -34,6 +34,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from netbbs.identity.keys import Identity
+from netbbs.link.moderators import all_roster_content_ids, roster_events_for
 from netbbs.link.events import (
     BOARD_CLOSURE_OBJECT_TYPE,
     BOARD_GENESIS_OBJECT_TYPE,
@@ -325,6 +326,11 @@ def load_link_node(db: Database, identity: NodeIdentity) -> LinkNode:
             node.community_events.closures[community_closure.payload["community_id"]] = community_closure
             node.known_event_ids.add(community_closure.content_id)
             node.events[community_closure.content_id] = community_closure.to_dict()
+
+    # Issue #1357: the roster in force per origin, this node's own included.
+    for row in db.connection.execute("SELECT content_id, envelope_json FROM link_moderator_rosters"):
+        node.known_event_ids.add(row["content_id"])
+        node.events[row["content_id"]] = json.loads(row["envelope_json"])
 
     for row in db.connection.execute(
         "SELECT link_event_json FROM posts "
@@ -1157,6 +1163,7 @@ def build_inventory_request(
     paged: bool = False,
     page_cursor: int = 0,
     include_communities: bool = False,
+    include_moderators: bool = False,
 ) -> InventoryRequest:
     """
     This node's own `InventoryRequest` to send as requester (design doc
@@ -1204,6 +1211,10 @@ def build_inventory_request(
     """
     # Issue #672: a stale copy is not declared, so a peer offers a fresh one.
     stale = stale_content_ids(db) if include_inventory else set()
+    if include_inventory and not include_moderators:
+        # Issue #1357: a responder without `LINK_MODERATION_CAPABILITY` is not
+        # told of rosters; it would only ask for them again on every pass.
+        stale |= all_roster_content_ids(db)
     boards = (
         {board_id: tuple(i for i in _all_board_events(db, board_id) if i not in stale)
          for board_id in carried_board_ids(db)}
@@ -1455,8 +1466,8 @@ def _all_board_events(db: Database, board_id: str) -> dict[str, dict]:
     events: dict[str, dict] = {}
 
     board_row = db.connection.execute(
-        "SELECT id, link_genesis_json, link_lifecycle_json, link_posting_json, link_hidden_at FROM boards "
-        "WHERE board_id = ?",
+        "SELECT id, link_genesis_json, link_lifecycle_json, link_posting_json, link_hidden_at, "
+        "link_origin_fingerprint FROM boards WHERE board_id = ?",
         (board_id,),
     ).fetchone()
     if board_row is None or board_row["link_hidden_at"] is not None:
@@ -1466,6 +1477,11 @@ def _all_board_events(db: Database, board_id: str) -> dict[str, dict]:
     if board_row["link_genesis_json"] is not None:
         raw = json.loads(board_row["link_genesis_json"])
         events[BoardGenesis.from_dict(raw).content_id] = raw
+        # Issue #1357: the roster deciding who may moderate the board travels
+        # with it, so a carrier can answer for it wherever it carries the
+        # board. Withheld from a peer that does not understand rosters.
+        origin = board_row["link_origin_fingerprint"] or raw["envelope"]["payload"].get("origin_fingerprint")
+        events.update(roster_events_for(db, origin))
     if board_row["link_lifecycle_json"] is not None:
         # Design doc §9.5, issue #88: `link_lifecycle_json` can now also
         # be a self-originated `board_closure` -- `event_content_id`
@@ -1519,6 +1535,7 @@ def board_event_diff(
     not_carried: tuple[str, ...] = (),
     page: tuple[int, int] | None = None,
     page_salt: str = "",
+    rosters: bool = True,
 ) -> tuple[list[dict], bool]:
     """
     The responder side of one `InventoryRequest` (design doc §8.8, issue
@@ -1565,7 +1582,9 @@ def board_event_diff(
     return _resource_event_diff(
         requested_boards, carried_board_ids(db), lambda resource_id: _all_board_events(db, resource_id),
         limit=limit, not_carried=not_carried, page=page, page_salt=page_salt,
-        withheld=stale_content_ids(db),
+        # Issue #1357: `rosters=False` for a requester without
+        # `LINK_MODERATION_CAPABILITY`.
+        withheld=stale_content_ids(db) | (set() if rosters else all_roster_content_ids(db)),
     )
 
 
@@ -1600,6 +1619,8 @@ def _all_channel_events(db: Database, channel_id: str) -> dict[str, dict]:
     if channel_row["link_genesis_json"] is not None:
         raw = json.loads(channel_row["link_genesis_json"])
         events[ChannelGenesis.from_dict(raw).content_id] = raw
+        # Issue #1357: the origin's roster, as for a board.
+        events.update(roster_events_for(db, raw["envelope"]["payload"].get("origin_fingerprint")))
 
     for row in db.connection.execute(
         "SELECT link_event_json FROM channel_messages WHERE channel_id = ? AND link_event_json IS NOT NULL",
@@ -1625,6 +1646,7 @@ def channel_event_diff(
     not_carried: tuple[str, ...] = (),
     page: tuple[int, int] | None = None,
     page_salt: str = "",
+    rosters: bool = True,
 ) -> tuple[list[dict], bool]:
     """
     The channel-side responder logic for one `InventoryRequest` --
@@ -1639,7 +1661,7 @@ def channel_event_diff(
     return _resource_event_diff(
         requested_channels, carried_channel_ids(db), lambda resource_id: _all_channel_events(db, resource_id),
         limit=limit, not_carried=not_carried, page=page, page_salt=page_salt,
-        withheld=stale_content_ids(db),
+        withheld=stale_content_ids(db) | (set() if rosters else all_roster_content_ids(db)),
     )
 
 

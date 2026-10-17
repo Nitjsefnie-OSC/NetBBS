@@ -1184,6 +1184,8 @@ async def _link_status_screen(
         actions.append(("k", menu_key("K", "eys")))
         # Issue #777: where callers reach this board.
         actions.append(("d", menu_key("D", "ial-in")))
+        # Issue #1359: who on other nodes moderates what this node originates.
+        actions.append(("m", menu_key("M", "oderators")))
         # Issue #683: what this node holds and does not carry.
         offered, excluded = await _carry_decision_totals(lane)
         if offered:
@@ -1217,6 +1219,10 @@ async def _link_status_screen(
             )
         elif choice == "d":
             await _dial_in_editor(session, lane, actor, link_context=link_context)
+        elif choice == "m":
+            from netbbs.net.admin_link_moderators import link_moderators_screen
+
+            await link_moderators_screen(session, lane, actor, link_context=link_context)
         elif choice == "a":
             for notice in identity_notices[:5]:
                 await lane.run(dismiss_identity_observation, notice.id)

@@ -168,11 +168,13 @@ from aiohttp import ClientSession
 from netbbs.link.boards import load_own_board_events
 from netbbs.link.channels import load_own_channel_events
 from netbbs.link.communities import load_own_community_events, refresh_own_community_members
+from netbbs.link.moderators import load_own_roster
 from netbbs.link.files import load_own_file_area_events
 from netbbs.link.events import (
     INVENTORY_NOT_CARRIED_CAPABILITY,
     INVENTORY_PAGES_CAPABILITY,
     LINK_COMMUNITIES_CAPABILITY,
+    LINK_MODERATION_CAPABILITY,
     LINK_MESSAGE_OBJECT_TYPE,
     BoardGenesis,
     ChannelGenesis,
@@ -695,6 +697,7 @@ async def _push_own_events(
     fallback_offsets: dict[str, int],
     declared: frozenset[str] = frozenset(),
     communities: bool = False,
+    moderation: bool = False,
 ) -> None:
     """
     Push this node's own originated events to one seed -- design doc
@@ -767,6 +770,8 @@ async def _push_own_events(
         # Issue #1308: only to a peer advertising `LINK_COMMUNITIES_CAPABILITY`;
         # an older one would keep them as opaque events it cannot use.
         + (await lane.run(load_own_community_events, node.identity.fingerprint) if communities else [])
+        # Issue #1357: this node's own moderator roster, likewise.
+        + (await lane.run(load_own_roster, node.identity.fingerprint) if moderation else [])
     )
     exchange = node.peer_exchange.setdefault(peer_fingerprint, PeerExchange())
     now = time.time()
@@ -1007,6 +1012,8 @@ async def _sync_one_seed(
     # Issue #1308: Link Communities travel only between nodes that both
     # understand them.
     speaks_communities = descriptor_has_capability(seed_peer.descriptor, LINK_COMMUNITIES_CAPABILITY)
+    # Issue #1357: and moderator rosters only with nodes that understand them.
+    speaks_moderation = descriptor_has_capability(seed_peer.descriptor, LINK_MODERATION_CAPABILITY)
     try:
         inventory_request = await lane.run(
             build_inventory_request,
@@ -1021,6 +1028,7 @@ async def _sync_one_seed(
             paged=descriptor_has_capability(seed_peer.descriptor, INVENTORY_PAGES_CAPABILITY),
             page_cursor=page_cursor,
             include_communities=speaks_communities,
+            include_moderators=speaks_moderation,
         )
         declared = frozenset(
             content_id
@@ -1140,6 +1148,7 @@ async def _sync_one_seed(
         await _push_own_events(
             node, session, seed_url, lane, wanted=wanted,
             peer_fingerprint=seed_peer.fingerprint, declared=declared, communities=speaks_communities,
+            moderation=speaks_moderation,
             # A caller with no loop of its own gets a throwaway: a single
             # pass has nothing to rotate against.
             fallback_offsets=fallback_offsets if fallback_offsets is not None else {},

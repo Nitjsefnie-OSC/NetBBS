@@ -1662,6 +1662,27 @@ carrying the board follows:
   is write level 255 here and "origin's callers only" everywhere.
 - A closed board takes no new post from any node.
 
+#### Moderators on other nodes
+
+**Link status ▸ Moderators** lets users of other nodes moderate the linked
+boards and channels this node originates, for everyone who carries them.
+Your own node's moderators need no grant here: their moderation already
+reaches every node.
+
+- <kbd>A</kbd> **Add** opens a form. **User** is the user as `name@TheirBBS`.
+  **On** is what they moderate: one linked board or channel, one of this
+  node's Link Communities, or everything this node originates. **May** is what
+  they may do there: edit and remove posts, mute and ban, set the topic, or a
+  part of that. Nothing is granted until you <kbd>S</kbd> **Save**.
+- <kbd>R</kbd> **Remove** takes a grant back. Each node stops accepting that
+  user's moderation as the change reaches it with its next sync pass.
+- The section **Held by this node's users** lists what your own users may
+  moderate on other nodes.
+
+> [!NOTE]
+> Grants reach only nodes running a version that understands Link moderation.
+> An older node keeps showing what newer nodes hide.
+
 #### Polls
 
 Callers ask polls with <kbd>N</kbd> **New poll** on a board's list (not on a
