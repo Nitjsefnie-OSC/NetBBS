@@ -391,11 +391,14 @@ def _resource_origin(db: Database, object_type: str, object_id: int) -> tuple[st
         return row["board_id"], origin
     if object_type == "channel":
         row = db.connection.execute(
-            "SELECT channel_id, link_genesis_json FROM channels WHERE id = ?", (object_id,)
+            "SELECT channel_id, link_genesis_json, link_origin_fingerprint FROM channels WHERE id = ?", (object_id,)
         ).fetchone()
         if row is None or row["link_genesis_json"] is None:
             return None
-        return row["channel_id"], json.loads(row["link_genesis_json"])["envelope"]["payload"].get("origin_fingerprint")
+        origin = row["link_origin_fingerprint"] or json.loads(row["link_genesis_json"])["envelope"]["payload"].get(
+            "origin_fingerprint"
+        )
+        return row["channel_id"], origin
     return None
 
 

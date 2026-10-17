@@ -4685,4 +4685,17 @@ MIGRATIONS = [
         );
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1359 (design doc §16, Link moderation, Decision 5): origin succession for "
+            "linked channels, as §9.4 has for boards -- `channels.link_origin_fingerprint`, the "
+            "current origin once a `channel_origin_transfer_accepted` is verified (NULL: still "
+            "the genesis's), and `channels.link_lifecycle_json`, this node's own latest offer or "
+            "acceptance. NULL on upgrade."
+        ),
+        sql="""
+        ALTER TABLE channels ADD COLUMN link_origin_fingerprint TEXT;
+        ALTER TABLE channels ADD COLUMN link_lifecycle_json TEXT;
+        """,
+    ),
 ]

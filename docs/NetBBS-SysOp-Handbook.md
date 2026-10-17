@@ -1702,6 +1702,23 @@ names. On a channel this node carries, `/topic` is refused for anyone else,
 because a local topic would contradict the shared one. A linked channel's
 topic is at most 300 bytes.
 
+#### Handing a linked board or channel to another node
+
+The node a linked board or chat channel comes from is its *origin*. It can
+hand that role to another node, for example before it shuts down.
+
+1. On the origin, open the board or channel and choose <kbd>T</kbd>
+   **Transfer origin**. Pick the node and confirm. This only makes an offer:
+   nothing changes yet.
+2. On the node offered it, the same screen shows the offer. Its SysOp chooses
+   <kbd>A</kbd> **Accept transfer**.
+3. From then on every carrying node treats the new node as the origin, as
+   each one learns of the acceptance with its next sync pass. The new origin
+   decides the channel's topic, mutes and bans, and its own moderator
+   grants count there.
+
+Only one offer can wait at a time, and an offer cannot be withdrawn.
+
 > [!NOTE]
 > Grants reach only nodes running a version that understands Link moderation.
 > An older node keeps showing what newer nodes hide.

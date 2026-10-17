@@ -259,8 +259,9 @@ def carried_origins(db: Database) -> dict[str, dict[str, list[str]]]:
     """origin fingerprint -> {"boards"|"file_areas"|"channels": [resource ids]}
     for every Linked resource this node holds and has not hidden. A board's
     origin follows a completed transfer (`link_origin_fingerprint`), as
-    `netbbs.link.boards.board_origin_fingerprint` resolves it; file areas and
-    channels have no succession and keep their genesis's origin."""
+    `netbbs.link.boards.board_origin_fingerprint` resolves it, and so does a
+    channel's (issue #1359); file areas have no succession and keep their
+    genesis's origin."""
     origins: dict[str, dict[str, list[str]]] = {}
 
     def _add(origin: str | None, kind: str, resource_id: str) -> None:
@@ -278,10 +279,10 @@ def carried_origins(db: Database) -> dict[str, dict[str, list[str]]]:
     ):
         _add(_current_origin(row["link_genesis_json"]), "file_areas", row["area_id"])
     for row in db.connection.execute(
-        "SELECT channel_id, link_genesis_json FROM channels "
+        "SELECT channel_id, link_genesis_json, link_origin_fingerprint FROM channels "
         "WHERE link_genesis_json IS NOT NULL AND link_hidden_at IS NULL"
     ):
-        _add(_current_origin(row["link_genesis_json"]), "channels", row["channel_id"])
+        _add(_current_origin(row["link_genesis_json"], row["link_origin_fingerprint"]), "channels", row["channel_id"])
     return origins
 
 

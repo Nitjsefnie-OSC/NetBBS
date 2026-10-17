@@ -419,6 +419,23 @@ def _replay_board_lifecycle(db: Database, board_id: str) -> None:
             materialize_carried_board_closure(db, BoardClosure.from_dict(envelope), commit=False)
 
 
+def _replay_channel_lifecycle(db: Database, channel_id: str) -> None:
+    """The channel counterpart of `_replay_board_lifecycle` (issue #1359): a
+    handoff accepted while the channel was only on offer here moves its
+    origin once it is carried."""
+    from netbbs.link.events import CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE
+
+    for row in db.connection.execute(
+        "SELECT envelope_json FROM link_events WHERE channel_id = ? AND object_type = ? ORDER BY received_at ASC",
+        (channel_id, CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE),
+    ).fetchall():
+        payload = json.loads(row["envelope_json"])["envelope"]["payload"]
+        db.connection.execute(
+            "UPDATE channels SET link_origin_fingerprint = ? WHERE channel_id = ?",
+            (payload["new_origin_fingerprint"], channel_id),
+        )
+
+
 def accept_offer(
     db: Database, kind: str, resource_id: str, *, actor: User | None,
     max_remote_files_per_area: int | None = None,
@@ -449,6 +466,8 @@ def accept_offer(
             raise CarryDecisionError(f"could not create the local copy: {exc}") from exc
         if kind == "boards":
             _replay_board_lifecycle(db, resource_id)
+        elif kind == "channels":
+            _replay_channel_lifecycle(db, resource_id)
         # Not deleted yet: the row stays, marked `accepting`, until the
         # stored content is reprojected below. A process that dies in
         # between finishes it at startup (`finish_pending_acceptances`);
@@ -591,7 +610,8 @@ def resolve_own_fingerprint(db: Database, own_fingerprint: str | None) -> str | 
 def carried_from_elsewhere(db: Database, kind: str, resource_id: str, own_fingerprint: str | None) -> bool:
     """Whether deleting this local resource should hide it rather than delete
     it: it is Linked, and its current origin is another node (a board's origin
-    can move, §9.4; channels and file areas have no succession). Decided by the
+    can move, §9.4, and so can a channel's, issue #1359; file areas have no
+    succession). Decided by the
     persisted current origin against this node's own fingerprint -- the
     caller's, or the cached one -- and never guessed from where a genesis
     happens to be stored: a board created here and transferred away has no
@@ -604,7 +624,7 @@ def carried_from_elsewhere(db: Database, kind: str, resource_id: str, own_finger
         return False
     genesis = json.loads(row["link_genesis_json"])
     origin = genesis["envelope"]["payload"].get("origin_fingerprint")
-    if kind == "boards" and row["link_origin_fingerprint"]:
+    if kind in ("boards", "channels") and row["link_origin_fingerprint"]:
         origin = row["link_origin_fingerprint"]
     own = resolve_own_fingerprint(db, own_fingerprint)
     if own is None:
@@ -693,6 +713,8 @@ def restore_excluded(
                 raise CarryDecisionError(f"could not create the local copy: {exc}") from exc
             if kind == "boards":
                 _replay_board_lifecycle(db, resource_id)
+            elif kind == "channels":
+                _replay_channel_lifecycle(db, resource_id)
             db.connection.execute(
                 "UPDATE link_carry_decisions SET state = 'offered', reason = 'accepting' "
                 "WHERE kind = ? AND resource_id = ?",

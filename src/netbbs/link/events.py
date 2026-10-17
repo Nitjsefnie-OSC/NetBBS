@@ -127,9 +127,8 @@ BOARD_POLL_VOTE_OBJECT_TYPE = "board_poll_vote"
 # Design doc §9.6, issue #87: the channel-side counterpart to board_
 # genesis/board_post -- structurally identical minus what doesn't apply
 # (no edit chain; channel messages have no local edit concept at all).
-# No channel_origin_transfer_offer/_accepted pair yet -- origin succession
-# for channels is reused by reference (§9.4's model, unchanged) rather
-# than built in this issue; see ChannelGenesis's own docstring.
+# Origin succession for channels (channel_origin_transfer_offer/_accepted,
+# issue #1359) reuses §9.4's model and is defined further down.
 COMMUNITY_GENESIS_OBJECT_TYPE = "community_genesis"
 COMMUNITY_MEMBERS_OBJECT_TYPE = "community_members"
 COMMUNITY_CLOSURE_OBJECT_TYPE = "community_closure"
@@ -1244,11 +1243,10 @@ class ChannelGenesis:
     channel_id`), never newly minted, same "promote an existing local
     resource" rule `BoardGenesis` already establishes.
 
-    No `channel_origin_transfer_offer`/`_accepted` pair exists yet --
-    origin succession for channels reuses §9.4's model by reference
-    (unchanged) if a future issue ever needs it, rather than being
-    built here; this issue's own scope is genesis, promotion,
-    materialization, and message propagation only.
+    Origin succession for a linked channel is a later pair,
+    `channel_origin_transfer_offer`/`_accepted` (issue #1359), reusing
+    §9.4's model: after one, the genesis's origin is no longer the current
+    one.
 
     Always signed by the origin node's current *signing* operational
     key, matching `BoardGenesis` exactly.
@@ -3301,4 +3299,83 @@ def build_channel_topic(
 
 
 def verify_channel_topic(event: ChannelTopic, signing_verify_key: nacl.signing.VerifyKey) -> bool:
+    return verify_signature(signing_verify_key, canonical_bytes(event.envelope), event.signature)
+
+
+CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE = "channel_origin_transfer_offer"
+CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE = "channel_origin_transfer_accepted"
+"""Issue #1357, Decision 5: origin succession for linked channels, the shape of
+`board_origin_transfer_offer`/`_accepted` (§9.4) exactly: the current origin
+offers, the named node accepts, and only the acceptance moves the origin. At
+most one offer is outstanding per channel."""
+
+
+@dataclass(frozen=True)
+class ChannelOriginTransferOffer(_SignedEvent):
+    """One signed `channel_origin_transfer_offer` (issue #1357, Decision 5):
+    `channel_id`, `previous_event_id` (the channel's lifecycle head: its
+    genesis, or the last accepted transfer), `old_origin_fingerprint`,
+    `new_origin_fingerprint`, `created_at`, `nonce`. Signed by the current
+    origin."""
+
+
+@dataclass(frozen=True)
+class ChannelOriginTransferAccepted(_SignedEvent):
+    """One signed `channel_origin_transfer_accepted` (issue #1357, Decision 5):
+    `channel_id`, `previous_event_id` (always the offer it accepts),
+    `new_origin_fingerprint`, `created_at`, `nonce`. Signed by the new
+    origin."""
+
+
+def build_channel_origin_transfer_offer(
+    *,
+    signing_identity: Identity,
+    channel_id: str,
+    previous_event_id: str,
+    old_origin_fingerprint: str,
+    new_origin_fingerprint: str,
+    created_at: str,
+    nonce: str | None = None,
+) -> ChannelOriginTransferOffer:
+    """Build and sign a `channel_origin_transfer_offer` with the current
+    origin's key, as `build_board_origin_transfer_offer` does for a board."""
+    payload = {
+        "channel_id": channel_id,
+        "previous_event_id": previous_event_id,
+        "old_origin_fingerprint": old_origin_fingerprint,
+        "new_origin_fingerprint": new_origin_fingerprint,
+        "created_at": created_at,
+        "nonce": nonce if nonce is not None else secrets.token_hex(16),
+    }
+    envelope = build_envelope(CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE, payload)
+    return ChannelOriginTransferOffer(envelope=envelope, signature=signing_identity.sign(canonical_bytes(envelope)))
+
+
+def build_channel_origin_transfer_accepted(
+    *,
+    signing_identity: Identity,
+    channel_id: str,
+    previous_event_id: str,
+    new_origin_fingerprint: str,
+    created_at: str,
+    nonce: str | None = None,
+) -> ChannelOriginTransferAccepted:
+    """Build and sign a `channel_origin_transfer_accepted` with the new
+    origin's key."""
+    payload = {
+        "channel_id": channel_id,
+        "previous_event_id": previous_event_id,
+        "new_origin_fingerprint": new_origin_fingerprint,
+        "created_at": created_at,
+        "nonce": nonce if nonce is not None else secrets.token_hex(16),
+    }
+    envelope = build_envelope(CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE, payload)
+    return ChannelOriginTransferAccepted(envelope=envelope, signature=signing_identity.sign(canonical_bytes(envelope)))
+
+
+def verify_channel_origin_transfer(
+    event: ChannelOriginTransferOffer | ChannelOriginTransferAccepted, signing_verify_key: nacl.signing.VerifyKey,
+) -> bool:
+    """Verify either half's signature; which key, and that its signer is the
+    right node, is the caller's job."""
     return verify_signature(signing_verify_key, canonical_bytes(event.envelope), event.signature)

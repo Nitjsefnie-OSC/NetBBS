@@ -170,6 +170,7 @@ from netbbs.link.channels import load_own_channel_events
 from netbbs.link.communities import load_own_community_events, refresh_own_community_members
 from netbbs.link.moderators import load_own_roster
 from netbbs.link.channel_moderation import load_own_restrictions, load_own_topics
+from netbbs.link.channels import load_own_channel_lifecycle_events
 from netbbs.link.files import load_own_file_area_events
 from netbbs.link.events import (
     INVENTORY_NOT_CARRIED_CAPABILITY,
@@ -777,6 +778,8 @@ async def _push_own_events(
         + (await lane.run(load_own_roster, node.identity.fingerprint) if moderation else [])
         + (await lane.run(load_own_restrictions, node.identity.fingerprint) if moderation else [])
         + (await lane.run(load_own_topics, node.identity.fingerprint) if moderation else [])
+        # Issue #1359: this node's own channel transfer offer or acceptance.
+        + await lane.run(load_own_channel_lifecycle_events)
     )
     exchange = node.peer_exchange.setdefault(peer_fingerprint, PeerExchange())
     now = time.time()

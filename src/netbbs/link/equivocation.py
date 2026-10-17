@@ -37,6 +37,8 @@ from netbbs.link.events import (
     BOARD_POST_MODERATOR_EDIT_OBJECT_TYPE,
     BOARD_POST_TOMBSTONE_OBJECT_TYPE,
     KEY_TRANSITION_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE,
     canonical_bytes,
     event_content_id,
 )
@@ -50,6 +52,11 @@ _POST_CHAIN_TYPES = frozenset({
 #: A board's lifecycle chain (origin transfer and closure).
 _LIFECYCLE_TYPES = frozenset({
     BOARD_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE, BOARD_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE, BOARD_CLOSURE_OBJECT_TYPE,
+})
+
+#: A linked channel's lifecycle chain (origin transfer, issue #1359).
+_CHANNEL_LIFECYCLE_TYPES = frozenset({
+    CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE, CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
 })
 
 
@@ -96,6 +103,8 @@ def equivocation_slot(raw: Any) -> tuple[str, ...] | None:
             return ("post_chain", str(payload["root_post_id"]), str(payload["previous_event_id"]))
         if object_type in _LIFECYCLE_TYPES:
             return ("board_lifecycle", str(payload["board_id"]), str(payload["previous_event_id"]))
+        if object_type in _CHANNEL_LIFECYCLE_TYPES:
+            return ("channel_lifecycle", str(payload["channel_id"]), str(payload["previous_event_id"]))
     except (KeyError, TypeError, AttributeError):
         return None
     return None

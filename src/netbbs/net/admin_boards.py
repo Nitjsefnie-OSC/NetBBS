@@ -73,7 +73,7 @@ from netbbs.link.boards import (
 )
 from netbbs.ftn.networks import list_networks
 from netbbs.net.ftn_console import board_echo_action, board_echo_rows
-from netbbs.link.node_profiles import identity_for_peer, presentations_confusable
+from netbbs.link.node_profiles import identity_for_peer
 from netbbs.link.communities import (
     LinkCommunitiesError,
     close_own_community,
@@ -183,6 +183,7 @@ from netbbs.net.admin_resources import (
     _place_label,
     _remove_resource,
     _sections_text,
+    _pick_new_origin,
     _warn_about_changed_node_identity,
 )
 from netbbs.net.admin_maintenance import _audit_log_screen
@@ -1773,48 +1774,16 @@ async def _transfer_board_origin_screen(
     Peers are selected by their authenticated friendly/DNS presentation;
     the fingerprint remains the value placed in the signed offer.
     """
-    peers = sorted(
-        link_context.link_node.peers.values(), key=lambda peer: identity_for_peer(peer).label.lower()
-    )
-    identities = {peer.fingerprint: identity_for_peer(peer) for peer in peers}
-    confusable = {
-        fingerprint for fingerprint, identity in identities.items()
-        if any(
-            presentations_confusable(identity, other)
-            for other_fingerprint, other in identities.items() if other_fingerprint != fingerprint
-        )
-    }
-
-    def _candidate_label(peer) -> str:
-        identity = identities[peer.fingerprint]
-        if peer.fingerprint in confusable:
-            # Put the full technical identity first so a narrow picker
-            # cannot truncate away the only distinguishing value.
-            return f"{peer.fingerprint} ({identity.label})"
-        return identity.label
-
     await session.write_line(
         colored("\r\nTransfer message board origin", fg_color=await lane.run(effective_header_color_256), bold=True)
     )
-    if not peers:
+    if not link_context.link_node.peers:
         _announce_line(session, colored("No known peers to transfer this message board to.", fg_color=MUTED_COLOR))
         return
-    selected = await pick_item(
-        session, peers,
-        name_of=_candidate_label,
-        stable_id_of=lambda peer: id(peer),
-        title="New message-board origin",
-        empty_message="No known peers.",
-        redraw_in_place=False,
-        unicode_style=False,
-        collapsed=False,
-        accent_color=await lane.run(effective_accent_color_256),
-        header_color=await lane.run(effective_header_color_256),
-    )
-    if selected is None:
+    picked = await _pick_new_origin(session, lane, link_context, title="New message-board origin")
+    if picked is None:
         return
-    target = selected.fingerprint
-    target_label = sanitize_text(_candidate_label(selected))
+    target, target_label = picked
     await _warn_about_changed_node_identity(
         session, lane, target, role="The proposed new origin's",
     )

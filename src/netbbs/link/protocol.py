@@ -103,6 +103,11 @@ from netbbs.link.events import (
     ChannelRestriction,
     CHANNEL_TOPIC_OBJECT_TYPE,
     ChannelTopic,
+    CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE,
+    ChannelOriginTransferAccepted,
+    ChannelOriginTransferOffer,
+    verify_channel_origin_transfer,
     channel_topic_problem,
     verify_channel_topic,
     channel_restriction_problem,
@@ -1912,6 +1917,8 @@ KNOWN_EVENT_OBJECT_TYPES = frozenset({
     LINK_MODERATORS_OBJECT_TYPE,
     CHANNEL_RESTRICTION_OBJECT_TYPE,
     CHANNEL_TOPIC_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE,
+    CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE,
 })
 # Issue #1299: the most a `board_post`'s or an edit's `"poll"` field may
 # take, as JSON. Ten answers of at most 200 bytes and the settings fit with
@@ -2427,6 +2434,9 @@ class LinkNode:
     peer_directory: PeerDirectory = field(default_factory=PeerDirectory)
     board_events: BoardEventState = field(default_factory=BoardEventState)
     board_lifecycle: BoardLifecycleState = field(default_factory=BoardLifecycleState)
+    # Issue #1359 (design doc §16, issue #1357, Decision 5): linked channels'
+    # origin succession, the same state keyed by channel_id (no closure).
+    channel_lifecycle: BoardLifecycleState = field(default_factory=BoardLifecycleState)
     relay_state: RelayState = field(default_factory=RelayState)
     inventory_requests: InventoryRequestState = field(default_factory=InventoryRequestState)
     trust_pull_requests: InventoryRequestState = field(default_factory=InventoryRequestState)
@@ -3728,7 +3738,9 @@ class LinkNode:
             genesis = self.communities.get(resource_id)
             origin = genesis.payload.get("origin_fingerprint") if genesis is not None else None
             return origin if isinstance(origin, str) and origin else None
-        genesis = (self.channels if kind == "channels" else self.file_areas).get(resource_id)
+        if kind == "channels":
+            return self.current_channel_origin(resource_id) if resource_id in self.channels else None
+        genesis = self.file_areas.get(resource_id)
         origin = genesis.payload.get("origin_fingerprint") if genesis is not None else None
         return origin if isinstance(origin, str) and origin else None
 
@@ -4037,6 +4049,14 @@ class LinkNode:
         agree, since the DB-side version is this same fact persisted."""
         return self.board_lifecycle.current_origin(
             board_id, self.board_events.boards[board_id].payload["origin_fingerprint"]
+        )
+
+    def current_channel_origin(self, channel_id: str) -> str:
+        """The node currently authoritative for linked channel `channel_id`:
+        the new origin once a transfer completed, else the genesis's (issue
+        #1359). Agrees with `netbbs.link.channels.channel_origin_fingerprint`."""
+        return self.channel_lifecycle.current_origin(
+            channel_id, self.channel_events.channels[channel_id].payload["origin_fingerprint"]
         )
 
     def _lifecycle_chain(self, board_id: str) -> list[dict]:
@@ -5142,6 +5162,14 @@ class LinkNode:
                 community_id = self._accept_community_event(object_type, raw)
                 if community_id is not None:
                     accepted.append(community_id)
+            elif object_type == CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE:
+                content_id = self._accept_channel_transfer_offer(raw)
+                if content_id is not None:
+                    accepted.append(content_id)
+            elif object_type == CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE:
+                content_id = self._accept_channel_transfer_accepted(raw)
+                if content_id is not None:
+                    accepted.append(content_id)
             elif object_type == CHANNEL_TOPIC_OBJECT_TYPE:
                 content_id = self._accept_channel_topic(raw)
                 if content_id is not None:
@@ -5335,6 +5363,127 @@ class LinkNode:
         self.events[event.content_id] = raw
         return event.content_id
 
+    def _accept_channel_transfer_offer(self, raw: dict) -> str | None:
+        """Issue #1359 (Decision 5): the first half of a linked channel's
+        origin handoff, checked exactly as `board_origin_transfer_offer` is:
+        signed by the current origin, naming it as the old one, extending the
+        lifecycle head, and the only offer outstanding."""
+        offer = ChannelOriginTransferOffer.from_dict(raw)
+        if offer.content_id in self.known_event_ids:
+            return None
+        channel_id = offer.payload.get("channel_id")
+        genesis = self.channel_events.genesis_for(channel_id)
+        if genesis is None:
+            raise MissingDependency(
+                f"received a channel_origin_transfer_offer for channel_id {channel_id!r}, which has no "
+                "verified channel_genesis on file -- refusing (no relay from a stranger yet)"
+            )
+        current_origin = self.current_channel_origin(channel_id)
+        origin_peer = self.known_identity(current_origin)
+        if origin_peer is None:
+            raise MissingDependency(
+                f"received a channel_origin_transfer_offer for channel_id {channel_id!r} whose current "
+                f"origin ({current_origin!r}) has no completed hello with this node -- refusing",
+                missing_identity=current_origin,
+            )
+        if offer.payload.get("old_origin_fingerprint") != current_origin:
+            raise LinkProtocolError(
+                f"channel_origin_transfer_offer for channel_id {channel_id!r} claims an old origin "
+                f"that doesn't match its current origin ({current_origin!r})"
+            )
+        existing = self.channel_lifecycle.pending_offer(channel_id)
+        if existing is not None:
+            if existing.content_id == offer.content_id:
+                self.known_event_ids.add(offer.content_id)
+                self.events.setdefault(offer.content_id, raw)
+                return None
+            raise LinkProtocolError(
+                f"channel_id {channel_id!r} already has an outstanding, unaccepted origin-transfer offer "
+                "-- at most one may be in flight at a time"
+            )
+        head = self.channel_lifecycle.current_lifecycle_head(channel_id, genesis.content_id)
+        if offer.payload.get("previous_event_id") != head:
+            self._note_chain_fork(raw, self._channel_lifecycle_chain(channel_id))
+            raise LinkProtocolError(
+                f"channel_origin_transfer_offer for channel_id {channel_id!r} does not extend the current "
+                f"lifecycle head ({head!r})"
+            )
+        keys = self._resolve_sender_content_keys(origin_peer, current_origin, CHANNEL_ORIGIN_TRANSFER_OFFER_OBJECT_TYPE)
+        if not any(verify_channel_origin_transfer(offer, key) for key in keys):
+            raise LinkProtocolError(
+                f"channel_origin_transfer_offer from current origin {current_origin} does not verify "
+                "against its signing keys"
+            )
+        self.channel_lifecycle.record_offer(channel_id, offer)
+        self.known_event_ids.add(offer.content_id)
+        self.events[offer.content_id] = raw
+        return offer.content_id
+
+    def _accept_channel_transfer_accepted(self, raw: dict) -> str | None:
+        """Issue #1359 (Decision 5): the second half, signed by the node the
+        outstanding offer names; only this moves the channel's origin."""
+        accepted = ChannelOriginTransferAccepted.from_dict(raw)
+        if accepted.content_id in self.known_event_ids:
+            return None
+        channel_id = accepted.payload.get("channel_id")
+        if self.channel_lifecycle.board_lifecycle_head.get(channel_id) == accepted.content_id:
+            # A resend of the acceptance already in force (as for a board).
+            self.known_event_ids.add(accepted.content_id)
+            self.events.setdefault(accepted.content_id, raw)
+            return None
+        offer = self.channel_lifecycle.pending_offer(channel_id)
+        if offer is None:
+            raise MissingDependency(
+                f"received a channel_origin_transfer_accepted for channel_id {channel_id!r}, which has no "
+                "outstanding offer on file -- refusing (no relay from a stranger yet)"
+            )
+        if accepted.payload.get("previous_event_id") != offer.content_id:
+            raise LinkProtocolError(
+                f"channel_origin_transfer_accepted for channel_id {channel_id!r} does not reference the "
+                f"outstanding offer ({offer.content_id!r})"
+            )
+        new_origin = offer.payload.get("new_origin_fingerprint")
+        if accepted.payload.get("new_origin_fingerprint") != new_origin:
+            raise LinkProtocolError(
+                f"channel_origin_transfer_accepted for channel_id {channel_id!r} names a new origin that "
+                "doesn't match the offer it's accepting"
+            )
+        new_peer = self.known_identity(new_origin)
+        if new_peer is None:
+            raise MissingDependency(
+                f"received a channel_origin_transfer_accepted for channel_id {channel_id!r} whose new "
+                f"origin ({new_origin!r}) has no completed hello with this node -- refusing",
+                missing_identity=new_origin,
+            )
+        keys = self._resolve_sender_content_keys(new_peer, new_origin, CHANNEL_ORIGIN_TRANSFER_ACCEPTED_OBJECT_TYPE)
+        if not any(verify_channel_origin_transfer(accepted, key) for key in keys):
+            raise LinkProtocolError(
+                f"channel_origin_transfer_accepted from new origin {new_origin} does not verify against "
+                "its signing keys"
+            )
+        self.channel_lifecycle.record_acceptance(
+            channel_id, new_origin_fingerprint=new_origin, accepted_content_id=accepted.content_id,
+        )
+        self.known_event_ids.add(accepted.content_id)
+        self.events[accepted.content_id] = raw
+        return accepted.content_id
+
+    def _channel_lifecycle_chain(self, channel_id: str) -> list[dict]:
+        """A linked channel's lifecycle events on file, newest first, for fork
+        evidence -- `_lifecycle_chain`'s walk, for a channel."""
+        chain: list[dict] = []
+        genesis = self.channel_events.genesis_for(channel_id)
+        cursor = self.channel_lifecycle.board_lifecycle_head.get(channel_id)
+        while cursor is not None and len(chain) < _MAX_FORK_SCAN:
+            if genesis is not None and cursor == genesis.content_id:
+                break
+            raw = self.events.get(cursor)
+            if not isinstance(raw, dict):
+                break
+            chain.append(raw)
+            cursor = raw.get("envelope", {}).get("payload", {}).get("previous_event_id")
+        return chain
+
     def _accept_channel_topic(self, raw: dict) -> str | None:
         """Issue #1357, Decision 4: a linked channel's topic, signed by its
         origin or by a delegated moderator's home node with `topic`. The
@@ -5364,7 +5513,7 @@ class LinkNode:
                 f"received a {what} for channel_id {channel_id!r}, which has no verified "
                 "channel_genesis on file -- refusing (no relay from a stranger yet)"
             )
-        origin = genesis.payload["origin_fingerprint"]
+        origin = self.current_channel_origin(channel_id)
         if "moderator" in payload:
             return self._delegated_signer(
                 payload, kind="channel", resource_id=channel_id, origin=origin, permission=permission, what=what,
