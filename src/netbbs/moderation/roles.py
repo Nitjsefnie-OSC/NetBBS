@@ -357,7 +357,13 @@ def has_permission(
     combined = 0
     for row in rows:
         combined |= row["permissions"]
-    return bool(combined & int(permission))
+    if combined & int(permission):
+        return True
+    # Issue #1359 (design doc §16, issue #1357): a carried linked board or
+    # channel whose origin delegated this to the user, by Link.
+    from netbbs.link.moderators import holds_link_permission
+
+    return holds_link_permission(db, user, object_type=object_type, object_id=object_id, permission=permission)
 
 
 def get_grant(

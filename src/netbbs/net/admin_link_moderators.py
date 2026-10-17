@@ -137,6 +137,8 @@ def _register(link_context: LinkContext, raw: dict) -> None:
     content_id = event_content_id(raw["envelope"])
     node.known_event_ids.add(content_id)
     node.events[content_id] = raw
+    # What delegated moderators' actions arriving here are checked against.
+    node.record_moderator_roster(raw, raw["envelope"]["payload"]["created_at"])
     wake = getattr(node, "wake_sync", None)
     if callable(wake):
         wake()

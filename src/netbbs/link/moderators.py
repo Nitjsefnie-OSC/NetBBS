@@ -16,7 +16,7 @@ and a carrier pulls it where it pulls the board. It goes only to peers that
 advertise `LINK_MODERATION_CAPABILITY` (Decision 9).
 
 Which actions a delegate may then take, and the events they sign, are the
-later slices' (#1359); `_delegated_permissions` is the question they will ask.
+later slices' (#1359); `delegated_permissions` is the question they ask.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from netbbs.link.events import (
     MAX_LINK_MODERATORS,
     LinkModerators,
     build_link_moderators,
+    event_content_id,
     link_moderator_entry_problem,
 )
 from netbbs.moderation.log import record_action
@@ -95,9 +96,25 @@ def _roster_entries(db: Database, origin_fingerprint: str) -> list[dict]:
 
 
 def all_roster_content_ids(db: Database) -> set[str]:
-    """Every roster's content id: what is withheld from a peer that does not
-    understand rosters."""
-    return {row["content_id"] for row in db.connection.execute("SELECT content_id FROM link_moderator_rosters")}
+    """Every content id of Link moderation this node holds: the rosters, and
+    the board moderation events a delegated moderator signed (Decision 2).
+    What is withheld from a peer that does not understand Link moderation:
+    an older node keeps a roster as an opaque event it cannot place, and
+    refuses a delegated event -- signed by a node other than the board's
+    origin -- which would end the rest of its pull."""
+    ids = {row["content_id"] for row in db.connection.execute("SELECT content_id FROM link_moderator_rosters")}
+    ids |= {
+        row["content_id"] for row in db.connection.execute(
+            "SELECT content_id FROM link_events WHERE object_type IN ('board_post_moderator_edit', "
+            "'board_post_tombstone') AND json_extract(envelope_json, '$.envelope.payload.moderator') IS NOT NULL"
+        )
+    }
+    for row in db.connection.execute(
+        "SELECT link_event_json FROM posts WHERE link_event_json IS NOT NULL "
+        "AND json_extract(link_event_json, '$.envelope.payload.moderator') IS NOT NULL"
+    ):
+        ids.add(event_content_id(json.loads(row["link_event_json"])["envelope"]))
+    return ids
 
 
 def roster_events_for(db: Database, origin_fingerprint: str | None) -> dict[str, dict]:
@@ -111,9 +128,14 @@ def roster_events_for(db: Database, origin_fingerprint: str | None) -> dict[str,
     return {row["content_id"]: json.loads(row["envelope_json"])}
 
 
-def store_received_roster(db: Database, *, envelope: dict, content_id: str, arrived_at: str | None = None) -> str:
+def store_received_roster(
+    db: Database, *, envelope: dict, content_id: str, arrived_at: str | None = None,
+    own_fingerprint: str | None = None,
+) -> str:
     """Keep a received roster if it is newer than the one in force for its
-    origin, by effective time and then content id, replacing it. Returns
+    origin, by effective time and then content id, replacing it. With
+    `own_fingerprint`, also refresh what this node's own users hold from that
+    origin (`link_moderator_held`), in the same transaction. Returns
     `"stale"` or `"stored"`."""
     payload = envelope["envelope"]["payload"]
     origin = payload["origin_fingerprint"]
@@ -135,6 +157,23 @@ def store_received_roster(db: Database, *, envelope: dict, content_id: str, arri
             """,
             (origin, content_id, json.dumps(envelope), effective, arrived),
         )
+        if own_fingerprint is not None and origin != own_fingerprint:
+            db.connection.execute("DELETE FROM link_moderator_held WHERE origin_fingerprint = ?", (origin,))
+            for entry in payload["entries"]:
+                if entry["moderator"]["home_node_fingerprint"] != own_fingerprint:
+                    continue
+                scope = entry["scope"]
+                if scope == SCOPE_ORIGIN:
+                    kind, scope_id = "origin", None
+                elif "community" in scope:
+                    kind, scope_id = "community", scope["community"]
+                else:
+                    kind, scope_id = scope["kind"], scope["id"]
+                db.connection.execute(
+                    "INSERT INTO link_moderator_held (origin_fingerprint, local_user_id, scope_kind, scope_id, "
+                    "permissions) VALUES (?, ?, ?, ?, ?)",
+                    (origin, entry["moderator"]["local_user_id"], kind, scope_id, json.dumps(entry["permissions"])),
+                )
     except BaseException:
         db.connection.rollback()
         raise
@@ -287,7 +326,7 @@ def revoke_link_moderator(db: Database, node_identity, grant_id: int, *, actor: 
 # -- what a roster grants ------------------------------------------------------
 
 
-def _delegated_permissions(
+def delegated_permissions(
     entries: list[dict],
     *,
     home_node_fingerprint: str,
@@ -321,6 +360,92 @@ def _delegated_permissions(
         if covered:
             granted |= set(entry.get("permissions", ())) & applicable
     return granted
+
+
+#: A local permission as a roster names it (Decision 1).
+_PERMISSION_NAMES = {("board", "EDIT"): "edit", ("board", "DELETE"): "delete",
+                     ("channel", "MODERATE"): "moderate", ("channel", "EDIT"): "topic"}
+
+
+def _resource_origin(db: Database, object_type: str, object_id: int) -> tuple[str, str] | None:
+    """`(link id, current origin)` of a linked board or channel, or `None`."""
+    if object_type == "board":
+        row = db.connection.execute(
+            "SELECT board_id, link_genesis_json, link_origin_fingerprint FROM boards WHERE id = ?", (object_id,)
+        ).fetchone()
+        if row is None or row["link_genesis_json"] is None:
+            return None
+        origin = row["link_origin_fingerprint"] or json.loads(row["link_genesis_json"])["envelope"]["payload"].get(
+            "origin_fingerprint"
+        )
+        return row["board_id"], origin
+    if object_type == "channel":
+        row = db.connection.execute(
+            "SELECT channel_id, link_genesis_json FROM channels WHERE id = ?", (object_id,)
+        ).fetchone()
+        if row is None or row["link_genesis_json"] is None:
+            return None
+        return row["channel_id"], json.loads(row["link_genesis_json"])["envelope"]["payload"].get("origin_fingerprint")
+    return None
+
+
+def _listing_communities(db: Database, origin: str, kind: str, resource_id: str) -> set[str]:
+    """The open Link Communities of `origin` whose list in force here names
+    `resource_id` among its `kind`."""
+    from netbbs.link.communities import is_closed, members_in_force, stored_genesis
+
+    found = set()
+    for row in db.connection.execute(
+        "SELECT DISTINCT scope_id FROM link_moderator_held WHERE origin_fingerprint = ? AND scope_kind = 'community'",
+        (origin,),
+    ):
+        link_id = row["scope_id"]
+        genesis = stored_genesis(db, link_id)
+        if genesis is None or genesis.payload.get("origin_fingerprint") != origin or is_closed(db, link_id):
+            continue
+        if resource_id in members_in_force(db, link_id).get(kind, ()):
+            found.add(link_id)
+    return found
+
+
+def holds_link_permission(db: Database, user: User, *, object_type: str, object_id: int, permission) -> bool:
+    """Whether `user`, a user of this node, holds `permission` on a carried
+    linked board or channel by its origin's roster (Decision 2) -- what lets
+    them moderate it here and have it signed for everyone. Called by
+    `netbbs.moderation.roles.has_permission` after the local grants."""
+    name = _PERMISSION_NAMES.get((object_type, getattr(permission, "name", "")))
+    if name is None:
+        return False
+    if db.connection.execute(
+        "SELECT 1 FROM link_moderator_held WHERE local_user_id = ? COLLATE NOCASE LIMIT 1", (user.username,)
+    ).fetchone() is None:
+        return False
+    resource = _resource_origin(db, object_type, object_id)
+    if resource is None:
+        return False
+    resource_id, origin = resource
+    entries = []
+    for row in db.connection.execute(
+        "SELECT scope_kind, scope_id, permissions FROM link_moderator_held "
+        "WHERE origin_fingerprint = ? AND local_user_id = ? COLLATE NOCASE",
+        (origin, user.username),
+    ):
+        if row["scope_kind"] == "origin":
+            scope: object = SCOPE_ORIGIN
+        elif row["scope_kind"] == "community":
+            scope = {"community": row["scope_id"]}
+        else:
+            scope = {"kind": row["scope_kind"], "id": row["scope_id"]}
+        entries.append({
+            "moderator": {"home_node_fingerprint": "here", "local_user_id": user.username},
+            "scope": scope, "permissions": json.loads(row["permissions"]),
+        })
+    granted = delegated_permissions(
+        entries, home_node_fingerprint="here", local_user_id=user.username,
+        resource_kind=object_type, resource_id=resource_id,
+        community_ids=_listing_communities(db, origin, object_type + "s", resource_id),
+    )
+    return name in granted
 
 
 def grants_held_here(db: Database, own_fingerprint: str) -> list[tuple[str, dict]]:

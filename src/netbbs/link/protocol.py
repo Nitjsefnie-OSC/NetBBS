@@ -173,6 +173,7 @@ from netbbs.link.equivocation import (
 )
 from netbbs.link.trust_wire import TrustPullRequest
 from netbbs.timeutil import parse_utc_iso, utc_now_iso
+from netbbs.link.moderators import delegated_permissions as _delegated_permissions, effective_time
 
 # Bounds on remotely-influenced peer-list state (design doc's own
 # "every remotely influenced ... collection needs an explicit
@@ -2220,9 +2221,34 @@ class CommunityEventState:
 
     communities: dict[str, CommunityGenesis] = field(default_factory=dict)
     closures: dict[str, CommunityClosure] = field(default_factory=dict)
+    # Issue #1357: the membership list in force per Community, newest
+    # `created_at` then content id (the projection's own order), for whether
+    # a Community-scoped Link moderator covers a resource.
+    members: dict[str, CommunityMembers] = field(default_factory=dict)
 
     def genesis_for(self, community_id: str) -> CommunityGenesis | None:
         return self.communities.get(community_id)
+
+    def record_members(self, members: CommunityMembers) -> None:
+        community_id = members.payload["community_id"]
+        held = self.members.get(community_id)
+        key = (str(members.payload.get("created_at", "")), members.content_id)
+        if held is None or key > (str(held.payload.get("created_at", "")), held.content_id):
+            self.members[community_id] = members
+
+    def communities_listing(self, origin: str, kind: str, resource_id: str) -> set[str]:
+        """The open Communities of `origin` whose list names `resource_id`
+        among its `kind` ("boards", "channels")."""
+        found = set()
+        for community_id, members in self.members.items():
+            genesis = self.communities.get(community_id)
+            if genesis is None or genesis.payload.get("origin_fingerprint") != origin:
+                continue
+            if community_id in self.closures:
+                continue
+            if resource_id in members.payload.get("members", {}).get(kind, ()):
+                found.add(community_id)
+        return found
 
     def record_genesis(self, genesis: CommunityGenesis) -> None:
         self.communities[genesis.payload["community_id"]] = genesis
@@ -2415,6 +2441,10 @@ class LinkNode:
     file_area_events: FileAreaEventState = field(default_factory=FileAreaEventState)
     # Issue #1308: Link Communities.
     community_events: CommunityEventState = field(default_factory=CommunityEventState)
+    # Issue #1357: the moderator roster in force per origin, as
+    # (effective_at, content_id, entries) -- what a delegated moderator's
+    # action is checked against on receipt (Decision 2).
+    moderator_rosters: dict[str, tuple[str, str, list]] = field(default_factory=dict)
     # Issue #834: routine Link states (a subject on probation here, a relay
     # candidate not reached) the node log has already explained once since
     # this process started, so they are not repeated on every sync pass.
@@ -4427,9 +4457,15 @@ class LinkNode:
 
                 # Issue #85-shaped relaxation: the board's current origin
                 # must independently be a known peer, regardless of who
-                # relayed this edit.
-                current_origin = self.current_board_origin(board_id)
-                origin_peer = self.known_identity(current_origin)
+                # relayed this edit. Issue #1357: a delegated moderator's
+                # home node signs instead, once the origin's roster says so.
+                if "moderator" in mod_edit.payload:
+                    current_origin, origin_peer = self._delegated_board_signer(
+                        mod_edit.payload, board_id, "edit", "board_post_moderator_edit",
+                    )
+                else:
+                    current_origin = self.current_board_origin(board_id)
+                    origin_peer = self.known_identity(current_origin)
                 if origin_peer is None:
                     raise MissingDependency(
                         f"received a board_post_moderator_edit for board_id {board_id!r} whose "
@@ -4494,8 +4530,14 @@ class LinkNode:
                         f"the current head ({current_head!r})"
                     )
 
-                current_origin = self.current_board_origin(board_id)
-                origin_peer = self.known_identity(current_origin)
+                if "moderator" in tombstone.payload:
+                    # Issue #1357, as for a moderator edit above.
+                    current_origin, origin_peer = self._delegated_board_signer(
+                        tombstone.payload, board_id, "delete", "board_post_tombstone",
+                    )
+                else:
+                    current_origin = self.current_board_origin(board_id)
+                    origin_peer = self.known_identity(current_origin)
                 if origin_peer is None:
                     raise MissingDependency(
                         f"received a board_post_tombstone for board_id {board_id!r} whose "
@@ -5231,6 +5273,8 @@ class LinkNode:
 
         if object_type == COMMUNITY_GENESIS_OBJECT_TYPE:
             self.community_events.record_genesis(event)
+        elif object_type == COMMUNITY_MEMBERS_OBJECT_TYPE:
+            self.community_events.record_members(event)
         elif object_type == COMMUNITY_CLOSURE_OBJECT_TYPE:
             self.community_events.closures[community_id] = event
         self.known_event_ids.add(event.content_id)
@@ -5266,9 +5310,61 @@ class LinkNode:
         signing_verify_keys = self._resolve_sender_content_keys(origin_peer, origin, LINK_MODERATORS_OBJECT_TYPE)
         if not any(verify_link_moderators(event, key) for key in signing_verify_keys):
             raise LinkProtocolError(f"link_moderators from origin {origin} does not verify against its signing keys")
+        self.record_moderator_roster(raw, effective_time(payload.get("created_at"), utc_now_iso()))
         self.known_event_ids.add(event.content_id)
         self.events[event.content_id] = raw
         return event.content_id
+
+    def record_moderator_roster(self, raw: dict, effective_at: str) -> None:
+        """Keep `raw` as its origin's roster in force when it is newer, by
+        effective time then content id (Decision 8) -- the same order the
+        stored copy keeps (`netbbs.link.moderators.store_received_roster`)."""
+        payload = raw["envelope"]["payload"]
+        origin = payload["origin_fingerprint"]
+        content_id = event_content_id(raw["envelope"])
+        held = self.moderator_rosters.get(origin)
+        if held is None or (effective_at, content_id) > (held[0], held[1]):
+            self.moderator_rosters[origin] = (effective_at, content_id, list(payload["entries"]))
+
+    def _delegated_board_signer(self, payload: dict, board_id: str, permission: str, what: str):
+        """For a board moderator event carrying `moderator` (issue #1357,
+        Decision 2): the moderator's home node, once the board's current
+        origin's roster here grants them `permission` on it. Revocation is on
+        receipt: a roster without the grant refuses the event whatever its
+        `created_at` says. Returns `(fingerprint, peer)`."""
+        moderator = payload.get("moderator")
+        if (
+            not isinstance(moderator, dict)
+            or set(moderator) != {"kind", "home_node_fingerprint", "local_user_id"}
+            or moderator.get("kind") != "node_vouched_user"
+            or not isinstance(moderator.get("home_node_fingerprint"), str)
+            or not isinstance(moderator.get("local_user_id"), str)
+        ):
+            raise LinkProtocolError(f"{what} names a malformed moderator -- refusing")
+        home = moderator["home_node_fingerprint"]
+        origin = self.current_board_origin(board_id)
+        if home == origin:
+            raise LinkProtocolError(f"{what} names a moderator of the origin itself -- refusing")
+        roster = self.moderator_rosters.get(origin)
+        granted = _delegated_permissions(
+            roster[2] if roster is not None else [],
+            home_node_fingerprint=home, local_user_id=moderator["local_user_id"],
+            resource_kind="board", resource_id=board_id,
+            community_ids=self.community_events.communities_listing(origin, "boards", board_id),
+        )
+        if permission not in granted:
+            raise LinkProtocolError(
+                f"{what} by {moderator['local_user_id']!r} of {home}, whom the board's origin's roster "
+                f"here does not let {permission} -- refusing"
+            )
+        peer = self.known_identity(home)
+        if peer is None:
+            raise MissingDependency(
+                f"received a {what} by a moderator of {home}, which has no completed hello with this "
+                "node -- refusing (no relay from a stranger)",
+                missing_identity=home,
+            )
+        return home, peer
 
     def _accept_opaque(self, raw: dict, object_type: object) -> str | None:
         """Take an event of a type this node does not understand (issue

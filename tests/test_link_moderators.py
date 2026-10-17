@@ -26,7 +26,7 @@ from netbbs.link.events import (
 )
 from netbbs.link.moderators import (
     LinkModeratorsError,
-    _delegated_permissions as delegated_permissions,
+    delegated_permissions,
     effective_time,
     grant_link_moderator,
     grants_held_here,

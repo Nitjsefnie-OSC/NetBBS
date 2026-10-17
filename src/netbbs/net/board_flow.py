@@ -950,15 +950,30 @@ _CLOSED_BOARD_NOTICE = "This message board is closed. It can be read, but it tak
 _STAYS_LOCAL_NOTICE = "Other nodes carrying this board keep the original: only its origin can change it for them."
 
 
-def _moderation_stays_local(db: Database, board: Board, link_context: LinkContext | None) -> bool:
+def _moderation_stays_local(
+    db: Database, board: Board, link_context: LinkContext | None, user: User | None = None,
+    permission: str = "EDIT",
+) -> bool:
     """Whether a moderator's edit or removal on `board` changes this node's
     copy only. On a Linked board only the origin's moderation is signed
     and sent (`queue_board_post_moderator_edit_if_linked`,
-    `queue_board_post_tombstone_if_linked`, design doc §9.5); everywhere
-    else it is local, and the moderator is told so (issue #677)."""
+    `queue_board_post_tombstone_if_linked`, design doc §9.5), and a
+    delegated Link moderator's (issue #1357); everywhere else it is local,
+    and the moderator is told so (issue #677)."""
     if not is_board_linked(db, board):
         return False
-    return link_context is None or board_origin_fingerprint(db, board) != link_context.node_identity.fingerprint
+    if link_context is None:
+        return True
+    if board_origin_fingerprint(db, board) == link_context.node_identity.fingerprint:
+        return False
+    if user is None:
+        return True
+    from netbbs.link.moderators import holds_link_permission
+    from netbbs.moderation.roles import BoardPermission
+
+    return not holds_link_permission(
+        db, user, object_type="board", object_id=board.id, permission=BoardPermission[permission],
+    )
 _DRAFT_MENU_ENTRY = MenuEntry(label=menu_key("D", "raft"), brief="Resume or discard your saved draft")
 # Issue #1299: a poll is a post with answers to vote on. The design entry
 # named it Po[l]l; a key is its label's first letter (§3.5), and N is free.
@@ -2462,7 +2477,7 @@ async def _edit_existing_post(
             announce(session, "Edit submitted. The post keeps its current text until a moderator approves it.")
         else:
             announce(session, "Poll updated." if text_unchanged else "Post updated.")
-        if post.author_user_id != user.id and _moderation_stays_local(db, board, link_context):
+        if post.author_user_id != user.id and _moderation_stays_local(db, board, link_context, user):
             announce(session, _STAYS_LOCAL_NOTICE, tone="muted")
         return True
 
@@ -2493,7 +2508,7 @@ def _send_poll_change(
     copy only, and is told so."""
     if link_context is None:
         return
-    if post.author_user_id != user.id and _moderation_stays_local(db, board, link_context):
+    if post.author_user_id != user.id and _moderation_stays_local(db, board, link_context, user):
         announce(session, _STAYS_LOCAL_NOTICE, tone="muted")
         return
     current = visible_post(db, post.post_id)
@@ -2779,7 +2794,7 @@ async def _tombstone_existing_post(
         announce(session, "You can't remove that post.", tone="muted")
         return
 
-    stays_local = _moderation_stays_local(db, board, link_context)
+    stays_local = _moderation_stays_local(db, board, link_context, user, permission="DELETE")
     subject = sanitize_text(post.subject)
     question = (
         f"Take down \"{subject}\" on this node only?"
@@ -2796,7 +2811,9 @@ async def _tombstone_existing_post(
         announce(session, f"Could not remove the post: {exc}", tone="error")
         return
     if link_context is not None:
-        queue_board_post_tombstone_if_linked(db, tombstoned, board, node_identity=link_context.node_identity)
+        queue_board_post_tombstone_if_linked(
+            db, tombstoned, board, node_identity=link_context.node_identity, tombstoned_by=user,
+        )
     if stays_local:
         announce(session, "Post taken down on this node.")
         announce(session, _STAYS_LOCAL_NOTICE, tone="muted")
