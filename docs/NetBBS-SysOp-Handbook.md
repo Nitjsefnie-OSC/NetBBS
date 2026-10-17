@@ -1696,6 +1696,12 @@ reaches every node.
   the channel's origin, and the origin's always outranks a delegated
   moderator's.
 
+**Topics of linked channels.** A linked channel has one topic everywhere: the
+newest one set on the node it comes from, or by a user that node's grant
+names. On a channel this node carries, `/topic` is refused for anyone else,
+because a local topic would contradict the shared one. A linked channel's
+topic is at most 300 bytes.
+
 > [!NOTE]
 > Grants reach only nodes running a version that understands Link moderation.
 > An older node keeps showing what newer nodes hide.

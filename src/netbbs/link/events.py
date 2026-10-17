@@ -3245,3 +3245,60 @@ def build_channel_restriction(
 
 def verify_channel_restriction(event: ChannelRestriction, signing_verify_key: nacl.signing.VerifyKey) -> bool:
     return verify_signature(signing_verify_key, canonical_bytes(event.envelope), event.signature)
+
+
+CHANNEL_TOPIC_OBJECT_TYPE = "channel_topic"
+"""Issue #1357, Decision 4: the topic of a linked channel, set by its origin
+or a delegated moderator with `topic`. The newest wins."""
+
+MAX_CHANNEL_TOPIC_BYTES = 300
+
+
+@dataclass(frozen=True)
+class ChannelTopic(_SignedEvent):
+    """One signed `channel_topic` (issue #1357, Decision 4)."""
+
+
+def channel_topic_problem(payload: object) -> str | None:
+    """Why a `channel_topic` payload is malformed, or `None`."""
+    if not isinstance(payload, dict):
+        return "a channel_topic payload must be an object"
+    if not isinstance(payload.get("channel_id"), str) or not payload["channel_id"]:
+        return "a channel_topic names no channel"
+    topic = payload.get("topic")
+    if topic is not None and (not isinstance(topic, str) or len(topic.encode("utf-8")) > MAX_CHANNEL_TOPIC_BYTES):
+        return f"a channel_topic's topic must be text of at most {MAX_CHANNEL_TOPIC_BYTES} bytes, or null"
+    if not isinstance(payload.get("created_at"), str):
+        return "a channel_topic has no created_at"
+    return None
+
+
+def build_channel_topic(
+    *,
+    signing_identity: Identity,
+    channel_id: str,
+    topic: str | None,
+    created_at: str,
+    moderator: dict | None = None,
+    nonce: str | None = None,
+) -> ChannelTopic:
+    """Build and sign a `channel_topic`: with the channel's origin's key, or
+    with `moderator` a delegated moderator's home node's (Decision 2). A
+    `None` topic clears it."""
+    payload: dict = {
+        "channel_id": channel_id,
+        "topic": topic or None,
+        "created_at": created_at,
+        "nonce": nonce if nonce is not None else secrets.token_hex(16),
+    }
+    if moderator is not None:
+        payload["moderator"] = moderator
+    problem = channel_topic_problem(payload)
+    if problem is not None:
+        raise EventError(problem)
+    envelope = build_envelope(CHANNEL_TOPIC_OBJECT_TYPE, payload)
+    return ChannelTopic(envelope=envelope, signature=signing_identity.sign(canonical_bytes(envelope)))
+
+
+def verify_channel_topic(event: ChannelTopic, signing_verify_key: nacl.signing.VerifyKey) -> bool:
+    return verify_signature(signing_verify_key, canonical_bytes(event.envelope), event.signature)

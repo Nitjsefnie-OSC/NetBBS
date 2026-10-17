@@ -119,6 +119,8 @@ def all_roster_content_ids(db: Database) -> set[str]:
     ids |= {row["content_id"] for row in db.connection.execute(
         "SELECT content_id FROM link_channel_restrictions WHERE content_id IS NOT NULL"
     )}
+    # Slice 4: every linked channel's signed topic.
+    ids |= {row["content_id"] for row in db.connection.execute("SELECT content_id FROM link_channel_topics")}
     return ids
 
 
