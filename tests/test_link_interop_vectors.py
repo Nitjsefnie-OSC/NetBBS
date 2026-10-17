@@ -62,8 +62,10 @@ def test_python_matches_every_independent_signed_vector():
 def test_python_matches_wire_vector_acceptance():
     for vector in _CORPUS["wire_vectors"]:
         try:
-            _parse_wire_vector(vector)
+            value = _parse_wire_vector(vector)
             accepted = True
         except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
             accepted = False
         assert accepted is vector["accepted"], vector["name"]
+        if accepted and "canonical_hex" in vector:
+            assert canonical_bytes(value).hex() == vector["canonical_hex"], vector["name"]
