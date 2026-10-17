@@ -442,7 +442,7 @@ Backups leave those out rather than carry a name that does not travel.
 
 ### Scope and reading order
 
-Read [design sections 7–12](NetBBS-design-doc.md#7-netbbs-link-identity-events-and-compatibility)
+Read [design sections 7–12](NetBBS-design-doc.md#section-map)
 for identity, events, synchronization, linked-resource lifecycle, mail,
 files, and trust. The design reference specifies meaning; exact serializers,
 validators, and fixtures pin the current wire format.
@@ -709,7 +709,7 @@ but must still fit or wrap.
 Screens reached by a hotkey show content first and provide a way back without
 writing. Collect multi-field edits in a draft; save once. A rejecting save must
 raise the editor's designated error so the draft stays open. See design
-[section 3.5](NetBBS-design-doc.md#35-interaction-model-for-screens-issue-282)
+[section 3.5](design/03-caller-interface.md#35-interaction-model-for-screens-issue-282)
 for confirmation and draft behavior.
 
 A screen never spells its breadcrumb (issue #1246). A screen that leads to

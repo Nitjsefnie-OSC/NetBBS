@@ -88,6 +88,7 @@ Each decision lives in its own file under [`decisions/`](decisions/), named afte
 | #1354 | [the New Year and clock changes in chat](decisions/1354-the-new-year-and-clock-changes-in-chat.md) | decided |
 | #1357 | [Link moderation: delegated moderators for linked boards and channels](decisions/1357-link-moderation-delegated-moderators-for-linked.md) | decided |
 | #1368 | [Link DMs: cross-node `/dm` direct chats](decisions/1368-link-dms-cross-node-dm-direct-chats.md) | decided and built |
+| #1394 | [splitting the design document by area](decisions/1394-splitting-the-design-document-by-area.md) | decided and built |
 | — | [Staff edit a member's Profile](decisions/staff-edit-a-members-profile.md) | decided |
 | — | [SFTP over the SSH transport](decisions/sftp-over-the-ssh-transport.md) | declined |
 | — | [Deliberately deferred without active issue](decisions/deliberately-deferred-without-active-issue.md) | — |

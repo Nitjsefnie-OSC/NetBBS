@@ -48,7 +48,7 @@ reading this design reference first.
   (§16, #1357) but not built; the rest of Phase 6 and the remaining deferred
   protocol features are future work, and current issues track their scope.
 
-Implementation status belongs beside the relevant design rule below and must be
+Implementation status belongs beside the relevant design rule in its area file and must be
 updated in place. Do not append victory narratives or test-count snapshots.
 
 ---
@@ -181,5 +181,5 @@ The decisions log (§16) keeps one file per decision under [`docs/design/decisio
   - [Phase 6 — Advanced Link governance and Link Communities](design/15-roadmap.md#phase-6--advanced-link-governance-and-link-communities)
   - [Phase 7 — Doors and legacy compatibility](design/15-roadmap.md#phase-7--doors-and-legacy-compatibility)
 - [16. Decisions and extension references](design/16-decisions.md)
-  - 81 decisions, listed in [§16](design/16-decisions.md)
+  - every decision, one file each, listed in [§16](design/16-decisions.md)
 - [17. Maintaining this document](design/17-maintaining.md)

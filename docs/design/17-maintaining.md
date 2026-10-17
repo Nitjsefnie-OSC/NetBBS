@@ -30,3 +30,10 @@ Do not add:
 Use issues for unresolved work, commit/PR descriptions for change narratives,
 the engineering record for durable implementation constraints, and Git history
 for archaeology.
+
+Put text where its topic lives (issue #1394): a rule goes in the area file
+for its top-level section under `docs/design/`, and a decision's reasoning
+goes in its own file under `docs/design/decisions/`, listed in §16. Keep the
+section map in `docs/NetBBS-design-doc.md` in step when a subsection is
+added or renamed. Never renumber an existing section: `§n.n` references
+throughout the code, issues and handbooks depend on the numbers.
