@@ -317,7 +317,7 @@ def test_the_screen_adds_and_removes_a_link_moderator(db, sysop, here, monkeypat
     lane = DatabaseLane(db.path)
     node = LinkNode(identity=here)
     try:
-        session = FakeSession(["a", "wren@Elsewhere", "r", "y", "b"])
+        session = FakeSession(["a", "0", "1", "wren@Elsewhere", "0", "2", "s", "r", "y", "b"])
         asyncio.run(screen.link_moderators_screen(session, lane, sysop, link_context=LinkContext(link_node=node)))
     finally:
         lane.close()
@@ -351,3 +351,26 @@ def test_the_screen_lists_what_this_nodes_users_hold_elsewhere(db, sysop, here):
         lane.close()
     text = " ".join(strip_ansi(_written_text(session)).split())
     assert "held by this node's users" in text.lower() and "remove posts, edit posts" in text
+
+
+def test_leaving_the_add_form_without_saving_grants_nothing(db, sysop, here, monkeypatch):
+    import asyncio
+
+    from netbbs.link.boards import LinkContext
+    from netbbs.net import admin_link_moderators as screen
+    from netbbs.storage.execution import DatabaseLane
+    from tests.test_admin_flow import FakeSession
+
+    async def first(session, items, **kwargs):
+        return items[0]
+
+    monkeypatch.setattr(screen, "pick_item", first)
+    lane = DatabaseLane(db.path)
+    try:
+        session = FakeSession(["a", "0", "1", "wren@Elsewhere", "0", "2", "b", "y", "b"])
+        asyncio.run(screen.link_moderators_screen(
+            session, lane, sysop, link_context=LinkContext(link_node=LinkNode(identity=here)),
+        ))
+    finally:
+        lane.close()
+    assert list_own_grants(db) == [] and roster_in_force(db, here.fingerprint) is None

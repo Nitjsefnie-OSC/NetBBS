@@ -206,60 +206,93 @@ async def link_moderators_screen(
 
 
 async def _add(session: Session, lane: DatabaseLane, actor: User, link_context: LinkContext, chrome) -> str | None:
-    from netbbs.net.admin_fields import _read_seeded_line
-    from netbbs.net.char_input import InputCancelled
+    """One draft editor (design doc §3.5): `[U]ser`, `[O]n`, `[M]ay`, then
+    `[S]ave`. Nothing is granted before Save, and the summary the editor
+    keeps on screen is the confirmation; a grant is undone with `[R]emove`."""
     from netbbs.net.mail_flow import _resolve_link_address
-    from netbbs.net.resource_editor import write_field_prompt
+    from netbbs.net.menu_description_preference import menu_description_level
+    from netbbs.net.resource_editor import FieldSpec, edit_resource_draft, text_field
 
     own = link_context.node_identity.fingerprint
-    await session.write_line("")
-    hint = "Enter goes on, Esc cancels"
-    await write_field_prompt(
-        session, colored(f"Moderator, as name@TheirBBS ({hint}):", fg_color=MUTED_COLOR), hint=hint,
-    )
-    try:
-        typed = (await _read_seeded_line(session, initial="")).strip()
-    except InputCancelled:
-        return colored("Nothing granted.", fg_color=MUTED_COLOR)
-    resolved = await lane.run(_resolve_link_address, typed)
-    if isinstance(resolved, str):
-        return colored(f"{resolved} Nothing granted.", fg_color=ERROR_COLOR)
-    scopes = await lane.run(own_scopes, own)
-    scope = await pick_item(
-        session, scopes, name_of=lambda item: item.label, stable_id_of=lambda item: f"{item.kind}:{item.id}",
-        title="Moderate what?", empty_message="This node originates nothing on NetBBS Link yet.",
-        redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style, collapsed=chrome.collapsed,
-        accent_color=chrome.accent_color, header_color=chrome.header_color,
-    )
-    if scope is None:
-        return colored("Nothing granted.", fg_color=MUTED_COLOR)
-    presets = _PRESETS[scope.kind]
-    permissions = presets[0]
-    if len(presets) > 1:
-        picked = await pick_item(
-            session, list(presets), name_of=lambda item: _permission_text(item).capitalize(),
-            stable_id_of=lambda item: ",".join(item), title="They may", empty_message="",
-            redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
-            collapsed=chrome.collapsed, accent_color=chrome.accent_color, header_color=chrome.header_color,
+    outcome: list[str] = []
+    draft: dict = {"user": "", "scope": None, "preset": 0}
+
+    async def _scope_prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
+        scope = await pick_item(
+            session, await lane.run(own_scopes, own), name_of=lambda item: item.label,
+            stable_id_of=lambda item: f"{item.kind}:{item.id}", title="Moderate what?",
+            empty_message="This node originates nothing on NetBBS Link yet.",
+            redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style, collapsed=chrome.collapsed,
+            accent_color=chrome.accent_color, header_color=chrome.header_color,
         )
-        if picked is None:
-            return colored("Nothing granted.", fg_color=MUTED_COLOR)
-        permissions = picked
-    who = link_address_label(resolved.user, (await lane.run(identity_for_fingerprint, resolved.fingerprint)).label)
-    try:
+        if scope is not None:
+            draft["scope"] = scope
+            draft["preset"] = 0
+
+    def _presets(d: dict) -> tuple:
+        return _PRESETS[d["scope"].kind] if d["scope"] is not None else ()
+
+    def _may_step(draft: dict, direction: int) -> None:
+        presets = _presets(draft)
+        if presets:
+            draft["preset"] = (draft["preset"] + direction) % len(presets)
+
+    async def _may_prompt(session: Session, lane: DatabaseLane, draft: dict) -> None:
+        _may_step(draft, 1)
+
+    def _may_render(d: dict) -> str:
+        presets = _presets(d)
+        return _permission_text(presets[d["preset"]]).capitalize() if presets else "(choose On first)"
+
+    fields = [
+        FieldSpec(
+            key="user", label="User", render=lambda d: sanitize_text(d["user"]) or "(not chosen)",
+            prompt=text_field("user", required=True), brief="name@TheirBBS",
+            help="The user on another node, as name@TheirBBS -- the address Link mail reaches them at.",
+        ),
+        FieldSpec(
+            key="scope", label="On", render=lambda d: d["scope"].label if d["scope"] is not None else "(not chosen)",
+            prompt=_scope_prompt, brief="What they moderate",
+            help="One linked board or channel this node originates, one of its Link Communities, or all of it.",
+        ),
+        FieldSpec(
+            key="preset", label="May", render=_may_render, prompt=_may_prompt,
+            step=_may_step,
+            brief="What they may do there",
+            help="Edit and remove posts on boards; mute, ban and set the topic in channels; or part of that.",
+        ),
+    ]
+
+    async def save(draft: dict) -> bool | None:
+        if not draft["user"].strip() or draft["scope"] is None:
+            raise LinkModeratorsError("Choose a User and what they moderate under On first.")
+        resolved = await lane.run(_resolve_link_address, draft["user"].strip())
+        if isinstance(resolved, str):
+            raise LinkModeratorsError(resolved)
+        scope = draft["scope"]
+        permissions = _PRESETS[scope.kind][draft["preset"]]
         raw = await lane.run(
             grant_link_moderator, link_context.node_identity,
             home_node_fingerprint=resolved.fingerprint, local_user_id=resolved.user,
             scope_kind=scope.kind, scope_id=scope.id, permissions=list(permissions), actor=actor, label=scope.label,
         )
-    except LinkModeratorsError as exc:
-        return colored(f"{exc} Nothing granted.", fg_color=ERROR_COLOR)
-    _register(link_context, raw)
-    return colored(
-        f"{sanitize_text(who)} may now {_permission_text(permissions)} on {sanitize_text(scope.label)}. "
-        "Carriers learn it with their next pass.",
-        fg_color=SUCCESS_COLOR,
+        _register(link_context, raw)
+        who = link_address_label(resolved.user, (await lane.run(identity_for_fingerprint, resolved.fingerprint)).label)
+        outcome.append(colored(
+            f"{sanitize_text(who)} may now {_permission_text(permissions)} on {sanitize_text(scope.label)}. "
+            "Carriers learn it with their next pass.",
+            fg_color=SUCCESS_COLOR,
+        ))
+        return True
+
+    await edit_resource_draft(
+        session, lane, title="Add a Link moderator", own=True, fields=fields, draft=draft, save=save,
+        error_type=LinkModeratorsError, save_menu_text=menu_key("S", "ave"), back_menu_text=menu_key("B", "ack"),
+        description_level=await lane.run(menu_description_level, actor),
+        redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style, collapsed=chrome.collapsed,
+        accent_color=chrome.accent_color, header_color=chrome.header_color,
     )
+    return outcome[0] if outcome else colored("Nothing granted.", fg_color=MUTED_COLOR)
 
 
 async def _remove(
