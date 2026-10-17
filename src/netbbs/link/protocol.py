@@ -101,6 +101,10 @@ from netbbs.link.events import (
     LinkModerators,
     CHANNEL_RESTRICTION_OBJECT_TYPE,
     ChannelRestriction,
+    CHANNEL_TOPIC_OBJECT_TYPE,
+    ChannelTopic,
+    channel_topic_problem,
+    verify_channel_topic,
     channel_restriction_problem,
     verify_channel_restriction,
     link_moderators_problem,
@@ -1907,6 +1911,7 @@ KNOWN_EVENT_OBJECT_TYPES = frozenset({
     COMMUNITY_CLOSURE_OBJECT_TYPE,
     LINK_MODERATORS_OBJECT_TYPE,
     CHANNEL_RESTRICTION_OBJECT_TYPE,
+    CHANNEL_TOPIC_OBJECT_TYPE,
 })
 # Issue #1299: the most a `board_post`'s or an edit's `"poll"` field may
 # take, as JSON. Ten answers of at most 200 bytes and the settings fit with
@@ -5137,6 +5142,10 @@ class LinkNode:
                 community_id = self._accept_community_event(object_type, raw)
                 if community_id is not None:
                     accepted.append(community_id)
+            elif object_type == CHANNEL_TOPIC_OBJECT_TYPE:
+                content_id = self._accept_channel_topic(raw)
+                if content_id is not None:
+                    accepted.append(content_id)
             elif object_type == CHANNEL_RESTRICTION_OBJECT_TYPE:
                 content_id = self._accept_channel_restriction(raw)
                 if content_id is not None:
@@ -5326,6 +5335,49 @@ class LinkNode:
         self.events[event.content_id] = raw
         return event.content_id
 
+    def _accept_channel_topic(self, raw: dict) -> str | None:
+        """Issue #1357, Decision 4: a linked channel's topic, signed by its
+        origin or by a delegated moderator's home node with `topic`. The
+        newest wins, decided where it is stored."""
+        event = ChannelTopic.from_dict(raw)
+        if event.content_id in self.known_event_ids:
+            return None
+        problem = channel_topic_problem(event.payload)
+        if problem is not None:
+            raise LinkProtocolError(problem)
+        signer, signer_peer = self._channel_moderation_signer(event.payload, "topic", "channel_topic")
+        keys = self._resolve_sender_content_keys(signer_peer, signer, CHANNEL_TOPIC_OBJECT_TYPE)
+        if not any(verify_channel_topic(event, key) for key in keys):
+            raise LinkProtocolError(f"channel_topic from {signer} does not verify against its signing keys")
+        self.known_event_ids.add(event.content_id)
+        self.events[event.content_id] = raw
+        return event.content_id
+
+    def _channel_moderation_signer(self, payload: dict, permission: str, what: str):
+        """Who must have signed a moderation event for a linked channel: its
+        origin, or -- with `moderator` -- that moderator's home node, once the
+        origin's roster grants `permission` (Decision 2)."""
+        channel_id = payload["channel_id"]
+        genesis = self.channel_events.genesis_for(channel_id)
+        if genesis is None:
+            raise MissingDependency(
+                f"received a {what} for channel_id {channel_id!r}, which has no verified "
+                "channel_genesis on file -- refusing (no relay from a stranger yet)"
+            )
+        origin = genesis.payload["origin_fingerprint"]
+        if "moderator" in payload:
+            return self._delegated_signer(
+                payload, kind="channel", resource_id=channel_id, origin=origin, permission=permission, what=what,
+            )
+        peer = self.known_identity(origin)
+        if peer is None:
+            raise MissingDependency(
+                f"received a {what} for channel_id {channel_id!r} whose origin ({origin!r}) "
+                "has no completed hello with this node -- refusing (no relay from a stranger)",
+                missing_identity=origin,
+            )
+        return origin, peer
+
     def _accept_channel_restriction(self, raw: dict) -> str | None:
         """Issue #1357, Decision 3: a mute or ban in a linked channel, signed
         by its origin or by a delegated moderator's home node with
@@ -5339,27 +5391,7 @@ class LinkNode:
         problem = channel_restriction_problem(payload)
         if problem is not None:
             raise LinkProtocolError(problem)
-        channel_id = payload["channel_id"]
-        genesis = self.channel_events.genesis_for(channel_id)
-        if genesis is None:
-            raise MissingDependency(
-                f"received a channel_restriction for channel_id {channel_id!r}, which has no verified "
-                "channel_genesis on file -- refusing (no relay from a stranger yet)"
-            )
-        origin = genesis.payload["origin_fingerprint"]
-        if "moderator" in payload:
-            signer, signer_peer = self._delegated_signer(
-                payload, kind="channel", resource_id=channel_id, origin=origin, permission="moderate",
-                what="channel_restriction",
-            )
-        else:
-            signer, signer_peer = origin, self.known_identity(origin)
-            if signer_peer is None:
-                raise MissingDependency(
-                    f"received a channel_restriction for channel_id {channel_id!r} whose origin ({origin!r}) "
-                    "has no completed hello with this node -- refusing (no relay from a stranger)",
-                    missing_identity=origin,
-                )
+        signer, signer_peer = self._channel_moderation_signer(payload, "moderate", "channel_restriction")
         keys = self._resolve_sender_content_keys(signer_peer, signer, CHANNEL_RESTRICTION_OBJECT_TYPE)
         if not any(verify_channel_restriction(event, key) for key in keys):
             raise LinkProtocolError(f"channel_restriction from {signer} does not verify against its signing keys")

@@ -4668,4 +4668,19 @@ MIGRATIONS = [
         );
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1359 (design doc §16, Link moderation, Decision 4): `link_channel_topics`, the "
+            "signed `channel_topic` in force per linked channel -- the newest by effective time, set "
+            "by the channel's origin or a delegated moderator. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE link_channel_topics (
+            channel_id     TEXT PRIMARY KEY,
+            effective_at   TEXT NOT NULL,
+            content_id     TEXT NOT NULL,
+            envelope_json  TEXT NOT NULL
+        );
+        """,
+    ),
 ]

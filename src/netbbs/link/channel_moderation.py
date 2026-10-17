@@ -270,3 +270,126 @@ def sign_channel_restriction(
     store_received_restriction(db, envelope=raw, content_id=event.content_id,
                                own_fingerprint=node_identity.fingerprint)
     return raw
+
+
+# -- topics (Decision 4) -----------------------------------------------------------
+
+
+def _channel_origin(db: Database, channel_id: str) -> str | None:
+    row = db.connection.execute(
+        "SELECT link_genesis_json FROM channels WHERE channel_id = ?", (channel_id,)
+    ).fetchone()
+    if row is None or row["link_genesis_json"] is None:
+        return None
+    return json.loads(row["link_genesis_json"])["envelope"]["payload"].get("origin_fingerprint")
+
+
+def store_received_topic(db: Database, *, envelope: dict, content_id: str, arrived_at: str | None = None) -> str:
+    """Keep a received (or this node's own) `channel_topic` if it is newer by
+    effective time (Decision 8) than the one in force, and show it as the
+    channel's topic here. Returns `"stale"` or `"stored"`."""
+    payload = envelope["envelope"]["payload"]
+    effective = effective_time(payload.get("created_at"), arrived_at or utc_now_iso())
+    db.connection.execute("BEGIN IMMEDIATE")
+    try:
+        current = db.connection.execute(
+            "SELECT effective_at, content_id FROM link_channel_topics WHERE channel_id = ?", (payload["channel_id"],)
+        ).fetchone()
+        if current is not None and (current["effective_at"], current["content_id"]) >= (effective, content_id):
+            db.connection.rollback()
+            return "stale"
+        db.connection.execute(
+            """
+            INSERT INTO link_channel_topics (channel_id, effective_at, content_id, envelope_json)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(channel_id) DO UPDATE SET
+                effective_at = excluded.effective_at, content_id = excluded.content_id,
+                envelope_json = excluded.envelope_json
+            """,
+            (payload["channel_id"], effective, content_id, json.dumps(envelope)),
+        )
+        db.connection.execute(
+            "UPDATE channels SET topic = ? WHERE channel_id = ? AND link_genesis_json IS NOT NULL",
+            (payload.get("topic"), payload["channel_id"]),
+        )
+    except BaseException:
+        db.connection.rollback()
+        raise
+    db.connection.commit()
+    return "stored"
+
+
+def topic_reach(db: Database, channel, *, own_fingerprint: str, actor) -> dict | None:
+    """Who may set a linked channel's topic from this node, and as whom: `{}`
+    on its origin, the delegated-moderator reference for a user the origin's
+    roster lets set it, `None` for anyone else -- who may not set it here at
+    all on a carried channel (Decision 4)."""
+    origin = _channel_origin(db, channel.channel_id)
+    if origin is None or origin == own_fingerprint:
+        return {}
+    from netbbs.link.moderators import holds_link_permission
+    from netbbs.moderation.roles import ChannelPermission
+
+    if holds_link_permission(db, actor, object_type="channel", object_id=channel.id,
+                             permission=ChannelPermission.EDIT):
+        return {"kind": "node_vouched_user", "home_node_fingerprint": own_fingerprint,
+                "local_user_id": actor.username}
+    return None
+
+
+def carried_channel_origin(db: Database, channel, own_fingerprint: str) -> str | None:
+    """The origin of a linked channel this node carries, or `None` when the
+    channel is this node's own or not linked."""
+    origin = _channel_origin(db, channel.channel_id)
+    return origin if origin is not None and origin != own_fingerprint else None
+
+
+def sign_channel_topic(db: Database, channel, *, node_identity, actor, topic: str | None) -> dict | None:
+    """Sign and store a linked channel's topic for everyone carrying it, as its
+    origin or for a delegated moderator (`topic_reach`); `None` for a channel
+    that is not linked, or an actor who may not set it."""
+    from netbbs.link.events import build_channel_topic, event_content_id
+
+    if _channel_origin(db, channel.channel_id) is None:
+        return None
+    reach = topic_reach(db, channel, own_fingerprint=node_identity.fingerprint, actor=actor)
+    if reach is None:
+        return None
+    event = build_channel_topic(
+        signing_identity=node_identity.signing_key, channel_id=channel.channel_id, topic=topic,
+        created_at=utc_now_iso(), moderator=reach or None,
+    )
+    raw = event.to_dict()
+    store_received_topic(db, envelope=raw, content_id=event_content_id(raw["envelope"]))
+    return raw
+
+
+def topic_events_for(db: Database, channel_id: str) -> dict[str, dict]:
+    """`{content_id: raw}` of the topic in force in one linked channel."""
+    return {
+        row["content_id"]: json.loads(row["envelope_json"]) for row in db.connection.execute(
+            "SELECT content_id, envelope_json FROM link_channel_topics WHERE channel_id = ?", (channel_id,)
+        )
+    }
+
+
+def load_topic_events(db: Database) -> list[dict]:
+    """Every linked channel's topic in force here, for the running node's
+    memory at startup."""
+    return [json.loads(row["envelope_json"]) for row in db.connection.execute(
+        "SELECT envelope_json FROM link_channel_topics"
+    )]
+
+
+def load_own_topics(db: Database, own_fingerprint: str) -> list:
+    """The topics in force here that this node signed, for push."""
+    from netbbs.link.events import ChannelTopic
+
+    own = []
+    for raw in load_topic_events(db):
+        payload = raw["envelope"]["payload"]
+        moderator = payload.get("moderator")
+        signer = moderator.get("home_node_fingerprint") if moderator else _channel_origin(db, payload["channel_id"])
+        if signer == own_fingerprint:
+            own.append(ChannelTopic.from_dict(raw))
+    return own

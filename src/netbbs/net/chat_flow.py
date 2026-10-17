@@ -2441,6 +2441,35 @@ async def _handle_topic(ctx: ChatCommandContext, args: str) -> None:
             colored("(topic change sent to the MRC hub; it decides, and its answer follows)", fg_color=MUTED_COLOR)
         )
         return
+    if ctx.link_context is not None:
+        # Issue #1359 (design doc §16, issue #1357, Decision 4): a linked
+        # channel's topic is its origin's. On a carried one, only a delegated
+        # Link moderator may set it, for everyone; a local one would
+        # contradict the shared one.
+        from netbbs.link.channel_moderation import carried_channel_origin, topic_reach
+        from netbbs.link.node_profiles import identity_for_fingerprint
+
+        own = ctx.link_context.node_identity.fingerprint
+        origin = await ctx.lane.run(carried_channel_origin, ctx.channel, own)
+        if origin is not None and await ctx.lane.run(
+            topic_reach, ctx.channel, own_fingerprint=own, actor=ctx.user,
+        ) is None:
+            label = (await ctx.lane.run(identity_for_fingerprint, origin)).label
+            await ctx.session.write_line(colored(
+                f"This channel's topic is set on {sanitize_text(label)}, which it comes from.",
+                fg_color=MUTED_COLOR,
+            ))
+            return
+    from netbbs.link.channels import is_channel_linked
+    from netbbs.link.events import MAX_CHANNEL_TOPIC_BYTES
+
+    if args and len(args.encode("utf-8")) > MAX_CHANNEL_TOPIC_BYTES and ctx.link_context is not None and (
+        await ctx.lane.run(is_channel_linked, ctx.channel)
+    ):
+        await ctx.session.write_line(colored(
+            f"A linked channel's topic is at most {MAX_CHANNEL_TOPIC_BYTES} bytes.", fg_color=MUTED_COLOR,
+        ))
+        return
     try:
         await ctx.lane.run(set_topic, ctx.channel, args or None, set_by=ctx.user)
     except TopicError:
@@ -2448,6 +2477,18 @@ async def _handle_topic(ctx: ChatCommandContext, args: str) -> None:
             colored("You do not have permission to change the topic.", fg_color=MUTED_COLOR)
         )
         return
+    if ctx.link_context is not None:
+        from netbbs.link.channel_moderation import sign_channel_topic
+
+        raw = await ctx.lane.run(
+            sign_channel_topic, ctx.channel, node_identity=ctx.link_context.node_identity, actor=ctx.user,
+            topic=args or None,
+        )
+        if raw is not None:
+            from netbbs.link.events import event_content_id
+
+            ctx.link_context.link_node.known_event_ids.add(event_content_id(raw["envelope"]))
+            ctx.link_context.link_node.events[event_content_id(raw["envelope"])] = raw
 
     if args:
         notice = colored(
