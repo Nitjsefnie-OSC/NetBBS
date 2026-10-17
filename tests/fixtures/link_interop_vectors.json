@@ -2,6 +2,20 @@
   "format": "netbbs-link-v1-interoperability-1",
   "fixture_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   "fixture_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "canonical_edge_vectors": [
+    {
+      "name": "del_is_ascii_escaped",
+      "fields": {"text": ""},
+      "canonical_hex": "7b2274657874223a225c7530303766227d",
+      "content_id": "cd89201b13a43bb071c00a8a52298cc068749f10c66b31222454c273aa7c916e"
+    },
+    {
+      "name": "__proto___is_a_real_canonical_key",
+      "fields": {"__proto__": {"netbbs_protocol": 1, "payload": "kept"}, "netbbs_protocol": 1},
+      "canonical_hex": "7b225f5f70726f746f5f5f223a7b226e65746262735f70726f746f636f6c223a312c227061796c6f6164223a226b657074227d2c226e65746262735f70726f746f636f6c223a317d",
+      "content_id": "afba847a2a5b64f3bbed0b2af7fb41f16f4f4774c4194a0b03fc9e2507c8e8ab"
+    }
+  ],
   "signed_event_vectors": [
     {
       "name": "signed_unknown_field_and_nfc",
@@ -112,6 +126,7 @@
   ],
   "wire_vectors": [
     { "name": "valid_unknown_field_is_retained", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"future\":true}}", "accepted": true },
+    { "name": "__proto___wire_field_is_retained", "json": "{\"__proto__\":{\"netbbs_protocol\":1,\"payload\":\"kept\"},\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{}}", "canonical_hex": "7b225f5f70726f746f5f5f223a7b226e65746262735f70726f746f636f6c223a312c227061796c6f6164223a226b657074227d2c226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a2278222c227061796c6f6164223a7b7d7d", "accepted": true },
     { "name": "duplicate_nested_key", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":1,\"a\":2}}", "accepted": false },
     { "name": "float_is_rejected", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":1.0}}", "accepted": false },
     { "name": "unsafe_integer_is_rejected", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":9007199254740992}}", "accepted": false },

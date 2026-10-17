@@ -17,6 +17,9 @@ _CORPUS = json.loads(
 
 def test_python_matches_every_independent_signed_vector():
     verify_key = VerifyKey(bytes.fromhex(_CORPUS["fixture_public_key_hex"]))
+    for vector in _CORPUS["canonical_edge_vectors"]:
+        assert canonical_bytes(vector["fields"]).hex() == vector["canonical_hex"], vector["name"]
+        assert event_content_id(vector["fields"]) == vector["content_id"], vector["name"]
     for vector in _CORPUS["signed_event_vectors"]:
         envelope = vector["envelope"]
         canonical = canonical_bytes(envelope)

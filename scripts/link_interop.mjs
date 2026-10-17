@@ -17,7 +17,7 @@ function normalize(value) {
   if (typeof value === "string") return value.normalize("NFC");
   if (Array.isArray(value)) return value.map(normalize);
   if (value !== null && typeof value === "object") {
-    const result = {};
+    const result = Object.create(null);
     const seen = new Set();
     for (const [key, item] of Object.entries(value)) {
       const normalizedKey = key.normalize("NFC");
@@ -60,7 +60,7 @@ function escapeAscii(string) {
     else if (codePoint === 0x0a) output += "\\n";
     else if (codePoint === 0x0d) output += "\\r";
     else if (codePoint === 0x09) output += "\\t";
-    else if (codePoint < 0x20 || codePoint > 0x7f) {
+    else if (codePoint < 0x20 || codePoint >= 0x7f) {
       if (codePoint <= 0xffff) output += `\\u${codePoint.toString(16).padStart(4, "0")}`;
       else {
         const adjusted = codePoint - 0x10000;
@@ -181,7 +181,7 @@ export function parseWireJson(input) {
     const character = text[position];
     if (character === '"') return parseString();
     if (character === "{") {
-      position++; const result = {}; const keys = new Set(); whitespace();
+      position++; const result = Object.create(null); const keys = new Set(); whitespace();
       if (text[position] === "}") { position++; return result; }
       while (true) {
         whitespace(); if (text[position] !== '"') error("object key must be a string");
@@ -234,6 +234,13 @@ async function main() {
       console.error(`FAIL canonical ${vector.name}`); failures++;
     } else console.log(`ok canonical ${vector.name}`);
   }
+  for (const vector of corpus.canonical_edge_vectors ?? []) {
+    const actualHex = canonicalBytes(vector.fields).toString("hex");
+    const actualId = contentId(vector.fields);
+    if (actualHex !== vector.canonical_hex || actualId !== vector.content_id) {
+      console.error(`FAIL edge ${vector.name}`); failures++;
+    } else console.log(`ok edge ${vector.name}`);
+  }
   for (const vector of corpus.signed_event_vectors ?? []) {
     const bytes = canonicalBytes(vector.envelope);
     const actualHex = bytes.toString("hex");
@@ -247,7 +254,12 @@ async function main() {
   for (const vector of corpus.wire_vectors ?? []) {
     let accepted = false;
     try { parseWireJson(vector.json); accepted = true; } catch { /* expected corpus outcome */ }
-    if (accepted !== vector.accepted) { console.error(`FAIL ${vector.name}`); failures++; }
+    let matches = accepted === vector.accepted;
+    if (matches && accepted && vector.canonical_hex) {
+      try { matches = canonicalBytes(parseWireJson(vector.json)).toString("hex") === vector.canonical_hex; }
+      catch { matches = false; }
+    }
+    if (!matches) { console.error(`FAIL ${vector.name}`); failures++; }
     else console.log(`ok ${vector.name}`);
   }
   if (failures) process.exitCode = 1;
