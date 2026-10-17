@@ -1690,6 +1690,9 @@ async def run(
             await link_realtime_registry.close_all(reason="node_shutdown")
         if link_realtime_bridge is not None:
             await link_realtime_bridge.close()
+        if link_direct_chats is not None:
+            # Issue #1368: its link watchers and pending offers.
+            await link_direct_chats.close()
         # Issue #275: LOGOFF every announced caller, SHUTDOWN, and cancel/
         # gather the connector, reader, writer and keepalive tasks --
         # bounded internally, so a dead hub can't stall the drain.

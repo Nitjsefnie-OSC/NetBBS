@@ -380,15 +380,21 @@ def build_direct_chat_line_allowed(*, lane: DatabaseLane):
     """`LinkDirectChats.line_allowed`: whether the local caller `to_user`
     takes a direct-chat invitation or line from `from_user` of node
     `fingerprint` -- an unknown, opted-out or blocking caller does not, and
-    the inviter is only told they can't be reached."""
+    the inviter is only told they can't be reached. The opt-out applies only
+    to the caller who was `invited`: one who invited someone themselves
+    chose this chat, so only a block of theirs ends it (review of #1369)."""
+    from netbbs.mail import blocks_link_sender
 
-    async def line_allowed(fingerprint: str, from_user: str, to_user: str) -> bool:
+    async def line_allowed(fingerprint: str, from_user: str, to_user: str, *, invited: bool = True) -> bool:
         def _check(db: Database) -> bool:
             try:
                 target = get_recipient_by_name(db, to_user)
             except AuthError:
                 return False
-            return live_message_refusal(db, target, sender_address=f"{from_user}@{fingerprint}") is None
+            address = f"{from_user}@{fingerprint}"
+            if not invited:
+                return not blocks_link_sender(db, target, address)
+            return live_message_refusal(db, target, sender_address=address) is None
 
         return await lane.run(_check)
 
@@ -452,6 +458,7 @@ def build_remote_invite_offer(
             await asyncio.wait(set(futures) | {withdrawn}, return_when=asyncio.FIRST_COMPLETED)
         finally:
             withdrawn.cancel()
+            await asyncio.gather(withdrawn, return_exceptions=True)
         # An acceptance landing in the same turn as a decline wins, as for
         # a local invitation.
         outcomes = {future.result(): futures[future] for future in futures if future.done()}

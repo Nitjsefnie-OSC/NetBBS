@@ -33,8 +33,8 @@ async def _pair(tmp_path, *, accept=True, line_allowed=True, grace=0.5):
         elif accept is False:
             await incoming.refuse("declined")
 
-    async def allowed(fingerprint, from_user, to_user):
-        return line_allowed
+    async def allowed(fingerprint, from_user, to_user, *, invited=True):
+        return line_allowed if invited else True
 
     a.chats = LinkDirectChats(
         link_node=a.link_node, lane=a.lane, registry=a.registry, ensure_session=a.direct.ensure_session,
@@ -188,6 +188,87 @@ def test_a_node_without_the_capability_is_never_sent_an_invitation(tmp_path):
             with pytest.raises(DirectChatRefused):
                 await _invite(a, b)
             assert offered == []
+        finally:
+            await a.teardown()
+            await b.teardown()
+
+    asyncio.run(scenario())
+
+
+# -- review of #1369 -------------------------------------------------------------
+
+
+def test_the_inviters_own_opt_out_never_ends_their_chat(tmp_path):
+    async def scenario():
+        a, b, _offered, rooms = await _pair(tmp_path)
+        try:
+            calls = []
+
+            async def opted_out_unless_inviter(fingerprint, from_user, to_user, *, invited=True):
+                calls.append(invited)
+                return not invited  # b's caller has opted out, but invited
+
+            b.chats.line_allowed = opted_out_unless_inviter
+            invite = await _invite(a, b)
+            assert await asyncio.wait_for(invite.answer, 5) == "accepted"
+            await rooms[0].send_line("hi bob")
+            assert await _next(invite.room) == (LINE, "hi bob")
+            assert calls == [False]
+        finally:
+            await a.teardown()
+            await b.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_a_peer_cannot_reuse_this_nodes_own_chat_id(tmp_path):
+    async def scenario():
+        a, b, offered, _rooms = await _pair(tmp_path, accept=None)
+        try:
+            invite = await _invite(a, b)
+            # `a` sends an invitation of its own under `b`'s chat id.
+            await a.chats._send(b.identity.fingerprint, "direct_chat_invite", {
+                "chat_id": invite.chat_id, "to_user_id": "bob", "from_user_id": "mallory",
+                "from_display_label": "Mallory", "created_at": "2026-10-17T00:00:00Z",
+            })
+            await asyncio.sleep(0.3)
+            assert (a.identity.fingerprint, invite.chat_id) not in b.chats._pending_in
+        finally:
+            await a.teardown()
+            await b.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_the_cooldown_holds_whatever_name_the_inviter_gives(tmp_path):
+    async def scenario():
+        a, b, offered, _rooms = await _pair(tmp_path, accept=False)
+        try:
+            first = await _invite(a, b)
+            assert await asyncio.wait_for(first.answer, 5) == "declined"
+            again = await b.chats.invite(
+                a.identity.fingerprint, from_user="someone-else", from_label="X", to_user="alice",
+                peer_label="alice@node-a",
+            )
+            assert await asyncio.wait_for(again.answer, 5) == "unavailable"
+            assert len(offered) == 1
+        finally:
+            await a.teardown()
+            await b.teardown()
+
+    asyncio.run(scenario())
+
+
+def test_close_gathers_its_tasks(tmp_path):
+    async def scenario():
+        a, b, _offered, _rooms = await _pair(tmp_path, accept=None)
+        try:
+            await _invite(a, b)
+            await asyncio.sleep(0.2)
+            assert a.chats._watchers
+            await a.chats.close()
+            await b.chats.close()
+            assert not a.chats._watchers and not a.chats._offers
         finally:
             await a.teardown()
             await b.teardown()

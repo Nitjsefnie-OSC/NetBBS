@@ -287,3 +287,42 @@ def test_a_decline_or_an_offline_caller_is_answered(tmp_path):
             db.close()
 
     asyncio.run(scenario())
+
+
+def test_a_line_too_long_for_the_link_is_refused_before_it_is_shown(tmp_path):
+    async def scenario():
+        db = Database(tmp_path / "node.db")
+        user = create_user(db, "alice", password="hunter2pw")
+        session = FakeSession()
+        room = _Room()
+        task = asyncio.create_task(chat_flow.run_direct_chat_loop(
+            session, ChatHub(), PresenceRegistry(), user, RemotePeer("bob@Elsewhere", "bob", FP), "x",
+            remote_room=room,
+        ))
+        session.queue_line("x" * 4001)
+        session.queue_line("/close")
+        await asyncio.wait_for(task, 5)
+        text = _text(session)
+        assert "too long to send to another BBS" in text and "x" * 4001 not in text
+        assert room.sent == []
+        db.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_dropped_connection_while_waiting_withdraws_the_invitation(tmp_path, monkeypatch):
+    from netbbs.net.session import SessionClosedError
+
+    async def drive(session, chats):
+        async def closed(echo=True):
+            raise SessionClosedError()
+
+        session.read_key = closed
+        session.queue_key("z")  # wake the pending read; the next one raises
+
+    chats = _Chats()
+    try:
+        _invite_flow(tmp_path, monkeypatch, chats, drive)
+    except SessionClosedError:
+        pass
+    assert chats.withdrawn == ["cancelled"]

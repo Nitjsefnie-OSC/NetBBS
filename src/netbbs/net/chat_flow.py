@@ -7732,13 +7732,9 @@ async def run_direct_chat_loop(
                         continue
                     if line.lower() == "/close":
                         return
-
-                    await session.write_line(
-                        _render_direct_chat_message("you", line, self_message=True, accent=accent_color)
-                    )
                     if remote_room is not None:
-                        # Issue #1368: a line the link cannot carry ends
-                        # the chat as lost, through the receive side.
+                        # Issue #1368: refused before it is shown as said
+                        # (review of #1369).
                         from netbbs.net.link_direct import MAX_DIRECT_MESSAGE_BODY_BYTES
 
                         if len(line.encode("utf-8")) > MAX_DIRECT_MESSAGE_BODY_BYTES:
@@ -7747,6 +7743,13 @@ async def run_direct_chat_loop(
                                 f"{MAX_DIRECT_MESSAGE_BODY_BYTES} bytes).", fg_color=MUTED_COLOR,
                             ))
                             continue
+
+                    await session.write_line(
+                        _render_direct_chat_message("you", line, self_message=True, accent=accent_color)
+                    )
+                    if remote_room is not None:
+                        # A line the link cannot carry ends the chat as
+                        # lost, through the receive side.
                         await remote_room.send_line(line)
                         continue
                     rendered_for_other = _render_direct_chat_message(
@@ -8086,32 +8089,35 @@ async def run_remote_direct_chat_invite_flow(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + REMOTE_INVITE_TIMEOUT_SECONDS
     outcome: str | None = None
-    while outcome is None:
-        key_task = asyncio.create_task(session.read_key())
-        try:
-            done, _pending = await asyncio.wait(
-                {key_task, invite.answer}, timeout=max(0.0, deadline - loop.time()),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-        except asyncio.CancelledError:
-            key_task.cancel()
-            await asyncio.gather(key_task, return_exceptions=True)
+    try:
+        while outcome is None:
+            key_task = asyncio.create_task(session.read_key())
+            try:
+                done, _pending = await asyncio.wait(
+                    {key_task, invite.answer}, timeout=max(0.0, deadline - loop.time()),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                if not key_task.done():
+                    key_task.cancel()
+                    await asyncio.gather(key_task, return_exceptions=True)
+            if invite.answer.done():
+                outcome = invite.answer.result()
+            elif key_task in done and key_task.result().lower() == "c":
+                outcome = "cancelled"
+                await chats.withdraw(invite, "cancelled")
+                await report(colored("\r\nInvitation cancelled.", fg_color=MUTED_COLOR))
+                return False
+            elif not done:
+                await chats.withdraw(invite, "timed_out")
+                outcome = "timed_out"
+            elif key_task in done:
+                await session.write(reject_unhandled_key(key_task.result()))
+    finally:
+        # Review of #1369: a dropped connection or any other way out while
+        # waiting withdraws it too, so a later accept opens no orphan room.
+        if outcome is None:
             await chats.withdraw(invite, "cancelled")
-            raise
-        if invite.answer.done():
-            outcome = invite.answer.result()
-        elif key_task in done and key_task.result().lower() == "c":
-            await chats.withdraw(invite, "cancelled")
-            await report(colored("\r\nInvitation cancelled.", fg_color=MUTED_COLOR))
-            return False
-        elif not done:
-            await chats.withdraw(invite, "timed_out")
-            outcome = "timed_out"
-        elif key_task in done:
-            await session.write(reject_unhandled_key(key_task.result()))
-        if key_task not in done:
-            key_task.cancel()
-            await asyncio.gather(key_task, return_exceptions=True)
 
     if outcome == "accepted" and invite.room is not None:
         await session.write_line(colored(f"\r\n{label} accepted.", fg_color=SUCCESS_COLOR))

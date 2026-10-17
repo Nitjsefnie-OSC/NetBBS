@@ -80,6 +80,9 @@ class RemoteDirectRoom:
     _chats: "LinkDirectChats"
     events: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=ROOM_QUEUE_LIMIT))
     closed: bool = False
+    # Whether the other caller invited this one -- whose live-message
+    # opt-out then applies; an inviter's own opt-out never ends their chat.
+    peer_invited: bool = False
 
     def _post(self, kind: str, value: object = None) -> None:
         if self.closed:
@@ -158,7 +161,7 @@ class IncomingChatInvite:
         self._chats._pending_in.pop((self.peer_fingerprint, self.chat_id), None)
         room = RemoteDirectRoom(
             peer_fingerprint=self.peer_fingerprint, chat_id=self.chat_id, local_user=self.to_user,
-            peer_user=self.from_user, peer_label=self.from_label, _chats=self._chats,
+            peer_user=self.from_user, peer_label=self.from_label, _chats=self._chats, peer_invited=True,
         )
         self._chats._rooms[(self.peer_fingerprint, self.chat_id)] = room
         if not await self._chats._send(self.peer_fingerprint, "direct_chat_answer", {
@@ -192,8 +195,12 @@ class LinkDirectChats:
     via `owns_frame`/`handle_frame`.
 
     `offer` hands an incoming invitation to the caller-facing layer, which
-    settles it; `line_allowed(peer_fingerprint, from_user, to_user)` is the
-    local block/opt-out check, made for each invitation and each line."""
+    settles it; `line_allowed(peer_fingerprint, from_user, to_user,
+    invited=...)` is the local block/opt-out check, made for each
+    invitation and each line -- `invited` says the local caller was the one
+    invited, so their opt-out applies; otherwise only a block does.
+
+    The tasks it starts are its own: `close` cancels and gathers them."""
 
     def __init__(
         self,
@@ -218,8 +225,19 @@ class LinkDirectChats:
         self._pending_out: dict[tuple[str, str], OutgoingChatInvite] = {}
         self._pending_in: dict[tuple[str, str], IncomingChatInvite] = {}
         self._rooms: dict[tuple[str, str], RemoteDirectRoom] = {}
-        self._last_invite: dict[tuple[str, str, str], float] = {}
+        self._last_invite: dict[tuple[str, str], float] = {}
         self._watchers: dict[str, asyncio.Task] = {}
+        self._offers: set[asyncio.Task] = set()
+
+    async def close(self) -> None:
+        """Cancel and gather every task this started (AGENTS.md: own async
+        tasks), at node shutdown."""
+        tasks = [*self._watchers.values(), *self._offers]
+        self._watchers.clear()
+        self._offers.clear()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     # -- what the caller-facing layer uses ------------------------------------
 
@@ -291,17 +309,20 @@ class LinkDirectChats:
 
     async def _on_invite(self, fingerprint: str, payload: dict) -> None:
         chat_id, from_user, to_user = payload["chat_id"], payload["from_user_id"], payload["to_user_id"]
-        if (fingerprint, chat_id) in self._pending_in or (fingerprint, chat_id) in self._rooms:
+        key = (fingerprint, chat_id)
+        if key in self._pending_in or key in self._rooms or key in self._pending_out:
+            # One of this node's own chat ids, or a resend: never a second room.
             return
         now = self._clock()
-        cooldown_key = (fingerprint, from_user.casefold(), to_user.casefold())
+        cooldown_key = (fingerprint, to_user.casefold())
         too_soon = now - self._last_invite.get(cooldown_key, float("-inf")) < INVITE_COOLDOWN_SECONDS
         crowded = (
             sum(1 for fp, _ in self._pending_in if fp == fingerprint) >= MAX_PENDING_INVITES_PER_PEER
             or sum(1 for fp, _ in self._rooms if fp == fingerprint) >= MAX_ROOMS_PER_PEER
         )
         refused = self.offer is None or too_soon or crowded or (
-            self.line_allowed is not None and not await self.line_allowed(fingerprint, from_user, to_user)
+            self.line_allowed is not None
+            and not await self.line_allowed(fingerprint, from_user, to_user, invited=True)
         )
         if refused:
             await self._send(fingerprint, "direct_chat_answer", {"chat_id": chat_id, "outcome": "unavailable"})
@@ -315,7 +336,9 @@ class LinkDirectChats:
         )
         self._pending_in[(fingerprint, chat_id)] = incoming
         self._watch(fingerprint)
-        asyncio.get_running_loop().create_task(self._offer(incoming))
+        task = asyncio.get_running_loop().create_task(self._offer(incoming))
+        self._offers.add(task)
+        task.add_done_callback(self._offers.discard)
 
     async def _offer(self, incoming: IncomingChatInvite) -> None:
         try:
@@ -326,11 +349,15 @@ class LinkDirectChats:
 
     async def _on_answer(self, key: tuple[str, str], outcome: str) -> None:
         invite = self._pending_out.pop(key, None)
-        if invite is None or invite.answer.done():
+        crowded = sum(1 for fp, _ in self._rooms if fp == key[0]) >= MAX_ROOMS_PER_PEER
+        if invite is None or invite.answer.done() or key in self._rooms or (outcome == "accepted" and crowded):
             if outcome == "accepted":
-                # Accepted after this node's caller gave up: the inviter's
-                # clock decides, so the other caller is told at once.
+                # Accepted after this node's caller gave up -- the inviter's
+                # clock decides -- or with no room left: the other caller is
+                # told at once, and no room here is ever replaced.
                 await self._send(key[0], "direct_chat_end", {"chat_id": key[1], "reason": "cancelled"})
+            if invite is not None and not invite.answer.done():
+                invite.answer.set_result("unavailable")
             return
         if outcome == "accepted":
             invite.room = RemoteDirectRoom(
@@ -344,7 +371,9 @@ class LinkDirectChats:
         room = self._rooms.get(key)
         if room is None or room.closed:
             return
-        if self.line_allowed is not None and not await self.line_allowed(key[0], room.peer_user, room.local_user):
+        if self.line_allowed is not None and not await self.line_allowed(
+            key[0], room.peer_user, room.local_user, invited=room.peer_invited,
+        ):
             # Blocked mid-chat: the chat ends for both.
             self._forget_room(room)
             room._post(END, "left")
