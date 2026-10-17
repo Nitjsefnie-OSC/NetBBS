@@ -99,6 +99,10 @@ from netbbs.link.events import (
     KEY_TRANSITION_OBJECT_TYPE,
     LINK_MODERATORS_OBJECT_TYPE,
     LinkModerators,
+    CHANNEL_RESTRICTION_OBJECT_TYPE,
+    ChannelRestriction,
+    channel_restriction_problem,
+    verify_channel_restriction,
     link_moderators_problem,
     verify_link_moderators,
     LINK_MESSAGE_ACCEPTED_OBJECT_TYPE,
@@ -1902,6 +1906,7 @@ KNOWN_EVENT_OBJECT_TYPES = frozenset({
     COMMUNITY_MEMBERS_OBJECT_TYPE,
     COMMUNITY_CLOSURE_OBJECT_TYPE,
     LINK_MODERATORS_OBJECT_TYPE,
+    CHANNEL_RESTRICTION_OBJECT_TYPE,
 })
 # Issue #1299: the most a `board_post`'s or an edit's `"poll"` field may
 # take, as JSON. Ten answers of at most 200 bytes and the settings fit with
@@ -5132,6 +5137,10 @@ class LinkNode:
                 community_id = self._accept_community_event(object_type, raw)
                 if community_id is not None:
                     accepted.append(community_id)
+            elif object_type == CHANNEL_RESTRICTION_OBJECT_TYPE:
+                content_id = self._accept_channel_restriction(raw)
+                if content_id is not None:
+                    accepted.append(content_id)
             elif object_type == LINK_MODERATORS_OBJECT_TYPE:
                 content_id = self._accept_link_moderators(raw)
                 if content_id is not None:
@@ -5317,6 +5326,47 @@ class LinkNode:
         self.events[event.content_id] = raw
         return event.content_id
 
+    def _accept_channel_restriction(self, raw: dict) -> str | None:
+        """Issue #1357, Decision 3: a mute or ban in a linked channel, signed
+        by its origin or by a delegated moderator's home node with
+        `moderate`. Which one is in force is decided where it is stored
+        (`netbbs.link.channel_moderation`). Returns the content ID when newly
+        accepted, `None` when known."""
+        event = ChannelRestriction.from_dict(raw)
+        if event.content_id in self.known_event_ids:
+            return None
+        payload = event.payload
+        problem = channel_restriction_problem(payload)
+        if problem is not None:
+            raise LinkProtocolError(problem)
+        channel_id = payload["channel_id"]
+        genesis = self.channel_events.genesis_for(channel_id)
+        if genesis is None:
+            raise MissingDependency(
+                f"received a channel_restriction for channel_id {channel_id!r}, which has no verified "
+                "channel_genesis on file -- refusing (no relay from a stranger yet)"
+            )
+        origin = genesis.payload["origin_fingerprint"]
+        if "moderator" in payload:
+            signer, signer_peer = self._delegated_signer(
+                payload, kind="channel", resource_id=channel_id, origin=origin, permission="moderate",
+                what="channel_restriction",
+            )
+        else:
+            signer, signer_peer = origin, self.known_identity(origin)
+            if signer_peer is None:
+                raise MissingDependency(
+                    f"received a channel_restriction for channel_id {channel_id!r} whose origin ({origin!r}) "
+                    "has no completed hello with this node -- refusing (no relay from a stranger)",
+                    missing_identity=origin,
+                )
+        keys = self._resolve_sender_content_keys(signer_peer, signer, CHANNEL_RESTRICTION_OBJECT_TYPE)
+        if not any(verify_channel_restriction(event, key) for key in keys):
+            raise LinkProtocolError(f"channel_restriction from {signer} does not verify against its signing keys")
+        self.known_event_ids.add(event.content_id)
+        self.events[event.content_id] = raw
+        return event.content_id
+
     def record_moderator_roster(self, raw: dict, effective_at: str) -> None:
         """Keep `raw` as its origin's roster in force when it is newer, by
         effective time then content id (Decision 8) -- the same order the
@@ -5340,10 +5390,19 @@ class LinkNode:
 
     def _delegated_board_signer(self, payload: dict, board_id: str, permission: str, what: str):
         """For a board moderator event carrying `moderator` (issue #1357,
-        Decision 2): the moderator's home node, once the board's current
-        origin's roster here grants them `permission` on it. Revocation is on
-        receipt: a roster without the grant refuses the event whatever its
-        `created_at` says. Returns `(fingerprint, peer)`."""
+        Decision 2): see `_delegated_signer`, against the board's current
+        origin."""
+        return self._delegated_signer(
+            payload, kind="board", resource_id=board_id, origin=self.current_board_origin(board_id),
+            permission=permission, what=what,
+        )
+
+    def _delegated_signer(self, payload: dict, *, kind: str, resource_id: str, origin: str, permission: str, what: str):
+        """For a moderation event carrying `moderator` (issue #1357,
+        Decision 2): the moderator's home node, once `origin`'s roster here
+        grants them `permission` on the resource. Revocation is on receipt: a
+        roster without the grant refuses the event whatever its `created_at`
+        says. Returns `(fingerprint, peer)`."""
         moderator = payload.get("moderator")
         if (
             not isinstance(moderator, dict)
@@ -5354,19 +5413,18 @@ class LinkNode:
         ):
             raise LinkProtocolError(f"{what} names a malformed moderator -- refusing")
         home = moderator["home_node_fingerprint"]
-        origin = self.current_board_origin(board_id)
         if home == origin:
             raise LinkProtocolError(f"{what} names a moderator of the origin itself -- refusing")
         roster = self.moderator_rosters.get(origin)
         granted = _delegated_permissions(
             roster[2] if roster is not None else [],
             home_node_fingerprint=home, local_user_id=moderator["local_user_id"],
-            resource_kind="board", resource_id=board_id,
-            community_ids=self.community_events.communities_listing(origin, "boards", board_id),
+            resource_kind=kind, resource_id=resource_id,
+            community_ids=self.community_events.communities_listing(origin, kind + "s", resource_id),
         )
         if permission not in granted:
             raise LinkProtocolError(
-                f"{what} by {moderator['local_user_id']!r} of {home}, whom the board's origin's roster "
+                f"{what} by {moderator['local_user_id']!r} of {home}, whom the {kind}'s origin's roster "
                 f"here does not let {permission} -- refusing"
             )
         peer = self.known_identity(home)

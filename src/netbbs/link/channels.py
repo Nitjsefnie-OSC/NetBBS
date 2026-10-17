@@ -378,6 +378,26 @@ def materialize_carried_channel_message(
     payload = message.payload
     author = payload["author"]
     author_label = f"{author['local_user_id']}@{author['home_node_fingerprint']}"
+    # Issue #1359 (design doc §16, issue #1357, Decision 3): a muted or banned
+    # participant's message is kept as a signed event, so relay and
+    # inventory are unaffected, and shown to nobody here.
+    from netbbs.link.channel_moderation import restriction_in_force
+
+    if restriction_in_force(db, payload["channel_id"], author["home_node_fingerprint"], author["local_user_id"]):
+        db.connection.execute(
+            """
+            INSERT INTO link_events (content_id, sender_fingerprint, object_type, envelope_json, received_at,
+                                     channel_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(content_id) DO NOTHING
+            """,
+            (
+                message.content_id, sender_fingerprint, CHANNEL_MESSAGE_OBJECT_TYPE, json.dumps(message.to_dict()),
+                utc_now_iso(), payload["channel_id"],
+            ),
+        )
+        db.connection.commit()
+        return None
     from netbbs.auth.users import BOT_LABEL_SUFFIX
     author_kind = "bot" if author["local_user_id"].lower().endswith(BOT_LABEL_SUFFIX) else "user"
 

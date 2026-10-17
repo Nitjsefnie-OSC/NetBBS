@@ -4639,4 +4639,33 @@ MIGRATIONS = [
         CREATE INDEX idx_link_moderator_held_user ON link_moderator_held(local_user_id COLLATE NOCASE);
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1359 (design doc §16, Link moderation, Decision 3): "
+            "`link_channel_restrictions`, mutes and bans of participants from any node in linked "
+            "channels -- scope `link`, the signed `channel_restriction` in force per channel, "
+            "participant and kind (the origin's above a delegate's, then the newest by effective "
+            "time), and scope `local`, a carrier's own addition, never signed. `target_local` marks "
+            "a restriction on one of this node's own users, which this node enforces on them. "
+            "Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE link_channel_restrictions (
+            channel_id             TEXT NOT NULL,
+            home_node_fingerprint  TEXT NOT NULL,
+            local_user_id          TEXT NOT NULL,
+            kind                   TEXT NOT NULL CHECK (kind IN ('mute', 'ban')),
+            scope                  TEXT NOT NULL CHECK (scope IN ('link', 'local')),
+            active                 INTEGER NOT NULL,
+            until                  TEXT,
+            reason                 TEXT,
+            is_origin              INTEGER NOT NULL,
+            effective_at           TEXT NOT NULL,
+            content_id             TEXT,
+            envelope_json          TEXT,
+            target_local           INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (channel_id, home_node_fingerprint, local_user_id, kind, scope)
+        );
+        """,
+    ),
 ]

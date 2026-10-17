@@ -114,6 +114,11 @@ def all_roster_content_ids(db: Database) -> set[str]:
         "AND json_extract(link_event_json, '$.envelope.payload.moderator') IS NOT NULL"
     ):
         ids.add(event_content_id(json.loads(row["link_event_json"])["envelope"]))
+    # Slice 3: every channel restriction, which an older node keeps as an
+    # opaque event it cannot place.
+    ids |= {row["content_id"] for row in db.connection.execute(
+        "SELECT content_id FROM link_channel_restrictions WHERE content_id IS NOT NULL"
+    )}
     return ids
 
 

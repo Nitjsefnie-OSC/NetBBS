@@ -328,6 +328,13 @@ def load_link_node(db: Database, identity: NodeIdentity) -> LinkNode:
             node.known_event_ids.add(community_closure.content_id)
             node.events[community_closure.content_id] = community_closure.to_dict()
 
+    # Issue #1357: the mutes and bans in force in linked channels.
+    from netbbs.link.channel_moderation import load_restriction_events
+
+    for raw in load_restriction_events(db):
+        content_id = event_content_id(raw["envelope"])
+        node.known_event_ids.add(content_id)
+        node.events[content_id] = raw
     # Issue #1357: the roster in force per origin, this node's own included,
     # and each Community's membership list, for whether a Community-scoped
     # Link moderator covers a resource.
@@ -1630,8 +1637,12 @@ def _all_channel_events(db: Database, channel_id: str) -> dict[str, dict]:
     if channel_row["link_genesis_json"] is not None:
         raw = json.loads(channel_row["link_genesis_json"])
         events[ChannelGenesis.from_dict(raw).content_id] = raw
-        # Issue #1357: the origin's roster, as for a board.
+        # Issue #1357: the origin's roster, as for a board, and the mutes and
+        # bans in force in the channel.
         events.update(roster_events_for(db, raw["envelope"]["payload"].get("origin_fingerprint")))
+        from netbbs.link.channel_moderation import restriction_events_for
+
+        events.update(restriction_events_for(db, channel_id))
 
     for row in db.connection.execute(
         "SELECT link_event_json FROM channel_messages WHERE channel_id = ? AND link_event_json IS NOT NULL",

@@ -169,6 +169,7 @@ from netbbs.link.boards import load_own_board_events
 from netbbs.link.channels import load_own_channel_events
 from netbbs.link.communities import load_own_community_events, refresh_own_community_members
 from netbbs.link.moderators import load_own_roster
+from netbbs.link.channel_moderation import load_own_restrictions
 from netbbs.link.files import load_own_file_area_events
 from netbbs.link.events import (
     INVENTORY_NOT_CARRIED_CAPABILITY,
@@ -771,8 +772,10 @@ async def _push_own_events(
         # Issue #1308: only to a peer advertising `LINK_COMMUNITIES_CAPABILITY`;
         # an older one would keep them as opaque events it cannot use.
         + (await lane.run(load_own_community_events, node.identity.fingerprint) if communities else [])
-        # Issue #1357: this node's own moderator roster, likewise.
+        # Issue #1357: this node's own moderator roster, likewise, and the
+        # channel mutes and bans it signed.
         + (await lane.run(load_own_roster, node.identity.fingerprint) if moderation else [])
+        + (await lane.run(load_own_restrictions, node.identity.fingerprint) if moderation else [])
     )
     exchange = node.peer_exchange.setdefault(peer_fingerprint, PeerExchange())
     now = time.time()

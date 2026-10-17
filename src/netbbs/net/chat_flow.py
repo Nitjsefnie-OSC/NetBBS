@@ -3254,6 +3254,124 @@ async def _moderate_door(ctx: ChatCommandContext, named, *, kind: str,
     await _announce_moderation(ctx.lane, ctx.hub, ctx.channel, kind=kind, target_label=label, detail=detail)
 
 
+async def _link_restriction(
+    ctx: ChatCommandContext, *, home_node_fingerprint: str, local_user_id: str, kind: str, impose: bool,
+    duration: datetime.timedelta | None = None, reason: str | None = None,
+) -> bool:
+    """Issue #1359 (design doc §16, issue #1357, Decision 3): sign a mute or
+    ban in a linked channel for everyone carrying it, when this node is the
+    channel's origin or the caller is its delegated Link moderator, and hand
+    it to the running node. Whether it went out."""
+    if ctx.link_context is None:
+        return False
+    from netbbs.link.channel_moderation import RestrictionRefused, sign_channel_restriction
+    from netbbs.link.events import EventError
+
+    until = (
+        (datetime.datetime.now(datetime.timezone.utc) + duration).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        if duration is not None else None
+    )
+    try:
+        raw = await ctx.lane.run(
+            sign_channel_restriction, ctx.channel, node_identity=ctx.link_context.node_identity, actor=ctx.user,
+            home_node_fingerprint=home_node_fingerprint, local_user_id=local_user_id, kind=kind, impose=impose,
+            until=until, reason=reason,
+        )
+    except RestrictionRefused as refused:
+        await ctx.session.write_line(colored(
+            f"The channel's origin has its own {kind} in force on them; yours did not change it."
+            if refused.outcome == "stale" else
+            "This channel holds as many mutes and bans as it can; lift some first.",
+            fg_color=MUTED_COLOR,
+        ))
+        return False
+    except EventError as exc:
+        await ctx.session.write_line(colored(f"(not sent to other BBSes: {sanitize_text(str(exc))})",
+                                             fg_color=MUTED_COLOR))
+        return False
+    if raw is None:
+        return False
+    from netbbs.link.events import event_content_id
+
+    node = ctx.link_context.link_node
+    node.known_event_ids.add(event_content_id(raw["envelope"]))
+    node.events[event_content_id(raw["envelope"])] = raw
+    return True
+
+
+async def _moderate_remote_participant(
+    ctx: ChatCommandContext, name: str, *, kind: str, impose: bool,
+    duration: datetime.timedelta | None = None, reason: str | None = None,
+) -> bool:
+    """`/mute`, `/unmute`, `/ban`, `/unban` of `name@TheirBBS`, a participant
+    from another node in a linked channel (issue #1359). Everywhere the
+    channel is carried when this node is its origin or the caller its
+    delegated Link moderator; otherwise on this node only (Decision 6).
+    Returns whether `name` was such an address."""
+    user, at, node = name.partition("@")
+    if not at or user.lower().endswith(".bot"):
+        return False
+    from netbbs.link.channels import is_channel_linked
+
+    if ctx.link_context is None or not await ctx.lane.run(is_channel_linked, ctx.channel):
+        await ctx.session.write_line(colored(
+            "Participants from other BBSes are only in linked channels.", fg_color=MUTED_COLOR,
+        ))
+        return True
+    if not await ctx.lane.run(
+        has_permission, ctx.user, object_type="channel", object_id=ctx.channel.id,
+        permission=ChannelPermission.MODERATE,
+    ):
+        verb = kind if impose else "un" + kind
+        await ctx.session.write_line(
+            colored(f"You do not have permission to {verb} in this channel.", fg_color=MUTED_COLOR)
+        )
+        return True
+    from netbbs.net.link_direct import resolve_node_fingerprint
+
+    fingerprint = resolve_node_fingerprint(ctx.link_context, node)
+    if isinstance(fingerprint, list):
+        await ctx.session.write_line(colored(
+            "Unknown or ambiguous BBS; use its DNS name or fingerprint.", fg_color=MUTED_COLOR,
+        ))
+        return True
+    from netbbs.link.channel_moderation import restriction_reach, set_local_restriction
+    from netbbs.link.events import MAX_LINK_MODERATOR_FIELD_LENGTH
+
+    if not user or len(user) > MAX_LINK_MODERATOR_FIELD_LENGTH:
+        await ctx.session.write_line(colored(f"No such user: {sanitize_text(name)!r}", fg_color=MUTED_COLOR))
+        return True
+    reaches = await ctx.lane.run(
+        restriction_reach, ctx.channel, node_identity=ctx.link_context.node_identity, actor=ctx.user,
+    ) is not None
+    everywhere = await _link_restriction(
+        ctx, home_node_fingerprint=fingerprint, local_user_id=user, kind=kind, impose=impose,
+        duration=duration, reason=reason,
+    )
+    if reaches and not everywhere:
+        return True  # Outranked or refused; already said why.
+    if everywhere and not impose:
+        # Review of #1363: a lift for everyone also lifts this node's own.
+        await ctx.lane.run(
+            set_local_restriction, channel_id=ctx.channel.channel_id, home_node_fingerprint=fingerprint,
+            local_user_id=user, kind=kind, impose=False,
+        )
+    if not everywhere:
+        until = (
+            (datetime.datetime.now(datetime.timezone.utc) + duration).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            if duration is not None else None
+        )
+        await ctx.lane.run(
+            set_local_restriction, channel_id=ctx.channel.channel_id, home_node_fingerprint=fingerprint,
+            local_user_id=user, kind=kind, impose=impose, until=until, reason=reason,
+        )
+    done = {("mute", True): "muted", ("mute", False): "unmuted", ("ban", True): "banned",
+            ("ban", False): "unbanned"}[(kind, impose)]
+    where = "everywhere this channel is carried" if everywhere else "on this node only"
+    await ctx.session.write_line(colored(f"{sanitize_text(name)} is {done} {where}.", fg_color=MUTED_COLOR))
+    return True
+
+
 async def _handle_mute(ctx: ChatCommandContext, args: str) -> None:
     parts = args.split(maxsplit=1)
     if not parts:
@@ -3267,6 +3385,9 @@ async def _handle_mute(ctx: ChatCommandContext, args: str) -> None:
 
     if (door := await _door_named(ctx, target_name)) is not None:
         await _moderate_door(ctx, door, kind="mute", duration=duration, reason=reason)
+        return
+
+    if await _moderate_remote_participant(ctx, target_name, kind="mute", impose=True, duration=duration, reason=reason):
         return
 
     target = await _resolve_target(ctx.session, ctx.lane, target_name)
@@ -3284,6 +3405,10 @@ async def _handle_mute(ctx: ChatCommandContext, args: str) -> None:
         )
         return
 
+    await _link_restriction(
+        ctx, home_node_fingerprint=ctx.link_context.node_identity.fingerprint if ctx.link_context else "",
+        local_user_id=target.username, kind="mute", impose=True, duration=duration, reason=reason,
+    )
     detail = _moderation_detail(ctx.user.username, duration, reason)
     await _announce_moderation(ctx.lane, ctx.hub, ctx.channel, kind="mute", target_label=target.username, detail=detail)
 
@@ -3301,6 +3426,9 @@ async def _handle_unmute(ctx: ChatCommandContext, args: str) -> None:
         await _moderate_door(ctx, door, kind="unmute")
         return
 
+    if await _moderate_remote_participant(ctx, target_name, kind="mute", impose=False):
+        return
+
     target = await _resolve_target(ctx.session, ctx.lane, target_name)
     if target is None:
         return
@@ -3313,6 +3441,10 @@ async def _handle_unmute(ctx: ChatCommandContext, args: str) -> None:
         )
         return
 
+    await _link_restriction(
+        ctx, home_node_fingerprint=ctx.link_context.node_identity.fingerprint if ctx.link_context else "",
+        local_user_id=target.username, kind="mute", impose=False,
+    )
     detail = _moderation_detail(ctx.user.username, None, None)
     await _announce_moderation(
         ctx.lane, ctx.hub, ctx.channel, kind="unmute", target_label=target.username, detail=detail
@@ -3326,6 +3458,9 @@ async def _handle_ban(ctx: ChatCommandContext, args: str) -> None:
         return
     target_name, rest = parts[0], (parts[1] if len(parts) > 1 else "")
     duration, reason = _split_duration_and_reason(rest)
+
+    if await _moderate_remote_participant(ctx, target_name, kind="ban", impose=True, duration=duration, reason=reason):
+        return
 
     target = await _resolve_target(ctx.session, ctx.lane, target_name)
     if target is None:
@@ -3342,6 +3477,10 @@ async def _handle_ban(ctx: ChatCommandContext, args: str) -> None:
         )
         return
 
+    await _link_restriction(
+        ctx, home_node_fingerprint=ctx.link_context.node_identity.fingerprint if ctx.link_context else "",
+        local_user_id=target.username, kind="ban", impose=True, duration=duration, reason=reason,
+    )
     detail = _moderation_detail(ctx.user.username, duration, reason)
     await _announce_moderation(ctx.lane, ctx.hub, ctx.channel, kind="ban", target_label=target.username, detail=detail)
     await _kick_live_sessions(ctx.hub, ctx.channel, target, reason="banned")
@@ -3351,6 +3490,9 @@ async def _handle_unban(ctx: ChatCommandContext, args: str) -> None:
     target_name = args.split(maxsplit=1)[0] if args.split() else ""
     if not target_name:
         await _show_usage(ctx.session, "unban")
+        return
+
+    if await _moderate_remote_participant(ctx, target_name, kind="ban", impose=False):
         return
 
     target = await _resolve_target(ctx.session, ctx.lane, target_name)
@@ -3365,6 +3507,10 @@ async def _handle_unban(ctx: ChatCommandContext, args: str) -> None:
         )
         return
 
+    await _link_restriction(
+        ctx, home_node_fingerprint=ctx.link_context.node_identity.fingerprint if ctx.link_context else "",
+        local_user_id=target.username, kind="ban", impose=False,
+    )
     detail = _moderation_detail(ctx.user.username, None, None)
     await _announce_moderation(
         ctx.lane, ctx.hub, ctx.channel, kind="unban", target_label=target.username, detail=detail
@@ -5153,9 +5299,25 @@ def _check_mute(db: Database, channel: Channel, user: User) -> str | None:
     every call site (`_chat_loop`'s send-path checks, `_handle_me`) is
     a single `lane.run` round trip, not two."""
     restriction = is_muted(db, channel, user)
+    if restriction is None and not meets_level(user, SYSOP_LEVEL):
+        # Issue #1359: a Link ban reaches this node's caller while they are
+        # in the channel; until they leave, it silences them like a mute.
+        restriction = is_banned(db, channel, user)
     if restriction is None:
         return None
-    return "indefinitely" if restriction.expires_at is None else f"until {format_for_display(restriction.expires_at, db)}"
+    return _restriction_until(db, restriction)
+
+
+def _restriction_until(db: Database, restriction) -> str:
+    """"indefinitely" or "until <time>" for a mute or ban -- whose end, for one
+    imposed over Link, another node chose, so one this node cannot display
+    reads "for now" instead of shutting the caller out (review of #1363)."""
+    if restriction.expires_at is None:
+        return "indefinitely"
+    try:
+        return f"until {format_for_display(restriction.expires_at, db)}"
+    except ValueError:
+        return "for now"
 
 
 def _check_ban(db: Database, channel: Channel, user: User) -> str | None:
@@ -5178,7 +5340,7 @@ def _check_ban(db: Database, channel: Channel, user: User) -> str | None:
     restriction = is_banned(db, channel, user)
     if restriction is None:
         return None
-    return "indefinitely" if restriction.expires_at is None else f"until {format_for_display(restriction.expires_at, db)}"
+    return _restriction_until(db, restriction)
 
 
 @dataclass

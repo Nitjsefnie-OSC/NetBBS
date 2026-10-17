@@ -1682,6 +1682,20 @@ reaches every node.
   carrying the board. Their confirmation says so, instead of "on this node
   only".
 
+**Mutes and bans in linked channels.** In a linked channel, `/mute`, `/unmute`,
+`/ban` and `/unban` also take a caller from another node as `name@TheirBBS`.
+
+- On a channel this node originates, a moderator's mute or ban reaches every
+  node carrying the channel, for this node's callers and other nodes' alike.
+  So does one by a user this node's grant names, on their own node.
+- Every carrying node then hides that caller's messages in the channel. The
+  caller's own node also enforces it: a muted caller cannot speak there, and
+  a banned one cannot enter, or speak if already inside.
+- A moderator on a carrying node without such a grant mutes or bans a caller
+  from another node on this node only. That never lifts a mute or ban from
+  the channel's origin, and the origin's always outranks a delegated
+  moderator's.
+
 > [!NOTE]
 > Grants reach only nodes running a version that understands Link moderation.
 > An older node keeps showing what newer nodes hide.
