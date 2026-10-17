@@ -193,7 +193,12 @@ from netbbs.link.protocol import (
     validate_realtime_frame_payload,
 )
 from netbbs.link.carry import KIND_LABELS, accept_genesis, genesis_kind
-from netbbs.link.moderators import all_roster_content_ids, store_received_roster
+from netbbs.link.moderators import (
+    all_roster_content_ids,
+    moderation_refusal,
+    record_received_moderation,
+    store_received_roster,
+)
 from netbbs.link.channel_moderation import store_received_restriction, store_received_topic
 from netbbs.link.communities import (
     CarryCaps,
@@ -511,6 +516,14 @@ async def rejudge_opaque_events(
     return taken
 
 
+#: Issue #1359 (Decision 9): the moderation events whose signer this node's
+#: trust policy must allow before they take effect here.
+_MODERATION_OBJECT_TYPES = frozenset({
+    CHANNEL_RESTRICTION_OBJECT_TYPE, CHANNEL_TOPIC_OBJECT_TYPE,
+    BOARD_POST_MODERATOR_EDIT_OBJECT_TYPE, BOARD_POST_TOMBSTONE_OBJECT_TYPE,
+})
+
+
 async def _forget_unless_stored(
     lane: DatabaseLane, node: LinkNode, content_id: str, *, edit_root: str | None = None
 ) -> None:
@@ -581,6 +594,18 @@ async def persist_accepted_events(
                 node.known_event_ids.discard(content_id)
                 node.events.pop(content_id, None)
             continue
+        if object_type in _MODERATION_OBJECT_TYPES and enforce_trust_policy:
+            refusal = await lane.run(moderation_refusal, envelope)
+            if refusal is not None:
+                # Decision 9: kept as known, never applied, while it stands.
+                _logger.info("Link: not applying %s %s: %s", object_type, content_id, refusal)
+                payload = envelope["envelope"]["payload"]
+                if "root_post_id" in payload:
+                    # A board revision is in the in-memory edit chain too.
+                    node.known_event_ids.discard(content_id)
+                    node.events.pop(content_id, None)
+                    node.board_events.forget_edit(payload["root_post_id"], content_id)
+                continue
         if object_type == CHANNEL_TOPIC_OBJECT_TYPE:
             # Issue #1357, Decision 4: the newest topic is shown.
             try:
@@ -593,6 +618,8 @@ async def persist_accepted_events(
                 # Review of #1364: fetched again once the channel is carried.
                 node.known_event_ids.discard(content_id)
                 node.events.pop(content_id, None)
+            elif outcome == "stored":
+                await lane.run(record_received_moderation, envelope)
             continue
         if object_type == CHANNEL_RESTRICTION_OBJECT_TYPE:
             # Issue #1357, Decision 3: one in force per channel, participant
@@ -609,6 +636,8 @@ async def persist_accepted_events(
             if outcome == "not carried":
                 node.known_event_ids.discard(content_id)
                 node.events.pop(content_id, None)
+            elif outcome == "stored":
+                await lane.run(record_received_moderation, envelope)
             continue
         if object_type == LINK_MODERATORS_OBJECT_TYPE:
             # Issue #1357: one roster per origin, the newest by effective time
@@ -710,6 +739,8 @@ async def persist_accepted_events(
                 await _forget_unless_stored(
                     lane, node, content_id, edit_root=envelope["envelope"]["payload"]["root_post_id"]
                 )
+            else:
+                await lane.run(record_received_moderation, envelope)
             continue
         elif object_type == BOARD_POST_TOMBSTONE_OBJECT_TYPE:
             projected = await lane.run(
@@ -720,6 +751,8 @@ async def persist_accepted_events(
                 await _forget_unless_stored(
                     lane, node, content_id, edit_root=envelope["envelope"]["payload"]["root_post_id"]
                 )
+            else:
+                await lane.run(record_received_moderation, envelope)
             continue
         elif object_type == CHANNEL_MESSAGE_OBJECT_TYPE:
             # Design doc §9.6, issue #87: same "skip the generic save_

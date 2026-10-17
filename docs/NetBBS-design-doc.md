@@ -9782,7 +9782,8 @@ No public/untrusted federation claim precedes this phase.
   #1308) -- built (#1310, v7.27.0);
 - delegated Link moderators for linked boards and channels, channel mute/ban
   and topic across the Link, and linked-channel origin succession (§16, issue
-  #1357) -- decided, not yet built;
+  #1357) -- built (#1359: #1360, #1361, #1363, #1364, #1366 and its last
+  slice, trust and history);
 - invite-only linked-channel membership governance;
 - advanced creation, closure, and lifecycle surfaces;
 - curated governance audit board and live activity feed.

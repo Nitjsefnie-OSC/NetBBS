@@ -437,6 +437,9 @@ def holds_link_permission(db: Database, user: User, *, object_type: str, object_
     if resource is None:
         return False
     resource_id, origin = resource
+    if _untrusted(db, origin):
+        # Decision 9: a quarantined or blocked origin's roster is not applied.
+        return False
     entries = []
     for row in db.connection.execute(
         "SELECT scope_kind, scope_id, permissions FROM link_moderator_held "
@@ -472,3 +475,133 @@ def grants_held_here(db: Database, own_fingerprint: str) -> list[tuple[str, dict
             if entry["moderator"]["home_node_fingerprint"] == own_fingerprint:
                 held.append((row["origin_fingerprint"], entry))
     return held
+
+
+# -- trust and history (Decision 9; issue #1359 slice 6) ------------------------
+
+
+def _untrusted(db: Database, fingerprint: str | None) -> bool:
+    """Whether this node holds `fingerprint` quarantined or blocked."""
+    from netbbs.link.enforcement import node_transport_state
+    from netbbs.link.trust import TrustState
+
+    return fingerprint is not None and node_transport_state(db, fingerprint) in {
+        TrustState.BLOCKED, TrustState.QUARANTINED,
+    }
+
+
+def _event_origin(db: Database, payload: dict) -> str | None:
+    """The current origin of the linked board or channel a moderation
+    event's payload names, or `None` when it is not here."""
+    if "channel_id" in payload:
+        from netbbs.link.channels import channel_origin_by_id
+
+        return channel_origin_by_id(db, payload["channel_id"])
+    row = db.connection.execute(
+        "SELECT link_origin_fingerprint, link_genesis_json FROM boards WHERE board_id = ?",
+        (payload.get("board_id"),),
+    ).fetchone()
+    if row is None or row["link_genesis_json"] is None:
+        return None
+    return row["link_origin_fingerprint"] or json.loads(row["link_genesis_json"])["envelope"]["payload"].get(
+        "origin_fingerprint"
+    )
+
+
+def moderation_refusal(db: Database, envelope: dict) -> str | None:
+    """Why this node does not apply a received moderation action, or `None`
+    (Decision 9): it was signed by a node this node holds quarantined or
+    blocked -- the origin, or a delegate's home node -- or by a moderator
+    blocked or quarantined here. A delegate's action also needs an origin
+    trusted here, since a quarantined origin's roster is not applied."""
+    from netbbs.link.enforcement import decide_user_authorship
+
+    payload = envelope["envelope"]["payload"]
+    origin = _event_origin(db, payload)
+    if _untrusted(db, origin):
+        return "the origin is quarantined or blocked here"
+    moderator = payload.get("moderator")
+    if isinstance(moderator, dict):
+        home, user = moderator.get("home_node_fingerprint"), moderator.get("local_user_id")
+        if _untrusted(db, home):
+            return "the moderator's node is quarantined or blocked here"
+        if not decide_user_authorship(db, home, user or "").allowed:
+            return "the moderator is quarantined or blocked here"
+    return None
+
+
+def _who(db: Database, fingerprint: str | None, user: str | None = None) -> str:
+    from netbbs.link.node_profiles import identity_for_fingerprint
+
+    label = identity_for_fingerprint(db, fingerprint).label if fingerprint else "an unknown node"
+    return f"{user}@{label}" if user else label
+
+
+_HISTORY_ACTIONS = {
+    ("mute", "impose"): "link_mute", ("mute", "lift"): "link_unmute",
+    ("ban", "impose"): "link_ban", ("ban", "lift"): "link_unban",
+}
+
+
+def record_received_moderation(db: Database, envelope: dict) -> None:
+    """Note a received Link moderation action that took effect here in the
+    linked board's or channel's history (Decision 9; issue #1359): what, on
+    whom, and who signed it -- a delegate by name, else the origin."""
+    from netbbs.moderation.log import record_action
+
+    inner = envelope["envelope"]
+    payload = inner["payload"]
+    object_type = inner["object_type"]
+    moderator = payload.get("moderator")
+    by = (
+        _who(db, moderator.get("home_node_fingerprint"), moderator.get("local_user_id"))
+        if isinstance(moderator, dict) else f"{_who(db, _event_origin(db, payload))} (its origin)"
+    )
+    if "channel_id" in payload:
+        row = db.connection.execute("SELECT id FROM channels WHERE channel_id = ?", (payload["channel_id"],)).fetchone()
+        kind = "channel"
+    else:
+        row = db.connection.execute("SELECT id FROM boards WHERE board_id = ?", (payload.get("board_id"),)).fetchone()
+        kind = "board"
+    if row is None:
+        return
+    if object_type == "channel_restriction":
+        target = payload["target"]
+        action = _HISTORY_ACTIONS[(payload["kind"], payload["action"])]
+        detail = f"{_who(db, target['home_node_fingerprint'], target['local_user_id'])} by {by}"
+        if payload.get("until"):
+            detail += f", until {payload['until']}"
+        if payload.get("reason"):
+            detail += f": {payload['reason']}"
+    elif object_type == "channel_topic":
+        action = "link_topic"
+        detail = f"{payload.get('topic') or '(cleared)'} -- by {by}"
+    elif object_type == "board_post_tombstone":
+        action = "link_post_removed"
+        detail = f"{payload.get('subject')!r} by {by}"
+    else:
+        action = "link_post_edited"
+        detail = f"{payload.get('subject')!r} by {by}"
+    record_action(db, actor=None, action=action, object_type=kind, object_id=row["id"], detail=detail)
+
+
+def link_moderator_lines(db: Database, object_type: str, object_id: int) -> list[str]:
+    """Who the origin's roster lets moderate this carried or own linked
+    board or channel, one line each (`name@BBS: permissions`), for its
+    history screen."""
+    resource = _resource_origin(db, object_type, object_id)
+    if resource is None:
+        return []
+    resource_id, origin = resource
+    communities = _listing_communities(db, origin, object_type + "s", resource_id)
+    lines = []
+    for entry in _roster_entries(db, origin):
+        moderator = entry.get("moderator", {})
+        home, user = moderator.get("home_node_fingerprint"), moderator.get("local_user_id")
+        granted = delegated_permissions(
+            [entry], home_node_fingerprint=home, local_user_id=user or "", resource_kind=object_type,
+            resource_id=resource_id, community_ids=communities,
+        )
+        if granted:
+            lines.append(f"{_who(db, home, user)}: {', '.join(sorted(granted))} (Link)")
+    return lines

@@ -373,15 +373,21 @@ def _moderator_lines(db: Database, object_type: str, object_id: int) -> list[str
     history rather than on its detail screen, which at 80x24 has no row to
     spare (Codex review on #797). Sanitized: a username is its owner's
     own text."""
+    from netbbs.link.moderators import link_moderator_lines
+    from netbbs.moderation.roles import ChannelPermission
+
     grants = list_grants_for_object(db, object_type=object_type, object_id=object_id)
+    # Issue #1359: users of other nodes the origin's roster names.
+    link_lines = [sanitize_text(line) for line in link_moderator_lines(db, object_type, object_id)]
     if not grants:
-        return ["none: only SysOps moderate here"]
+        return link_lines or ["none: only SysOps moderate here"]
+    flags = ChannelPermission if object_type == "channel" else BoardPermission
     lines = []
     for grant in grants[:_MODERATORS_SHOWN]:
         user = get_user_by_id(db, grant.user_id)
         name = user.username if user is not None else "(deleted account)"
         permissions = ", ".join(
-            flag.name.lower() for flag in BoardPermission if flag & grant.permissions and flag.name
+            flag.name.lower() for flag in flags if flag & grant.permissions and flag.name
         )
         if grant.object_id is not None:
             scope = ""
@@ -392,7 +398,7 @@ def _moderator_lines(db: Database, object_type: str, object_id: int) -> list[str
         lines.append(sanitize_text(f"{name}: {permissions}{scope}"))
     if len(grants) > _MODERATORS_SHOWN:
         lines.append(f"...and {len(grants) - _MODERATORS_SHOWN} more (see [R]evoke moderator)")
-    return lines
+    return lines + link_lines
 
 
 _EXCLUDED_AFTER_DELETE = " It is excluded from Link here and will not come back; Link status lists it."
