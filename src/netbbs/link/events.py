@@ -3185,8 +3185,13 @@ def channel_restriction_problem(payload: object) -> str | None:
         return "a channel_restriction is a mute or a ban"
     if payload.get("action") not in CHANNEL_RESTRICTION_ACTIONS:
         return "a channel_restriction imposes or lifts"
-    if payload.get("until") is not None and not isinstance(payload["until"], str):
-        return "a channel_restriction's until must be a timestamp"
+    if payload.get("until") is not None:
+        from netbbs.timeutil import parse_utc_iso
+
+        try:
+            parse_utc_iso(payload["until"])
+        except (TypeError, ValueError):
+            return "a channel_restriction's until must be a timestamp"
     reason = payload.get("reason")
     if reason is not None and (not isinstance(reason, str) or len(reason.encode("utf-8")) > MAX_CHANNEL_RESTRICTION_REASON_BYTES):
         return f"a channel_restriction's reason must be text of at most {MAX_CHANNEL_RESTRICTION_REASON_BYTES} bytes"

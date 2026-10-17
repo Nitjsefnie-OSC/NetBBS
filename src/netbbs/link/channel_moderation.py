@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from dataclasses import dataclass
 
 from netbbs.link.events import ChannelRestriction
@@ -30,6 +31,23 @@ from netbbs.timeutil import parse_utc_iso, utc_now_iso
 
 LINK_SCOPE = "link"
 LOCAL_SCOPE = "local"
+
+#: How many signed restrictions one linked channel may hold here (AGENTS.md:
+#: bound remotely influenced resources). At the cap, lifted and expired ones
+#: make room; a channel full of ones in force refuses more, with a warning.
+MAX_RESTRICTIONS_PER_CHANNEL = 500
+
+logger = logging.getLogger(__name__)
+
+
+class RestrictionRefused(ValueError):
+    """A mute or ban signed here that was not kept, so changed nothing:
+    `outcome` is `"stale"` (the channel's origin's own, still in force,
+    outranks a delegate's) or `"full"`."""
+
+    def __init__(self, outcome: str):
+        super().__init__(outcome)
+        self.outcome = outcome
 
 
 @dataclass(frozen=True)
@@ -56,10 +74,37 @@ def _active(row, now: datetime.datetime) -> bool:
         return True
 
 
-def _rank(is_origin: int, effective_at: str, content_id: str) -> tuple:
-    """The order a signed restriction is kept in (Decision 8): the origin's
-    always above a delegate's, then the newer, then by content id."""
-    return (is_origin, effective_at, content_id)
+def _replaces(current, *, is_origin: int, effective_at: str, content_id: str, now: datetime.datetime) -> bool:
+    """Whether a signed restriction replaces the one stored for its channel,
+    participant and kind (Decision 8): the newer by effective time, then by
+    content id -- except that a delegate's never replaces the origin's own
+    while that is in force (review of #1363: a lifted or expired one no
+    longer holds a delegate off)."""
+    if current is None:
+        return True
+    if current["is_origin"] and not is_origin and _active(current, now):
+        return False
+    return (effective_at, content_id) > (current["effective_at"], current["content_id"])
+
+
+def _make_room(db: Database, channel_id: str, now: datetime.datetime) -> bool:
+    """Free a slot for one more signed restriction in `channel_id`, dropping
+    lifted, then expired ones, oldest first; whether there is room."""
+    rows = db.connection.execute(
+        "SELECT home_node_fingerprint, local_user_id, kind, active, until, effective_at "
+        "FROM link_channel_restrictions WHERE channel_id = ? AND scope = ?",
+        (channel_id, LINK_SCOPE),
+    ).fetchall()
+    if len(rows) < MAX_RESTRICTIONS_PER_CHANNEL:
+        return True
+    spent = sorted((row for row in rows if not _active(row, now)), key=lambda row: row["effective_at"])
+    for row in spent[: len(rows) - MAX_RESTRICTIONS_PER_CHANNEL + 1]:
+        db.connection.execute(
+            "DELETE FROM link_channel_restrictions WHERE channel_id = ? AND home_node_fingerprint = ? "
+            "AND local_user_id = ? AND kind = ? AND scope = ?",
+            (channel_id, row["home_node_fingerprint"], row["local_user_id"], row["kind"], LINK_SCOPE),
+        )
+    return len(rows) - len(spent) < MAX_RESTRICTIONS_PER_CHANNEL
 
 
 def store_received_restriction(
@@ -68,7 +113,9 @@ def store_received_restriction(
 ) -> str:
     """Keep a received (or this node's own) `channel_restriction` if it ranks
     above the one in force for its channel, target and kind. Returns
-    `"stale"` or `"stored"`."""
+    `"stored"`, `"stale"`, `"not carried"` (no such linked channel here: a
+    genesis alone, for a channel offered but not carried, holds nothing) or
+    `"full"` (`MAX_RESTRICTIONS_PER_CHANNEL`)."""
     payload = envelope["envelope"]["payload"]
     target = payload["target"]
     is_origin = 0 if "moderator" in payload else 1
@@ -76,18 +123,31 @@ def store_received_restriction(
     effective = effective_time(payload.get("created_at"), arrived)
     # A username is unique ignoring case on its node: one row per participant.
     key = (payload["channel_id"], target["home_node_fingerprint"], target["local_user_id"].casefold(), payload["kind"])
+    now = datetime.datetime.now(datetime.timezone.utc)
     db.connection.execute("BEGIN IMMEDIATE")
     try:
+        carried = db.connection.execute(
+            "SELECT 1 FROM channels WHERE channel_id = ? AND link_genesis_json IS NOT NULL AND link_hidden_at IS NULL",
+            (payload["channel_id"],),
+        ).fetchone()
+        if carried is None:
+            db.connection.rollback()
+            return "not carried"
         current = db.connection.execute(
-            "SELECT is_origin, effective_at, content_id FROM link_channel_restrictions "
+            "SELECT is_origin, effective_at, content_id, active, until FROM link_channel_restrictions "
             "WHERE channel_id = ? AND home_node_fingerprint = ? AND local_user_id = ? AND kind = ? AND scope = ?",
             (*key, LINK_SCOPE),
         ).fetchone()
-        if current is not None and _rank(current["is_origin"], current["effective_at"], current["content_id"]) >= _rank(
-            is_origin, effective, content_id,
-        ):
+        if not _replaces(current, is_origin=is_origin, effective_at=effective, content_id=content_id, now=now):
             db.connection.rollback()
             return "stale"
+        if current is None and not _make_room(db, payload["channel_id"], now):
+            db.connection.rollback()
+            logger.warning(
+                "Link: channel %s already holds %s mutes and bans in force; refusing another",
+                payload["channel_id"], MAX_RESTRICTIONS_PER_CHANNEL,
+            )
+            return "full"
         db.connection.execute(
             """
             INSERT INTO link_channel_restrictions
@@ -246,6 +306,17 @@ def restriction_reach(db: Database, channel, *, node_identity, actor) -> dict | 
     return None
 
 
+def _bounded_reason(reason: str | None) -> str | None:
+    """`reason` cut to what a signed restriction carries (review of #1363):
+    it only explains, so a long one is shortened, never refused."""
+    from netbbs.link.events import MAX_CHANNEL_RESTRICTION_REASON_BYTES
+
+    if not reason:
+        return None
+    data = reason.encode("utf-8")[:MAX_CHANNEL_RESTRICTION_REASON_BYTES]
+    return data.decode("utf-8", errors="ignore") or None
+
+
 def sign_channel_restriction(
     db: Database, channel, *, node_identity, actor, home_node_fingerprint: str, local_user_id: str,
     kind: str, impose: bool, until: str | None = None, reason: str | None = None,
@@ -264,9 +335,11 @@ def sign_channel_restriction(
         target={"kind": "node_vouched_user", "home_node_fingerprint": home_node_fingerprint,
                 "local_user_id": local_user_id},
         kind=kind, action="impose" if impose else "lift", created_at=utc_now_iso(), until=until,
-        reason=reason, moderator=reach or None,
+        reason=_bounded_reason(reason), moderator=reach or None,
     )
     raw = event.to_dict()
-    store_received_restriction(db, envelope=raw, content_id=event.content_id,
-                               own_fingerprint=node_identity.fingerprint)
+    outcome = store_received_restriction(db, envelope=raw, content_id=event.content_id,
+                                         own_fingerprint=node_identity.fingerprint)
+    if outcome != "stored":
+        raise RestrictionRefused(outcome)
     return raw
