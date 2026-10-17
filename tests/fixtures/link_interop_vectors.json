@@ -1,0 +1,138 @@
+{
+  "format": "netbbs-link-v1-interoperability-1",
+  "fixture_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "fixture_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "canonical_edge_vectors": [
+    {
+      "name": "del_is_ascii_escaped",
+      "fields": {"text": ""},
+      "canonical_hex": "7b2274657874223a225c7530303766227d",
+      "content_id": "cd89201b13a43bb071c00a8a52298cc068749f10c66b31222454c273aa7c916e"
+    },
+    {
+      "name": "__proto___is_a_real_canonical_key",
+      "fields": {"__proto__": {"netbbs_protocol": 1, "payload": "kept"}, "netbbs_protocol": 1},
+      "canonical_hex": "7b225f5f70726f746f5f5f223a7b226e65746262735f70726f746f636f6c223a312c227061796c6f6164223a226b657074227d2c226e65746262735f70726f746f636f6c223a317d",
+      "content_id": "afba847a2a5b64f3bbed0b2af7fb41f16f4f4774c4194a0b03fc9e2507c8e8ab"
+    }
+  ],
+  "signed_event_vectors": [
+    {
+      "name": "signed_unknown_field_and_nfc",
+      "envelope": {
+        "netbbs_protocol": 1,
+        "object_type": "board_post",
+        "payload": {
+          "body": "café",
+          "unknown_field": "retained",
+          "count": 9007199254740991
+        }
+      },
+      "canonical_hex": "7b226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a22626f6172645f706f7374222c227061796c6f6164223a7b22626f6479223a226361665c7530306539222c22636f756e74223a393030373139393235343734303939312c22756e6b6e6f776e5f6669656c64223a2272657461696e6564227d7d",
+      "content_id": "e54f0d586efd362f009179fefbbd58f43944b5aeb8b83976c4c1b54f46b7cb0a",
+      "signature_hex": "84629fa0982c503a843446f6e94774985b63bb7f843663b1d0839743f40f62799103784a8d7e97b379ae52eb23b6bea2aadaba281756b86f236bc17bf9517c0e",
+      "signature_valid": true
+    },
+    {
+      "name": "bad_signature_is_rejected",
+      "envelope": {
+        "netbbs_protocol": 1,
+        "object_type": "board_post",
+        "payload": {
+          "body": "café",
+          "unknown_field": "retained",
+          "count": 9007199254740991
+        }
+      },
+      "canonical_hex": "7b226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a22626f6172645f706f7374222c227061796c6f6164223a7b22626f6479223a226361665c7530306539222c22636f756e74223a393030373139393235343734303939312c22756e6b6e6f776e5f6669656c64223a2272657461696e6564227d7d",
+      "content_id": "e54f0d586efd362f009179fefbbd58f43944b5aeb8b83976c4c1b54f46b7cb0a",
+      "signature_hex": "85629fa0982c503a843446f6e94774985b63bb7f843663b1d0839743f40f62799103784a8d7e97b379ae52eb23b6bea2aadaba281756b86f236bc17bf9517c0e",
+      "signature_valid": false
+    },
+    {
+      "name": "signed_key_transition",
+      "envelope": {
+        "netbbs_protocol": 1,
+        "object_type": "key_transition",
+        "payload": {
+          "action": "authorize",
+          "purpose": "signing",
+          "operational_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+          "subject_fingerprint": "abc"
+        }
+      },
+      "canonical_hex": "7b226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a226b65795f7472616e736974696f6e222c227061796c6f6164223a7b22616374696f6e223a22617574686f72697a65222c226f7065726174696f6e616c5f6b6579223a224141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141413d3d222c22707572706f7365223a227369676e696e67222c227375626a6563745f66696e6765727072696e74223a22616263227d7d",
+      "content_id": "cd5550aad3f58cdb4037e170bd6002d171c62b52c1f84242834e10dd1062df2a",
+      "signature_hex": "3a3cadeeea947311bd801ee58371b08cf375e1198b806030c3f9109f97090ef66b866a67564a0e89e415455474df22776a9242f77545a70969fb3c8c8edb2c02",
+      "signature_valid": true
+    },
+    {
+      "name": "signed_channel_message",
+      "envelope": {
+        "netbbs_protocol": 1,
+        "object_type": "channel_message",
+        "payload": {
+          "author": {"kind": "node_vouched_user", "home_node_fingerprint": "home-node", "local_user_id": "alice"},
+          "body": "hello channel",
+          "channel_id": "channel-1",
+          "created_at": "2026-01-01T00:00:00.000000+00:00",
+          "nonce": "00112233445566778899aabbccddeeff"
+        }
+      },
+      "canonical_hex": "7b226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a226368616e6e656c5f6d657373616765222c227061796c6f6164223a7b22617574686f72223a7b22686f6d655f6e6f64655f66696e6765727072696e74223a22686f6d652d6e6f6465222c226b696e64223a226e6f64655f766f75636865645f75736572222c226c6f63616c5f757365725f6964223a22616c696365227d2c22626f6479223a2268656c6c6f206368616e6e656c222c226368616e6e656c5f6964223a226368616e6e656c2d31222c22637265617465645f6174223a22323032362d30312d30315430303a30303a30302e3030303030302b30303a3030222c226e6f6e6365223a223030313132323333343435353636373738383939616162626363646465656666227d7d",
+      "content_id": "b5165a89d16325c81f766d5be6f68b47c2fa08a2da2abfff937d4cca24e38c13",
+      "signature_hex": "7238b2afe1ea592c7b20712dda7b480a9cf97044fac0e892535cc7eb12bb3342880e434f3b323b5f3ca240bce7a8e06242e720e4aedf761a09544ecea3c7bc0e",
+      "signature_valid": true
+    },
+    {
+      "name": "signed_file_descriptor",
+      "envelope": {
+        "netbbs_protocol": 1,
+        "object_type": "file_descriptor",
+        "payload": {
+          "area_id": "area-1",
+          "created_at": "2026-01-01T00:00:00.000000+00:00",
+          "description": "fixture",
+          "file_id": "file-1",
+          "filename": "readme.txt",
+          "nonce": "ffeeddccbbaa99887766554433221100",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "size_bytes": 42
+        }
+      },
+      "canonical_hex": "7b226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a2266696c655f64657363726970746f72222c227061796c6f6164223a7b22617265615f6964223a22617265612d31222c22637265617465645f6174223a22323032362d30312d30315430303a30303a30302e3030303030302b30303a3030222c226465736372697074696f6e223a2266697874757265222c2266696c655f6964223a2266696c652d31222c2266696c656e616d65223a22726561646d652e747874222c226e6f6e6365223a226666656564646363626261613939383837373636353534343333323231313030222c22736861323536223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c2273697a655f6279746573223a34327d7d",
+      "content_id": "f3488fcb76e22739b9936c3a592343edb58a44244d0dfd0ca562666e8451fced",
+      "signature_hex": "08709840a52ec5a13d6d6f712b1f7c2061785a27aa49e48b00209161f17d6de029260acdca8cb71527b13a1793d9dc06eda43ff236b2eaddb0fb26a347c32802",
+      "signature_valid": true
+    },
+    {
+      "name": "signed_link_message",
+      "envelope": {
+        "netbbs_protocol": 1,
+        "object_type": "link_message",
+        "payload": {
+          "ciphertext": "dGVzdC1jaXBoZXJ0ZXh0",
+          "confidentiality_tier": "tier1_home_node_key",
+          "created_at": "2026-01-01T00:00:00.000000+00:00",
+          "recipient": {"home_node_fingerprint": "recipient-node", "local_user_id": "bob"},
+          "sender": {"kind": "node_vouched_user", "home_node_fingerprint": "home-node", "local_user_id": "alice"}
+        }
+      },
+      "canonical_hex": "7b226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a226c696e6b5f6d657373616765222c227061796c6f6164223a7b2263697068657274657874223a226447567a6443316a6158426f5a584a305a586830222c22636f6e666964656e7469616c6974795f74696572223a2274696572315f686f6d655f6e6f64655f6b6579222c22637265617465645f6174223a22323032362d30312d30315430303a30303a30302e3030303030302b30303a3030222c22726563697069656e74223a7b22686f6d655f6e6f64655f66696e6765727072696e74223a22726563697069656e742d6e6f6465222c226c6f63616c5f757365725f6964223a22626f62227d2c2273656e646572223a7b22686f6d655f6e6f64655f66696e6765727072696e74223a22686f6d652d6e6f6465222c226b696e64223a226e6f64655f766f75636865645f75736572222c226c6f63616c5f757365725f6964223a22616c696365227d7d7d",
+      "content_id": "669ad757cf56ce26f795eeccb861c1877bca577c50a94addf228567392a91ada",
+      "signature_hex": "c26daf2d538edaefb85cc712cb5932d73ecd80c8c13434b97222a7cdf45eb1248d0845ca0c2e94373386fc992d1a454876b3e6bb224e9baeffc293f4970ad70c",
+      "signature_valid": true
+    }
+  ],
+  "wire_vectors": [
+    { "name": "valid_unknown_field_is_retained", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"future\":true}}", "accepted": true },
+    { "name": "__proto___wire_field_is_retained", "json": "{\"__proto__\":{\"netbbs_protocol\":1,\"payload\":\"kept\"},\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{}}", "canonical_hex": "7b225f5f70726f746f5f5f223a7b226e65746262735f70726f746f636f6c223a312c227061796c6f6164223a226b657074227d2c226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a2278222c227061796c6f6164223a7b7d7d", "accepted": true },
+    { "name": "invalid_utf8_bytes", "json_hex": "7b226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a2278222c227061796c6f6164223aff227d", "accepted": false },
+    { "name": "non_json_whitespace", "json_hex": "7bc2a0226e65746262735f70726f746f636f6c223a312c226f626a6563745f74797065223a2278222c227061796c6f6164223a7b7d7d", "accepted": false },
+    { "name": "duplicate_nested_key", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":1,\"a\":2}}", "accepted": false },
+    { "name": "float_is_rejected", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":1.0}}", "accepted": false },
+    { "name": "unsafe_integer_is_rejected", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{\"a\":9007199254740992}}", "accepted": false },
+    { "name": "unsupported_version_is_rejected", "json": "{\"netbbs_protocol\":2,\"object_type\":\"x\",\"payload\":{}}", "accepted": false },
+    { "name": "trailing_data_is_rejected", "json": "{\"netbbs_protocol\":1,\"object_type\":\"x\",\"payload\":{}} {}", "accepted": false }
+  ]
+}
