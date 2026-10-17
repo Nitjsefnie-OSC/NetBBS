@@ -4620,4 +4620,23 @@ MIGRATIONS = [
         );
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1359 (design doc §16, Link moderation, Decision 2): `link_moderator_held`, "
+            "the entries of other origins' rosters in force here that name this node's own users "
+            "-- what lets such a user moderate a carried board or channel on this node and have "
+            "it signed for everyone. Refreshed from each roster as it is stored. Empty on "
+            "upgrade."
+        ),
+        sql="""
+        CREATE TABLE link_moderator_held (
+            origin_fingerprint  TEXT NOT NULL,
+            local_user_id       TEXT NOT NULL,
+            scope_kind          TEXT NOT NULL,
+            scope_id            TEXT,
+            permissions         TEXT NOT NULL
+        );
+        CREATE INDEX idx_link_moderator_held_user ON link_moderator_held(local_user_id COLLATE NOCASE);
+        """,
+    ),
 ]

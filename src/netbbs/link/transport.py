@@ -199,7 +199,9 @@ from netbbs.link.communities import (
     store_received_closure,
     store_received_members,
 )
-from netbbs.link.store import event_is_stored, forget_opaque_event, opaque_events_to_rejudge, store_opaque_event
+from netbbs.link.store import (
+    event_is_stored, forget_opaque_event, opaque_events_to_rejudge, store_opaque_event, stored_board_chains,
+)
 from netbbs.link.realtime_proxy import open_realtime_connection, record_handshake_outcome
 from netbbs.link.attestation_delivery import receive_attestation_bundle_safely
 from netbbs.link.attestation_bundles import (
@@ -378,6 +380,51 @@ async def _rate_limit_middleware(request: web.Request, handler):
 _GENESIS_ID_FIELDS = {"boards": "board_id", "channels": "channel_id", "file_areas": "area_id"}
 
 
+_CHAIN_CLASSES = {
+    BOARD_POST_EDIT_OBJECT_TYPE: BoardPostEdit,
+    BOARD_POST_MODERATOR_EDIT_OBJECT_TYPE: BoardPostModeratorEdit,
+    BOARD_POST_TOMBSTONE_OBJECT_TYPE: BoardPostTombstone,
+}
+
+
+async def hydrate_board_chains(lane: DatabaseLane, node: LinkNode, events: list[dict]) -> None:
+    """Before `handle_events` checks incoming post revisions, give the running
+    node what its database holds of those posts that its memory does not: a
+    root post this node wrote, and a revision chain longer than the one in
+    memory -- this node's own posts and edits, which are stored as they are
+    made and otherwise known to the running node only after a restart. Issue
+    #1359: without it an origin set aside a delegated moderator's removal of
+    its own post, and refused an author's edit made after its own moderator
+    edit."""
+    wanted: dict[str, set[str]] = {}
+    for raw in events:
+        try:
+            if raw["envelope"]["object_type"] in _CHAIN_CLASSES:
+                payload = raw["envelope"]["payload"]
+                if isinstance(payload["root_post_id"], str) and isinstance(payload["board_id"], str):
+                    wanted.setdefault(payload["board_id"], set()).add(payload["root_post_id"])
+        except (KeyError, TypeError):
+            continue
+    if not wanted:
+        return
+    stored = await lane.run(stored_board_chains, wanted)
+    for root_post_id, (root_raw, chain) in stored.items():
+        if root_raw is not None and root_post_id not in node.events:
+            node.known_event_ids.add(root_post_id)
+            node.events[root_post_id] = root_raw
+        held = node.board_events.edit_chain(root_post_id)
+        if len(chain) <= len(held):
+            continue
+        parsed = tuple(_CHAIN_CLASSES[raw["envelope"]["object_type"]].from_dict(raw) for raw in chain)
+        if [e.content_id for e in held] != [e.content_id for e in parsed[: len(held)]]:
+            continue  # memory and storage disagree: leave memory to decide
+        node.board_events.post_edits[root_post_id] = parsed
+        for raw in chain:
+            content_id = event_content_id(raw["envelope"])
+            node.known_event_ids.add(content_id)
+            node.events.setdefault(content_id, raw)
+
+
 def _forget_community_event(node: LinkNode, content_id: str, envelope: dict) -> None:
     """Undo `handle_events`' in-memory acceptance of a community event that
     was not persisted (issue #1308), as `_forget_genesis` does for the rest."""
@@ -534,7 +581,10 @@ async def persist_accepted_events(
             # Issue #1357: one roster per origin, the newest by effective time
             # in force; an older one is simply not kept.
             try:
-                await lane.run(store_received_roster, envelope=envelope, content_id=content_id)
+                await lane.run(
+                    store_received_roster, envelope=envelope, content_id=content_id,
+                    own_fingerprint=node.identity.fingerprint,
+                )
             except BaseException:
                 node.known_event_ids.discard(content_id)
                 node.events.pop(content_id, None)
@@ -2267,6 +2317,7 @@ class LinkServer:
                     return self._policy_rejection(first_refusal, refused)
                 raw_events = admitted
 
+        await hydrate_board_chains(self._lane, self._node, raw_events)
         try:
             accepted = self._node.handle_events(fingerprint, raw_events)
         except LinkProtocolError as exc:

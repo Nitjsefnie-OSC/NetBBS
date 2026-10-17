@@ -1677,7 +1677,10 @@ reaches every node.
 - <kbd>R</kbd> **Remove** takes a grant back. Each node stops accepting that
   user's moderation as the change reaches it with its next sync pass.
 - The section **Held by this node's users** lists what your own users may
-  moderate on other nodes.
+  moderate on other nodes. Such a user edits and removes posts on those
+  boards here as a moderator would, and the change reaches every node
+  carrying the board. Their confirmation says so, instead of "on this node
+  only".
 
 > [!NOTE]
 > Grants reach only nodes running a version that understands Link moderation.

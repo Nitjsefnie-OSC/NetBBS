@@ -4391,6 +4391,33 @@ revoking it: the receiver selects the newest unexpired record, so a revocation
 would only tell a subscriber to distrust a value being re-asserted in the same
 breath.
 
+
+### A node's own posts are not where a carrier's are (issue #1359)
+
+A carried post is stored under its signed content id: `posts.post_id` is the
+`board_post`'s content id, and each received revision's `post_id`,
+`root_post_id` and `edit_of_post_id` are content ids too. This node's own
+post is not. It has a local id, from `create_post`, and its signed event
+sits on the row in `posts.link_event_json`. Its own revisions are the same:
+local ids, with their events on the row. Any received event that names one of
+this node's own posts by Link id has to be mapped back through that event.
+`_local_chain_ids` in `netbbs.link.boards` does it for moderator edits and
+removals.
+
+The running node does not know this node's own posts or edits either.
+`load_link_node` reads own edits into `post_edits` at startup, but not own
+root posts. Posts and edits made while the node runs are written to the
+database and read from it to push, never registered in memory. So a received
+revision built on one of them used to be set aside (root unknown) or refused
+(head not extended). `hydrate_board_chains` in `netbbs.link.transport` closes
+this before both entry points, the direct push and the pull. From the
+database it gives the running node the own root and the post's revision
+chain, own and received, in `previous_event_id` order.
+
+Delegated Link moderation was the first case to hit either gap: an origin
+receiving a delegate's removal of its own post. Before it, every revision of
+an origin's own post was made on the origin itself.
+
 ---
 
 ## 10. Operational constraints

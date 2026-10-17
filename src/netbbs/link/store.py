@@ -61,6 +61,7 @@ from netbbs.link.events import (
     ChannelGenesis,
     ChannelMessage,
     CommunityClosure,
+    CommunityMembers,
     CommunityGenesis,
     EndpointDescriptor,
     FileAreaGenesis,
@@ -327,10 +328,20 @@ def load_link_node(db: Database, identity: NodeIdentity) -> LinkNode:
             node.known_event_ids.add(community_closure.content_id)
             node.events[community_closure.content_id] = community_closure.to_dict()
 
-    # Issue #1357: the roster in force per origin, this node's own included.
-    for row in db.connection.execute("SELECT content_id, envelope_json FROM link_moderator_rosters"):
+    # Issue #1357: the roster in force per origin, this node's own included,
+    # and each Community's membership list, for whether a Community-scoped
+    # Link moderator covers a resource.
+    for row in db.connection.execute("SELECT content_id, envelope_json, effective_at FROM link_moderator_rosters"):
+        raw = json.loads(row["envelope_json"])
         node.known_event_ids.add(row["content_id"])
-        node.events[row["content_id"]] = json.loads(row["envelope_json"])
+        node.events[row["content_id"]] = raw
+        node.record_moderator_roster(raw, row["effective_at"])
+    for row in db.connection.execute("SELECT link_members_json FROM communities WHERE link_members_json IS NOT NULL"):
+        node.community_events.record_members(CommunityMembers.from_dict(json.loads(row["link_members_json"])))
+    for row in db.connection.execute(
+        "SELECT envelope_json FROM link_events WHERE object_type = 'community_members'"
+    ):
+        node.community_events.record_members(CommunityMembers.from_dict(json.loads(row["envelope_json"])))
 
     for row in db.connection.execute(
         "SELECT link_event_json FROM posts "
@@ -1973,3 +1984,68 @@ def _accepted_ids_for_resource(db: Database, scope_column: str, resource_id: str
             f"SELECT content_id FROM link_events WHERE {scope_column} = ?", (resource_id,)
         )
     }
+
+
+_CHAIN_OBJECT_TYPES = ("board_post_edit", "board_post_moderator_edit", "board_post_tombstone")
+
+
+def stored_board_chains(
+    db: Database, wanted: dict[str, set[str]],
+) -> dict[str, tuple[dict | None, list[dict]]]:
+    """For each root post id in `wanted` (board link id -> root post ids),
+    what this node stores of it: the root post's own signed event when this
+    node wrote it (else `None`), and the post's revision chain -- this node's
+    own revisions and received ones -- in chain order, following each event's
+    `previous_event_id` from the root.
+
+    `netbbs.link.transport.hydrate_board_chains` gives this to the running
+    node before it checks incoming revisions: this node's own posts and
+    edits are written to the database as they are made and read from it to
+    push, and are otherwise unknown to the running node until a restart. An
+    origin receiving a delegated moderator's removal of its own post, or an
+    author's edit made after its own moderator edit, needs them (issue
+    #1359). This node's own post is kept under a local id, not its signed
+    content id, so its roots are found by board."""
+    found: dict[str, tuple[dict | None, list[dict]]] = {}
+    for board_link_id, root_post_ids in wanted.items():
+        board_row = db.connection.execute("SELECT id FROM boards WHERE board_id = ?", (board_link_id,)).fetchone()
+        own_roots: dict[str, tuple[str, dict]] = {}
+        if board_row is not None:
+            for row in db.connection.execute(
+                "SELECT post_id, link_event_json FROM posts WHERE board_id = ? AND root_post_id = post_id "
+                "AND link_event_json IS NOT NULL",
+                (board_row["id"],),
+            ):
+                raw = json.loads(row["link_event_json"])
+                own_roots[event_content_id(raw["envelope"])] = (row["post_id"], raw)
+        for root_post_id in root_post_ids:
+            local_root, root_raw = own_roots.get(root_post_id, (root_post_id, None))
+            candidates: list[dict] = [
+                json.loads(revision["link_event_json"]) for revision in db.connection.execute(
+                    "SELECT link_event_json FROM posts WHERE root_post_id = ? AND post_id != root_post_id "
+                    "AND link_event_json IS NOT NULL ORDER BY id",
+                    (local_root,),
+                )
+            ]
+            candidates += [
+                json.loads(received["envelope_json"]) for received in db.connection.execute(
+                    "SELECT envelope_json FROM link_events WHERE object_type IN (?, ?, ?) "
+                    "AND json_extract(envelope_json, '$.envelope.payload.root_post_id') = ? ORDER BY received_at",
+                    (*_CHAIN_OBJECT_TYPES, root_post_id),
+                )
+            ]
+            following: dict[str, dict] = {}
+            for raw in candidates:
+                if raw["envelope"]["object_type"] in _CHAIN_OBJECT_TYPES:
+                    following.setdefault(raw["envelope"]["payload"].get("previous_event_id"), raw)
+            chain: list[dict] = []
+            head, seen = root_post_id, set()
+            while head in following:
+                raw = following[head]
+                head = event_content_id(raw["envelope"])
+                if head in seen:
+                    break
+                seen.add(head)
+                chain.append(raw)
+            found[root_post_id] = (root_raw, chain)
+    return found

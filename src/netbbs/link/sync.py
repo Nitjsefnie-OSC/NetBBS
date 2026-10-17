@@ -263,6 +263,7 @@ from netbbs.link.transport import (
     deposit_into_relay_mailbox,
     deposit_trust_objects,
     dial_hello,
+    hydrate_board_chains,
     persist_accepted_events,
     persist_stale_copy_changes,
     RelayPickup,
@@ -1085,6 +1086,9 @@ async def _sync_one_seed(
                         continue
                 allowed_events.append(event)
             accepted: list[str] = []
+            # Issue #1359: this node's own posts and edits, which a received
+            # revision may build on.
+            await hydrate_board_chains(lane, node, allowed_events)
             try:
                 accepted, deferred, refusal, skipped = node.handle_events_tolerantly(
                     seed_peer.fingerprint, allowed_events
@@ -1106,6 +1110,7 @@ async def _sync_one_seed(
                     refusal = refusal or retry_refusal
                     skipped += retry_skipped
                 for raw, exc in deferred:
+                    _logger.debug("Link sync: set aside %s: %s", raw.get("envelope", {}).get("object_type"), exc)
                     node.deferred_events.defer(raw, waiting_for=exc.missing_identity, now=time.time())
                 if deferred:
                     _logger.info(

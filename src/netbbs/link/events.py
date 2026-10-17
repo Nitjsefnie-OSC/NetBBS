@@ -1091,6 +1091,7 @@ def build_board_post_moderator_edit(
     created_at: str,
     nonce: str | None = None,
     poll: dict | None = None,
+    moderator: dict | None = None,
 ) -> BoardPostModeratorEdit:
     """
     Build and sign one `board_post_moderator_edit` event, per design
@@ -1099,7 +1100,9 @@ def build_board_post_moderator_edit(
     fingerprint` resolves which node that is), never the edited post's
     own author's key — that's the entire mechanical difference from
     `build_board_post_edit`. `poll` as for `build_board_post_edit`: a
-    moderator's change of a poll's closing date (issue #1299).
+    moderator's change of a poll's closing date (issue #1299). With
+    `moderator`, a delegated Link moderator's (issue #1357, Decision 2):
+    `signing_identity` is then their home node's.
     """
     payload = {
         "board_id": board_id,
@@ -1112,6 +1115,10 @@ def build_board_post_moderator_edit(
     }
     if poll is not None:
         payload["poll"] = poll
+    if moderator is not None:
+        # Issue #1357, Decision 2: a delegated Link moderator's own home node
+        # signs this, not the origin; who they are is part of what it signs.
+        payload["moderator"] = moderator
 
     envelope = build_envelope(BOARD_POST_MODERATOR_EDIT_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))
@@ -1185,10 +1192,13 @@ def build_board_post_tombstone(
     reason: str | None,
     created_at: str,
     nonce: str | None = None,
+    moderator: dict | None = None,
 ) -> BoardPostTombstone:
     """Build and sign one `board_post_tombstone` event, per design doc.
     Always signed by `signing_identity` — the board's current origin's
-    own current signing key, same as `build_board_post_moderator_edit`."""
+    own current signing key, same as `build_board_post_moderator_edit` --
+    or, with `moderator`, a delegated Link moderator's home node's, as
+    there (issue #1357, Decision 2)."""
     payload = {
         "board_id": board_id,
         "root_post_id": root_post_id,
@@ -1199,6 +1209,8 @@ def build_board_post_tombstone(
         "created_at": created_at,
         "nonce": nonce if nonce is not None else secrets.token_hex(16),
     }
+    if moderator is not None:
+        payload["moderator"] = moderator
 
     envelope = build_envelope(BOARD_POST_TOMBSTONE_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))

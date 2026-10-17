@@ -909,6 +909,43 @@ def _carried_revision_status(
     return requested
 
 
+def _local_chain_ids(db: Database, root_link_id: str, previous_link_id: str):
+    """`(root row, local root id, local id of the predecessor or None)` for a
+    received revision of the post `root_link_id`, or `None` when no such
+    post is here. A carried post is stored under its signed content id; this
+    node's own post is not -- it has a local id, and its signed event on the
+    row -- so it is looked up by that event (issue #1359: a delegated
+    moderator's edit or removal of the origin's own post is the first
+    received revision such a post gets)."""
+    root_row = db.connection.execute("SELECT * FROM posts WHERE post_id = ?", (root_link_id,)).fetchone()
+    if root_row is None:
+        board_rows = db.connection.execute(
+            "SELECT * FROM posts WHERE root_post_id = post_id AND link_event_json IS NOT NULL "
+            "AND json_extract(link_event_json, '$.envelope.object_type') = ?",
+            (BOARD_POST_OBJECT_TYPE,),
+        )
+        for row in board_rows:
+            if event_content_id(json.loads(row["link_event_json"])["envelope"]) == root_link_id:
+                root_row = row
+                break
+    if root_row is None:
+        return None
+    local_root = root_row["post_id"]
+    if previous_link_id == root_link_id:
+        return root_row, local_root, local_root
+    previous = db.connection.execute("SELECT post_id FROM posts WHERE post_id = ?", (previous_link_id,)).fetchone()
+    if previous is not None:
+        return root_row, local_root, previous["post_id"]
+    for row in db.connection.execute(
+        "SELECT post_id, link_event_json FROM posts WHERE root_post_id = ? AND post_id != root_post_id "
+        "AND link_event_json IS NOT NULL",
+        (local_root,),
+    ):
+        if event_content_id(json.loads(row["link_event_json"])["envelope"]) == previous_link_id:
+            return root_row, local_root, row["post_id"]
+    return root_row, local_root, None
+
+
 def materialize_carried_board_post_moderator_edit(
     db: Database, edit: BoardPostModeratorEdit, *, sender_fingerprint: str
 ) -> Post | None:
@@ -929,9 +966,8 @@ def materialize_carried_board_post_moderator_edit(
         return _post_from_row(existing)
 
     payload = edit.payload
-    root_row = db.connection.execute(
-        "SELECT * FROM posts WHERE post_id = ?", (payload["root_post_id"],)
-    ).fetchone()
+    resolved = _local_chain_ids(db, payload["root_post_id"], payload["previous_event_id"])
+    root_row = resolved[0] if resolved is not None else None
     if root_row is None:
         # A root kept here but not shown -- rejected (issue #692), or refused
         # by the board's identity gate -- still has a chain to relay: keep
@@ -946,8 +982,9 @@ def materialize_carried_board_post_moderator_edit(
     # a local tombstone nor publish a chain nobody approved here. Past a
     # tombstone it is retained whether or not its predecessor was
     # projected, as `materialize_carried_post_edit` explains.
-    status = _carried_revision_status(db, payload["root_post_id"], local_moderation=False)
-    predecessor_projected = _predecessor_projected(db, payload["previous_event_id"])
+    _root_row, local_root, local_previous = resolved
+    status = _carried_revision_status(db, local_root, local_moderation=False)
+    predecessor_projected = local_previous is not None and _predecessor_projected(db, local_previous)
     if status is not None and not predecessor_projected and not _event_retained(db, payload["previous_event_id"]):
         return None
 
@@ -977,13 +1014,13 @@ def materialize_carried_board_post_moderator_edit(
             edit.content_id, root_row["board_id"], root_row["parent_post_id"],
             root_row["author_user_id"], root_row["author_label"], root_row["author_fingerprint"],
             payload["subject"], payload["body"], payload["created_at"], status,
-            payload["root_post_id"], payload["previous_event_id"],
+            local_root, local_previous,
         ),
     )
     if "poll" in payload:
         # Issue #1299: the origin's moderator changed a poll's closing date.
-        apply_carried_closing_without_commit(db, payload["root_post_id"], payload["poll"])
-    reindex_post(db, root_row["board_id"], payload["root_post_id"])
+        apply_carried_closing_without_commit(db, local_root, payload["poll"])
+    reindex_post(db, root_row["board_id"], local_root)
     db.connection.commit()
 
     return _post_from_row(
@@ -1007,9 +1044,8 @@ def materialize_carried_board_post_tombstone(
         return _post_from_row(existing)
 
     payload = tombstone.payload
-    root_row = db.connection.execute(
-        "SELECT * FROM posts WHERE post_id = ?", (payload["root_post_id"],)
-    ).fetchone()
+    resolved = _local_chain_ids(db, payload["root_post_id"], payload["previous_event_id"])
+    root_row = resolved[0] if resolved is not None else None
     if root_row is None:
         # A root kept here but not shown -- rejected (issue #692), or refused
         # by the board's identity gate -- still has a chain to relay: keep
@@ -1019,10 +1055,8 @@ def materialize_carried_board_post_tombstone(
         return None
     if _board_is_hidden(db, root_row["board_id"]):
         return None
-    predecessor_exists = db.connection.execute(
-        "SELECT 1 FROM posts WHERE post_id = ?", (payload["previous_event_id"],)
-    ).fetchone()
-    if predecessor_exists is None:
+    _root_row, local_root, local_previous = resolved
+    if local_previous is None:
         # Past a revision kept here but not shown, keep this one too.
         if _event_retained(db, payload["previous_event_id"]):
             _retain_only(db, tombstone, BOARD_POST_TOMBSTONE_OBJECT_TYPE, sender_fingerprint, payload["board_id"])
@@ -1051,12 +1085,12 @@ def materialize_carried_board_post_tombstone(
             tombstone.content_id, root_row["board_id"], root_row["parent_post_id"],
             root_row["author_user_id"], root_row["author_label"], root_row["author_fingerprint"],
             payload["subject"], payload["body"], payload["created_at"],
-            payload["root_post_id"], payload["previous_event_id"], payload["created_at"],
+            local_root, local_previous, payload["created_at"],
         ),
     )
     # Issue #1299: a takedown closes the poll and hides its totals.
-    close_poll_for_removal_without_commit(db, payload["root_post_id"])
-    reindex_post(db, root_row["board_id"], payload["root_post_id"])
+    close_poll_for_removal_without_commit(db, local_root)
+    reindex_post(db, root_row["board_id"], local_root)
     db.connection.commit()
 
     return _post_from_row(
@@ -1920,7 +1954,8 @@ def queue_board_post_moderator_edit_if_linked(
         return None
     if edited_by.id == edited_post.author_user_id:
         return None
-    if board_origin_fingerprint(db, board) != node_identity.fingerprint:
+    moderator = _delegated_moderator(db, board, node_identity=node_identity, user=edited_by, permission="EDIT")
+    if board_origin_fingerprint(db, board) != node_identity.fingerprint and moderator is None:
         return None
 
     existing = db.connection.execute(
@@ -1943,6 +1978,7 @@ def queue_board_post_moderator_edit_if_linked(
         body=carried_post_body(db, edited_post),
         created_at=edited_post.created_at,
         poll=_poll_closing(db, edited_post),
+        moderator=moderator,
     )
 
     db.connection.execute(
@@ -1963,8 +1999,28 @@ def _poll_closing(db: Database, revision: Post) -> dict | None:
     return closing_field(poll)
 
 
+def _delegated_moderator(db: Database, board: Board, *, node_identity: NodeIdentity, user: User | None, permission: str):
+    """The signed `moderator` reference for `user`'s action on `board`, when
+    this node is not the board's origin and the origin's roster delegates
+    `permission` ("EDIT", "DELETE") to them (issue #1357, Decision 2) -- this
+    node then signs it for everyone. `None` otherwise: a carrier's own
+    moderation stays on this node."""
+    if user is None or board_origin_fingerprint(db, board) == node_identity.fingerprint:
+        return None
+    from netbbs.link.moderators import holds_link_permission
+    from netbbs.moderation.roles import BoardPermission
+
+    if not holds_link_permission(
+        db, user, object_type="board", object_id=board.id, permission=BoardPermission[permission],
+    ):
+        return None
+    return {"kind": "node_vouched_user", "home_node_fingerprint": node_identity.fingerprint,
+            "local_user_id": user.username}
+
+
 def queue_board_post_tombstone_if_linked(
     db: Database, tombstoned_post: Post, board: Board, *, node_identity: NodeIdentity,
+    tombstoned_by: User | None = None,
 ) -> BoardPostTombstone | None:
     """
     If `board` is Linked, `tombstoned_post` was just produced by
@@ -1979,7 +2035,8 @@ def queue_board_post_tombstone_if_linked(
         return None
     if not is_board_linked(db, board):
         return None
-    if board_origin_fingerprint(db, board) != node_identity.fingerprint:
+    moderator = _delegated_moderator(db, board, node_identity=node_identity, user=tombstoned_by, permission="DELETE")
+    if board_origin_fingerprint(db, board) != node_identity.fingerprint and moderator is None:
         return None
 
     existing = db.connection.execute(
@@ -2002,6 +2059,7 @@ def queue_board_post_tombstone_if_linked(
         body=tombstoned_post.body,
         reason=None,
         created_at=tombstoned_post.created_at,
+        moderator=moderator,
     )
 
     db.connection.execute(
