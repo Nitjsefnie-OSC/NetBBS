@@ -292,3 +292,75 @@ def test_a_link_ban_silences_the_caller_already_in_the_channel(db, origin, here)
     assert chat_flow._check_mute(db, channel, wren) is None
     _store(db, _restriction(origin, target=_who(here.fingerprint, "wren"), kind="ban"), here)
     assert chat_flow._check_mute(db, channel, wren) == "indefinitely"
+
+
+# -- review of #1363 -------------------------------------------------------------
+
+
+def test_a_spent_origin_restriction_no_longer_holds_a_delegate_off(db, origin, here):
+    materialize_carried_channel(db, _genesis(origin))
+    target = _who("e" * 64, "troll")
+    _store(db, _restriction(origin, target=target, action="lift"), here)
+    mute = _restriction(here, target=target, created_at="2026-10-05T00:00:00.000000Z",
+                        moderator=_who(here.fingerprint, "mod"))
+    assert _store(db, mute, here) == "stored"
+    assert restriction_in_force(db, CHANNEL_ID, "e" * 64, "troll") is not None
+    # An older lift from the origin, arriving late, does not undo it.
+    late = _restriction(origin, target=target, action="lift", created_at="2026-10-03T00:00:00.000000Z")
+    assert _store(db, late, here) == "stale"
+
+
+def test_a_restriction_for_a_channel_not_carried_is_not_kept(db, origin, here):
+    assert _store(db, _restriction(origin, target=_who("e" * 64, "troll")), here) == "not carried"
+    assert db.connection.execute("SELECT COUNT(*) FROM link_channel_restrictions").fetchone()[0] == 0
+
+
+def test_a_channels_restrictions_are_bounded(db, origin, here, monkeypatch):
+    from netbbs.link import channel_moderation
+
+    monkeypatch.setattr(channel_moderation, "MAX_RESTRICTIONS_PER_CHANNEL", 2)
+    materialize_carried_channel(db, _genesis(origin))
+    assert _store(db, _restriction(origin, target=_who("e" * 64, "a")), here) == "stored"
+    assert _store(db, _restriction(origin, target=_who("e" * 64, "b"), action="lift"), here) == "stored"
+    # The lifted one makes room; then the channel is full of ones in force.
+    assert _store(db, _restriction(origin, target=_who("e" * 64, "c")), here) == "stored"
+    assert _store(db, _restriction(origin, target=_who("e" * 64, "d")), here) == "full"
+
+
+def test_an_until_that_is_no_timestamp_is_refused():
+    from netbbs.link.events import channel_restriction_problem
+
+    payload = {"channel_id": CHANNEL_ID, "target": _who("e" * 64, "x"), "kind": "mute", "action": "impose",
+               "created_at": "2026-10-02T00:00:00Z", "until": "soon"}
+    assert "until" in channel_restriction_problem(payload)
+
+
+def test_a_link_wide_lift_also_lifts_this_nodes_own(db, tmp_path, clock, here):  # noqa: F811
+    sysop = create_user(db, "sysop", password="hunter2pw", user_level=100)
+    channel = create_channel(db, "lounge", creator=sysop)
+    grant_permissions(db, sysop, object_type="channel", object_id=channel.id,
+                      permissions=ChannelPermission.MODERATE, granted_by=sysop)
+    link_channel(db, channel, node_identity=here)
+    troll = bootstrap_node_identity("trollhaven")
+    set_local_restriction(db, channel_id=channel.channel_id, home_node_fingerprint=troll.fingerprint,
+                          local_user_id="troll", kind="ban", impose=True)
+    node = LinkNode(identity=here)
+    node.handle_hello(_hello_bytes(LinkNode(identity=troll), clock=clock))
+    text = _chat(db, tmp_path, channel, sysop, [f"/unban troll@{troll.fingerprint}"], LinkContext(link_node=node))
+    assert "is unbanned everywhere this channel is carried" in text
+    assert restriction_in_force(db, channel.channel_id, troll.fingerprint, "troll") is None
+
+
+def test_a_long_reason_is_shortened_for_the_signed_mute(db, tmp_path, clock, here):  # noqa: F811
+    sysop = create_user(db, "sysop", password="hunter2pw", user_level=100)
+    channel = create_channel(db, "lounge", creator=sysop)
+    grant_permissions(db, sysop, object_type="channel", object_id=channel.id,
+                      permissions=ChannelPermission.MODERATE, granted_by=sysop)
+    link_channel(db, channel, node_identity=here)
+    troll = bootstrap_node_identity("trollhaven")
+    node = LinkNode(identity=here)
+    node.handle_hello(_hello_bytes(LinkNode(identity=troll), clock=clock))
+    text = _chat(db, tmp_path, channel, sysop, [f"/mute troll@{troll.fingerprint} 1h " + "x" * 400],
+                 LinkContext(link_node=node))
+    assert "is muted everywhere this channel is carried" in text
+    assert len(restriction_in_force(db, channel.channel_id, troll.fingerprint, "troll").reason) == 280

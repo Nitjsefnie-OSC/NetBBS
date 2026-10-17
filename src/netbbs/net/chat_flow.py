@@ -3305,17 +3305,31 @@ async def _link_restriction(
     it to the running node. Whether it went out."""
     if ctx.link_context is None:
         return False
-    from netbbs.link.channel_moderation import sign_channel_restriction
+    from netbbs.link.channel_moderation import RestrictionRefused, sign_channel_restriction
+    from netbbs.link.events import EventError
 
     until = (
         (datetime.datetime.now(datetime.timezone.utc) + duration).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         if duration is not None else None
     )
-    raw = await ctx.lane.run(
-        sign_channel_restriction, ctx.channel, node_identity=ctx.link_context.node_identity, actor=ctx.user,
-        home_node_fingerprint=home_node_fingerprint, local_user_id=local_user_id, kind=kind, impose=impose,
-        until=until, reason=reason,
-    )
+    try:
+        raw = await ctx.lane.run(
+            sign_channel_restriction, ctx.channel, node_identity=ctx.link_context.node_identity, actor=ctx.user,
+            home_node_fingerprint=home_node_fingerprint, local_user_id=local_user_id, kind=kind, impose=impose,
+            until=until, reason=reason,
+        )
+    except RestrictionRefused as refused:
+        await ctx.session.write_line(colored(
+            f"The channel's origin has its own {kind} in force on them; yours did not change it."
+            if refused.outcome == "stale" else
+            "This channel holds as many mutes and bans as it can; lift some first.",
+            fg_color=MUTED_COLOR,
+        ))
+        return False
+    except EventError as exc:
+        await ctx.session.write_line(colored(f"(not sent to other BBSes: {sanitize_text(str(exc))})",
+                                             fg_color=MUTED_COLOR))
+        return False
     if raw is None:
         return False
     from netbbs.link.events import event_content_id
@@ -3362,13 +3376,28 @@ async def _moderate_remote_participant(
             "Unknown or ambiguous BBS; use its DNS name or fingerprint.", fg_color=MUTED_COLOR,
         ))
         return True
+    from netbbs.link.channel_moderation import restriction_reach, set_local_restriction
+    from netbbs.link.events import MAX_LINK_MODERATOR_FIELD_LENGTH
+
+    if not user or len(user) > MAX_LINK_MODERATOR_FIELD_LENGTH:
+        await ctx.session.write_line(colored(f"No such user: {sanitize_text(name)!r}", fg_color=MUTED_COLOR))
+        return True
+    reaches = await ctx.lane.run(
+        restriction_reach, ctx.channel, node_identity=ctx.link_context.node_identity, actor=ctx.user,
+    ) is not None
     everywhere = await _link_restriction(
         ctx, home_node_fingerprint=fingerprint, local_user_id=user, kind=kind, impose=impose,
         duration=duration, reason=reason,
     )
+    if reaches and not everywhere:
+        return True  # Outranked or refused; already said why.
+    if everywhere and not impose:
+        # Review of #1363: a lift for everyone also lifts this node's own.
+        await ctx.lane.run(
+            set_local_restriction, channel_id=ctx.channel.channel_id, home_node_fingerprint=fingerprint,
+            local_user_id=user, kind=kind, impose=False,
+        )
     if not everywhere:
-        from netbbs.link.channel_moderation import set_local_restriction
-
         until = (
             (datetime.datetime.now(datetime.timezone.utc) + duration).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             if duration is not None else None
@@ -5317,7 +5346,19 @@ def _check_mute(db: Database, channel: Channel, user: User) -> str | None:
         restriction = is_banned(db, channel, user)
     if restriction is None:
         return None
-    return "indefinitely" if restriction.expires_at is None else f"until {format_for_display(restriction.expires_at, db)}"
+    return _restriction_until(db, restriction)
+
+
+def _restriction_until(db: Database, restriction) -> str:
+    """"indefinitely" or "until <time>" for a mute or ban -- whose end, for one
+    imposed over Link, another node chose, so one this node cannot display
+    reads "for now" instead of shutting the caller out (review of #1363)."""
+    if restriction.expires_at is None:
+        return "indefinitely"
+    try:
+        return f"until {format_for_display(restriction.expires_at, db)}"
+    except ValueError:
+        return "for now"
 
 
 def _check_ban(db: Database, channel: Channel, user: User) -> str | None:
@@ -5340,7 +5381,7 @@ def _check_ban(db: Database, channel: Channel, user: User) -> str | None:
     restriction = is_banned(db, channel, user)
     if restriction is None:
         return None
-    return "indefinitely" if restriction.expires_at is None else f"until {format_for_display(restriction.expires_at, db)}"
+    return _restriction_until(db, restriction)
 
 
 @dataclass
