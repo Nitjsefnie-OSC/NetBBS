@@ -178,3 +178,25 @@ def test_a_linked_channels_topic_is_bounded(db, here):
     link_channel(db, channel, node_identity=here)
     text = _topic_command(db, channel, sysop, "x" * 301, LinkNode(identity=here))
     assert "at most 300 bytes" in text
+
+
+# -- review of #1364 -------------------------------------------------------------
+
+
+def test_the_origin_wins_a_tie_and_a_later_delegate_topic_still_counts(db, origin, here):
+    materialize_carried_channel(db, _genesis(origin))
+    at = "2026-10-02T00:00:00.000000Z"
+    delegate = _topic(here, "Delegate", at, moderator=_who(here.fingerprint, "mod"))
+    by_origin = _topic(origin, "Origin", at)
+    _store(db, delegate)
+    assert _store(db, by_origin) == "stored"
+    assert _store(db, delegate) == "stale"
+    assert get_channel_by_channel_id(db, CHANNEL_ID).topic == "Origin"
+    later = _topic(here, "Later delegate", "2026-10-03T00:00:00.000000Z", moderator=_who(here.fingerprint, "mod"))
+    assert _store(db, later) == "stored"
+    assert get_channel_by_channel_id(db, CHANNEL_ID).topic == "Later delegate"
+
+
+def test_a_topic_for_a_channel_not_carried_is_not_kept(db, origin):
+    assert _store(db, _topic(origin, "Early", "2026-10-02T00:00:00.000000Z")) == "not carried"
+    assert db.connection.execute("SELECT COUNT(*) FROM link_channel_topics").fetchone()[0] == 0

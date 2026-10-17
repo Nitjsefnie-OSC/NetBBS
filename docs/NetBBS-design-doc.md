@@ -15791,11 +15791,19 @@ linked resource as one shared object.
 `created_at` wins" rule here (the roster, restrictions, the topic) orders by
 an effective time: the signed `created_at`, or the arrival time when it is
 more than five minutes ahead of the receiver's clock, as for a received letter
-(§10). And for the same channel and target, or the same topic, an action the
-origin signs outranks a delegate's of equal or later effective time. Without
-the clamp, a delegate whose node signs a ban or a topic dated next year would
-win until then, and neither the origin's later lift nor any carrier could
-undo it (Decision 6).
+(§10). The newest wins; on a tie the origin's action wins over a delegate's;
+and a delegate's action never replaces a mute or ban the origin signed while
+that is still in force. Without the clamp, a delegate whose node signs a ban
+or a topic dated next year would win until then, and neither the origin's
+later lift nor any carrier could undo it (Decision 6).
+
+*As built (#1359):* the first wording had the origin outrank any delegate
+action of equal *or later* time. Taken literally, one origin topic would have
+shut out every later delegated topic, defeating Decision 4's `topic`
+permission, and one long-spent origin mute would have refused every later
+delegated mute of that caller. The clamp already answers the future-dated
+action this rule was for, so the origin's precedence is kept for ties and for
+its restrictions in force.
 
 **Decision 9 — compatibility, trust and bounds.**
 - **Capability:** `link_moderation`. The new events go only to peers that

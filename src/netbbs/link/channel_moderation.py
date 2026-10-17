@@ -79,12 +79,12 @@ def _replaces(current, *, is_origin: int, effective_at: str, content_id: str, no
     participant and kind (Decision 8): the newer by effective time, then by
     content id -- except that a delegate's never replaces the origin's own
     while that is in force (review of #1363: a lifted or expired one no
-    longer holds a delegate off)."""
+    longer holds a delegate off), and the origin's wins a tie."""
     if current is None:
         return True
     if current["is_origin"] and not is_origin and _active(current, now):
         return False
-    return (effective_at, content_id) > (current["effective_at"], current["content_id"])
+    return (effective_at, is_origin, content_id) > (current["effective_at"], current["is_origin"], current["content_id"])
 
 
 def _make_room(db: Database, channel_id: str, now: datetime.datetime) -> bool:
@@ -359,27 +359,41 @@ def _channel_origin(db: Database, channel_id: str) -> str | None:
 
 def store_received_topic(db: Database, *, envelope: dict, content_id: str, arrived_at: str | None = None) -> str:
     """Keep a received (or this node's own) `channel_topic` if it is newer by
-    effective time (Decision 8) than the one in force, and show it as the
-    channel's topic here. Returns `"stale"` or `"stored"`."""
+    effective time (Decision 8) than the one in force -- on a tie, the
+    origin's wins over a delegate's -- and show it as the channel's topic
+    here. Returns `"stored"`, `"stale"`, or `"not carried"`: like a message,
+    a topic for a channel only offered here is not kept, and is fetched
+    again once the channel is carried (review of #1364)."""
     payload = envelope["envelope"]["payload"]
     effective = effective_time(payload.get("created_at"), arrived_at or utc_now_iso())
+    is_origin = 0 if "moderator" in payload else 1
     db.connection.execute("BEGIN IMMEDIATE")
     try:
-        current = db.connection.execute(
-            "SELECT effective_at, content_id FROM link_channel_topics WHERE channel_id = ?", (payload["channel_id"],)
+        carried = db.connection.execute(
+            "SELECT 1 FROM channels WHERE channel_id = ? AND link_genesis_json IS NOT NULL AND link_hidden_at IS NULL",
+            (payload["channel_id"],),
         ).fetchone()
-        if current is not None and (current["effective_at"], current["content_id"]) >= (effective, content_id):
+        if carried is None:
+            db.connection.rollback()
+            return "not carried"
+        current = db.connection.execute(
+            "SELECT effective_at, is_origin, content_id FROM link_channel_topics WHERE channel_id = ?",
+            (payload["channel_id"],),
+        ).fetchone()
+        if current is not None and (current["effective_at"], current["is_origin"], current["content_id"]) >= (
+            effective, is_origin, content_id,
+        ):
             db.connection.rollback()
             return "stale"
         db.connection.execute(
             """
-            INSERT INTO link_channel_topics (channel_id, effective_at, content_id, envelope_json)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO link_channel_topics (channel_id, effective_at, is_origin, content_id, envelope_json)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(channel_id) DO UPDATE SET
-                effective_at = excluded.effective_at, content_id = excluded.content_id,
-                envelope_json = excluded.envelope_json
+                effective_at = excluded.effective_at, is_origin = excluded.is_origin,
+                content_id = excluded.content_id, envelope_json = excluded.envelope_json
             """,
-            (payload["channel_id"], effective, content_id, json.dumps(envelope)),
+            (payload["channel_id"], effective, is_origin, content_id, json.dumps(envelope)),
         )
         db.connection.execute(
             "UPDATE channels SET topic = ? WHERE channel_id = ? AND link_genesis_json IS NOT NULL",
