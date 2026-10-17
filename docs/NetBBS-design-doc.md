@@ -15875,8 +15875,9 @@ lost".
 
 **Decision 7 — bounds.** Lines of 4,000 bytes and identifiers of 128 bytes,
 as for live messages; one pending invitation per target session; at most 16
-pending invitations and 16 open chats per peer; five seconds between one remote
-caller's invitations to the same local caller.
+pending invitations and 16 open chats per peer; five seconds between one
+node's invitations to the same local caller (per node, since the inviter's
+name is that node's to choose).
 
 **Decision 8 — trust.** The real-time policy is checked on every received
 frame and before every send; the identity-change caution shows on both sides;
