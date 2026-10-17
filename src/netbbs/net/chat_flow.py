@@ -3409,6 +3409,12 @@ async def _moderate_remote_participant(
     done = {("mute", True): "muted", ("mute", False): "unmuted", ("ban", True): "banned",
             ("ban", False): "unbanned"}[(kind, impose)]
     where = "everywhere this channel is carried" if everywhere else "on this node only"
+    from netbbs.moderation.log import record_action
+
+    await ctx.lane.run(
+        record_action, actor=ctx.user, action=kind if impose else "un" + kind, object_type="channel",
+        object_id=ctx.channel.id, detail=f"{user}@{fingerprint}: {where}" + (f": {reason}" if reason else ""),
+    )
     await ctx.session.write_line(colored(f"{sanitize_text(name)} is {done} {where}.", fg_color=MUTED_COLOR))
     return True
 

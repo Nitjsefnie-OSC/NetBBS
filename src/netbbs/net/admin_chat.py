@@ -134,6 +134,7 @@ from netbbs.net.admin_resources import (
     _linked_node_label,
     _pick_new_origin,
     _warn_about_changed_node_identity,
+    _moderator_lines,
 )
 from netbbs.net.admin_boards import _category_field, _community_field
 
@@ -605,6 +606,16 @@ async def _channel_screen(
             await _link_channel_screen(session, lane, actor, channel, link_context)
             return False
 
+        async def _history(channel: Channel) -> bool:
+            from netbbs.net.admin_maintenance import _audit_log_screen
+
+            await _audit_log_screen(
+                session, lane, actor, object_type="channel", object_id=channel.id,
+                moderators=await lane.run(_moderator_lines, "channel", channel.id),
+                title=f"History of {sanitize_text(channel.name)}",
+            )
+            return False
+
         async def _transfer(channel: Channel) -> bool:
             await _transfer_channel_origin_screen(session, lane, channel, link_context)
             return False
@@ -670,6 +681,7 @@ async def _channel_screen(
             actions = [
                 DetailAction("d", menu_key("D", "elete"), _act(_delete), brief="Permanently remove this channel"),
                 DetailAction("r", menu_key("R", "estrictions"), _act(_restrictions), brief="Active mutes and bans"),
+                DetailAction("h", menu_key("H", "istory"), _act(_history), brief="Its moderators and what they did"),
             ]
             if link_context is not None and not linked and not open_room:
                 actions.append(DetailAction("l", menu_key("L", "ink this chat channel"), _act(_link), brief="Share it via NetBBS Link"))

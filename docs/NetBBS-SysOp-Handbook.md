@@ -1719,6 +1719,16 @@ hand that role to another node, for example before it shuts down.
 
 Only one offer can wait at a time, and an offer cannot be withdrawn.
 
+#### Trust and history
+
+- A mute, ban, topic, or post edit or removal from another node does not take
+  effect here when that node is quarantined or blocked here, or when the
+  moderator who made it is. Nor does a grant from an origin quarantined or
+  blocked here: your users lose what it let them do on its boards and channels.
+- A linked board's or chat channel's <kbd>H</kbd> **History** lists those
+  that took effect, with who made them, under its moderators. The moderators
+  include the users of other nodes that the origin's grants name.
+
 > [!NOTE]
 > Grants reach only nodes running a version that understands Link moderation.
 > An older node keeps showing what newer nodes hide.
