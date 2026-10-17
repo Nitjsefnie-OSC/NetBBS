@@ -191,7 +191,7 @@
         </div>
         <div class="t-item active">
           <div class="t-head"><h3>NetBBS Link connectivity</h3><span class="badge active">Implemented</span></div>
-          <p>Peer discovery, shared message boards, chat channels, file catalogues, mail, and relay support for nodes behind NAT or an HTTP proxy. Each SysOp chooses what their node carries: anything past a carry cap is offered for a decision rather than dropped, and content another node originates can be hidden, restored or purged. New in v7.27.0: a SysOp can share a whole Community, and another node can subscribe to it; callers on every node that carries a shared message board can vote in its polls; and when the SysOp approves a caller's new username, linked nodes follow the rename.</p>
+          <p>Peer discovery, shared message boards, chat channels, file catalogues, mail, and relay support for nodes behind NAT or an HTTP proxy. Each SysOp chooses what their node carries: anything past a carry cap is offered for a decision rather than dropped, and content another node originates can be hidden, restored or purged. New in v7.27.0: a SysOp can share a whole Community, and another node can subscribe to it; callers on every node that carries a shared message board can vote in its polls; and when the SysOp approves a caller's new username, linked nodes follow the rename. New in v7.30.0: a node can let people on other BBSes moderate the message boards and chat channels it shares &mdash; post edits and removals, mutes and bans, and topics reach every node that carries them &mdash; and a linked chat channel can be handed to another node, as a message board could.</p>
         </div>
         <div class="t-item pending">
           <div class="t-head"><h3>Trust &amp; reputation</h3><span class="badge pending">Validation continues</span></div>
@@ -199,7 +199,7 @@
         </div>
         <div class="t-item active">
           <div class="t-head"><h3>Live NetBBS Link chat</h3><span class="badge active">Available</span></div>
-          <p>Authenticated live chat, presence, recent scrollback on joining, and private messages across nodes, including live relay paths. Lines go both ways: a subscriber node&#8217;s callers reach the chat channel&#8217;s origin live, and the origin relays them to its other subscribers. Since v7.22.0 presence does too, so every node&#8217;s <code>/who</code> lists the callers on every other node in the chat channel. Cross-node invitation chats and simultaneous background chat-channel memberships remain outside the current scope.</p>
+          <p>Authenticated live chat, presence, recent scrollback on joining, and private messages across nodes, including live relay paths. Lines go both ways: a subscriber node&#8217;s callers reach the chat channel&#8217;s origin live, and the origin relays them to its other subscribers. Since v7.22.0 presence does too, so every node&#8217;s <code>/who</code> lists the callers on every other node in the chat channel. Since v7.30.0 a caller can also invite someone on another node to a direct chat with <code>/dm name@TheirBBS</code>. Simultaneous background chat-channel memberships remain outside the current scope.</p>
         </div>
         <div class="t-item active">
           <div class="t-head"><h3>Chat bots</h3><span class="badge active">Available</span></div>
@@ -244,8 +244,8 @@
         <div class="cat">
           <h3>Real-time</h3>
           <ul>
-            <li><b>Chat channels</b> — scrollback you page through with PgUp and PgDn while the chat holds still, private messages, <code>/nick</code>, <code>/away</code>, and <code>/who</code> and <code>/list</code> that count everyone in a chat channel, on linked nodes and on MRC; a terminal bell, set with <code>/bell</code>, for private messages or for mentions of your name.</li>
-            <li><b>Moderation</b> — mute/ban/kick and moderated-content approval queues.</li>
+            <li><b>Chat channels</b> — scrollback you page through with PgUp and PgDn while the chat holds still, private messages, direct chats with someone here or on a linked BBS, <code>/nick</code>, <code>/away</code>, and <code>/who</code> and <code>/list</code> that count everyone in a chat channel, on linked nodes and on MRC; a terminal bell, set with <code>/bell</code>, for private messages or for mentions of your name.</li>
+            <li><b>Moderation</b> — mute/ban/kick and moderated-content approval queues, and moderators on other nodes for the message boards and chat channels you share over NetBBS Link.</li>
             <li><b>Node-wide presence</b> — who's online, across every linked node.</li>
             <li><b>Inter-BBS chat</b> — chat channels bridged to rooms on the public MRC network, or any room opened on demand.</li>
             <li><b>Chat bots</b> — Baud is bundled: reminders, last-seen and node statistics, greetings and announcements. Other programs join through the open <a href="https://github.com/Thiesi/NetBBS/blob/main/docs/NetBBS-bot-api.md" target="_blank" rel="noopener">bot API</a>.</li>
