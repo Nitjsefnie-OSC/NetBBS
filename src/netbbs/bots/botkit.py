@@ -9,9 +9,11 @@ plumbing, so a bot is only its own handlers:
 - action ids, and matching each result to the callback waiting for it, with
   any number of results outstanding;
 - dispatch by event type: ``on_message``, ``on_channel``, ``on_presence``,
-  ``on_tick``, ``on_post``, ``on_file``; a type without a handler is ignored;
+  ``on_tick``, ``on_post``, ``on_file``, ``on_held``; a type without a handler
+  is ignored;
 - a state cache whose writes are saved in order (``save`` and ``change``);
-- ``reply`` with the caller's name in front, cut to the 500-character limit;
+- ``reply`` with the caller's name in front, cut to the 500-character limit,
+  and ``reply_block`` for a titled block, cut to the block's bounds;
 - flushing every line.
 
 A minimal bot::
@@ -38,6 +40,12 @@ from collections import deque
 
 API_VERSION = 1
 LINE_LIMIT = 500
+# A titled block's bounds (issue #1373): its title, its rows, a row's label
+# and text. The host refuses a block outside them; reply_block cuts to them.
+BLOCK_TITLE_LIMIT = 40
+BLOCK_ROWS_LIMIT = 12
+BLOCK_LABEL_LIMIT = 24
+BLOCK_TEXT_LIMIT = 200
 # Commands that wait in change() for earlier saves; one more is refused.
 MAX_CHANGES = 32
 
@@ -77,6 +85,25 @@ class Message(Event):
     def reply(self, text, then=None):
         return self.bot.act("reply", then, request=self["request"], text=f"{self.name}: {text}"[:LINE_LIMIT])
 
+    def reply_block(self, title, rows, then=None, private=None):
+        """Answer with a titled block, drawn like ``/who``: ``rows`` are
+        ``(label, text)`` pairs or plain texts, a label of ``""`` meaning
+        none. Cut to the block's bounds: a title of 40 characters, 12 rows,
+        a label of 24 and a text of 200. The host titles it with the bot's
+        name, so no caller name goes in front. Check ``bot.blocks`` first:
+        a host that does not take blocks refuses the action."""
+        shaped = []
+        for row in list(rows)[:BLOCK_ROWS_LIMIT]:
+            label, text = row if isinstance(row, (tuple, list)) else ("", row)
+            text = " ".join(str(text).split())[:BLOCK_TEXT_LIMIT] or "-"
+            label = " ".join(str(label or "").split())[:BLOCK_LABEL_LIMIT]
+            shaped.append({"label": label, "text": text} if label else {"text": text})
+        fields = {"request": self["request"], "block": {"title": " ".join(str(title).split())[:BLOCK_TITLE_LIMIT],
+                                                         "rows": shaped}}
+        if private is not None:
+            fields["private"] = bool(private)
+        return self.bot.act("reply", then, **fields)
+
     def query(self, query, target="", then=None):
         return self.bot.act("query", then, query=query, request=self["request"], target=target)
 
@@ -85,6 +112,18 @@ class Message(Event):
 
     def model_reset(self, then=None):
         return self.bot.act("model.reset", then, request=self["request"])
+
+    def tell(self, to, text, then=None):
+        """Hold a note from this caller for local account ``to``, said in this
+        channel on their next join. The host proves the sender."""
+        return self.bot.act("tell", then, request=self["request"], to=to, text=text)
+
+    def tells(self, then=None):
+        """This caller's own waiting tells in this channel."""
+        return self.bot.act("tell.list", then, request=self["request"])
+
+    def cancel_tell(self, tell_id, then=None):
+        return self.bot.act("tell.cancel", then, request=self["request"], tell_id=tell_id)
 
 
 class Bot:
@@ -106,6 +145,10 @@ class Bot:
         self.announce_posts = bool(hello.get("announce_posts", False))
         self.announce_files = bool(hello.get("announce_files", False))
         self.model_conversation = bool(hello.get("model_conversation", False))
+        # Whether the host takes a reply's titled block (issue #1373).
+        self.blocks = bool(hello.get("blocks", False))
+        # The IANA name of the node's display clock ("UTC" from an older host).
+        self.timezone = hello.get("timezone") or "UTC"
         self.state = hello.get("state")
         self.emit = emit or _print
         self._sequence = 0
@@ -130,6 +173,25 @@ class Bot:
 
     def announce(self, event, then=None):
         return self.act("announce", then, event=event["event"])
+
+    def say_for(self, channel, caller, text, held_text=None, expires=7 * 86400, private=False, then=None):
+        """Say ``text`` for one caller now if they are in ``channel``, or hold
+        ``held_text`` (default ``text``) for their next join there, for at most
+        ``expires`` seconds; ``private`` shows it to that local caller alone.
+        The outcome of a held line arrives as ``on_held``."""
+        fields = {"channel": channel, "caller": caller, "text": text[:LINE_LIMIT], "expires": expires}
+        if private:
+            fields["private"] = True
+        if held_text is not None:
+            fields["held_text"] = held_text[:LINE_LIMIT]
+        return self.act("say.for", then, **fields)
+
+    def held_lines(self, then):
+        """This bot's lines still held for absent callers (``held.list``)."""
+        return self.act("held.list", then)
+
+    def cancel_held(self, held_id, then=None):
+        return self.act("held.cancel", then, held_id=held_id)
 
     def load(self, then):
         """Read the saved state again (``state.get``)."""

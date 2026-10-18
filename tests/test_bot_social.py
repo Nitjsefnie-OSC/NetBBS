@@ -85,9 +85,13 @@ def test_roll_uses_system_randomness_and_coin_answers_heads_or_tails():
 
 def test_help_lists_only_the_enabled_abilities():
     off = Harness()("help")["text"]
-    assert "roll [NdS+M]; coin; " in off and "quote" not in off and "poll" not in off
+    assert "roll|coin; " in off and "quote" not in off and "poll" not in off
     on = Harness(quotes=True, polls=True)("help")["text"]
-    assert "roll [NdS+M]; coin; quote; poll; vote <n>; " in on
+    assert "roll|coin; quote; poll; " in on
+    # With every grant and switch and the longest opening, the line still fits.
+    longest = Harness(quotes=True, polls=True, queries=["stats", "seen"], model_conversation=True,
+                      phrases={"help": "x" * 168 + "{name}"})("help", name="n" * 32)["text"]
+    assert len(longest) <= 500 and longest.endswith("Replies are public.")
     assert Harness()("frobnicate")["text"].endswith("roll and coin. Conversation is not enabled.")
 
 
@@ -409,3 +413,20 @@ def test_linked_poll_remote_vote_by_address_and_pointer_from_the_callers_own_bau
                 await n.close()
 
     asyncio.run(run())
+
+
+def test_help_block_with_every_grant_and_switch_fits_twelve_rows():
+    from netbbs.bots.registry import check_block
+    sent = []
+    baud = Baud({"blocks": True, "queries": ["stats", "seen"], "model_conversation": True, "quotes": True,
+                 "polls": True, "phrases": {"help": "x" * 200}}, sent.append)
+    baud.handle(message("help"))
+    block = check_block(sent[-1]["block"])
+    labels = [label for label, _ in block.rows]
+    assert len(block.rows) == 12 and block.rows[-1][1].startswith("Conversation is enabled")
+    assert {"stats, seen <name>", "roll [NdS+M], coin", "quote [<n>|add|del]", "poll, vote <n>",
+            "/sysop <reason>"} <= set(labels)
+    off = Baud({"blocks": True}, sent.append)
+    off.handle(message("help"))
+    labels = [label for label, _ in check_block(sent[-1]["block"]).rows]
+    assert "roll [NdS+M], coin" in labels and not any(l.startswith(("quote", "poll")) for l in labels)

@@ -118,7 +118,7 @@ def test_baud_reminders_sent_during_a_save_both_survive():
     baud.handle(message("remind 1h second"))
     assert sent[-1] is first
     baud.handle({"type": "result", "id": first["id"], "ok": True})
-    assert sent[-2]["text"] == "alice: Saved reminder #1; it will appear publicly here."
+    assert sent[-2]["text"].startswith("alice: Saved reminder #1 for ")
     assert sent[-1]["action"] == "state.set"
     baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
     assert [r["text"] for r in baud.state["reminders"]] == ["first", "second"]
@@ -307,7 +307,7 @@ def test_baud_reminder_saved_during_a_delivery_is_not_lost():
                                                     "due": 0, "text": "due now"}]}}, sent.append)
     baud.handle({"type": "tick", "time": 1})
     say = sent[-1]
-    assert say["action"] == "say"
+    assert say["action"] == "say.for"
     baud.handle(message("remind 1h keep me"))
     remind_save = sent[-1]
     assert remind_save["action"] == "state.set"

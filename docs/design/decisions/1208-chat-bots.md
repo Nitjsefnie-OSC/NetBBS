@@ -167,7 +167,8 @@ program arguments, provider details and numeric budgets remain editable text.
   allowed into the destination channel, and from doors whose play level is
   0 (§16, issue #1378). NetBBS refuses a source-to-channel mapping if it
   cannot establish this; even a restricted post's title must not leak
-  through an announcement.
+  through an announcement. A door's own outbound posts and chat lines are
+  held to the same door rule (§15 Phase 7, issue #1401).
 - **Addressing.** Explicit names work for commands and conversation alike:
   `Baud.bot: help` or `Baud.bot: <message>`. Each channel may have one default
   bot, selected locally by each node. Short commands such as `!help` and

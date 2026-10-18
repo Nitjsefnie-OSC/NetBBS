@@ -992,8 +992,12 @@ default, prefix the commands with `Baud.bot:` instead of `!`.
 | --- | --- | --- |
 | Help | `!help` | `Baud.bot: help` |
 | Set a reminder | `!remind 10m check the oven` | `Baud.bot: remind 10m check the oven` |
+| Set a reminder for a time | `!remind fri 20:00 net meeting` | `Baud.bot: remind fri 20:00 net meeting` |
 | List reminders | `!reminders` | `Baud.bot: reminders` |
 | Cancel a reminder | `!cancel 1` | `Baud.bot: cancel 1` |
+| Leave someone a note | `!tell Nib check the Retro board` | `Baud.bot: tell Nib check the Retro board` |
+| List your notes | `!tells` | `Baud.bot: tells` |
+| Cancel a note | `!cancel tell 4` | `Baud.bot: cancel tell 4` |
 | Roll dice | `!roll 2d6+1` | `Baud.bot: roll 2d6+1` |
 | Flip a coin | `!coin` | `Baud.bot: coin` |
 
@@ -1001,7 +1005,40 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 [Getting help from the SysOp](#getting-help-from-the-sysop).
 
 - Reminders and replies are public in that channel.
+- A longer answer, such as `help`, comes as a titled block, its rows lined
+  up the way `/who` lines up its own:
+
+  ```
+  ── [BOT] Baud.bot · Commands ──────────────── 20:14 ──
+   Happy to help!
+   help                  this list; help remind or help tell for more
+   remind <when> <text>  a reminder here, shown publicly
+  ```
+
+  `[BOT] Baud.bot` is put there by your BBS, so a block always says which bot
+  it is from. One taller than your screen is shown a page at a time:
+  <kbd>PgDn</kbd> (or <kbd>Enter</kbd> on an empty line) for the next,
+  <kbd>Esc</kbd> to skip the rest.
 - Reminders survive restarts, though mutes or limits can delay them.
+- A reminder takes a duration (`10m`, `2h`, up to `30d`) or a time on this
+  board's clock: `20:00`, `tomorrow 09:00`, `mon` to `sun` with a time, or a
+  date as `2026-11-01 20:00`. Times are 24-hour. A time already past today
+  means tomorrow. Baud's answer names the moment, for example
+  `Saved reminder #3 for Fri 20:00 CET.`
+- If you are not in the channel when a reminder falls due, Baud keeps it for
+  a week and says it when you next join that channel, marked
+  `held until you came back`. `!reminders` shows it as `waiting since 18:00`
+  until then; after a week it is dropped without a word.
+- `!tell` leaves a note of up to 160 characters for an account on this board.
+  Baud says it publicly in the same channel the next time they join it, within
+  14 days, as `Nib: Quill asked me to tell you (3h ago): ...`. If they are in
+  the channel already, Baud says so and keeps nothing. You can have three
+  notes waiting, and one person five.
+
+> [!NOTE]
+> Turning off **Direct messages** in Profile, or blocking someone, also stops
+> their notes through Baud: a new one is refused, and one already waiting is
+> quietly dropped instead of being said.
 - Ordinary conversation is not sent to an addressed-only bot.
 - Depending on what your SysOp allows, Baud may also answer `stats` and
   `seen <account>`, greet people who join, or announce new posts and files;
@@ -1046,6 +1083,15 @@ polls in the channel:
 > naming the service, the replies are public, and `reset` clears your
 > conversation.
 
+As a help desk, which is how most nodes set it up, Baud answers questions
+about using the BBS, such as `Baud.bot: how do I upload a file?`. It answers
+from parts of this handbook and from facts about the node, and names the
+section it used: `(Handbook: Exchange files. May be wrong; ? for help)`.
+Asked privately, with `/msg Baud.bot` or in `/private Baud.bot`, it can also
+name the boards and file areas you can see; in the channel it names only the
+ones everyone can read. A model can be wrong, so check what it says against
+**Help** (<kbd>?</kbd>) on the main menu or ask the SysOp.
+
 #### Ask a bot privately
 
 A question typed into the channel is seen by everyone there. To ask a bot
@@ -1060,6 +1106,7 @@ where only you see the question and its answer:
 - What you asked shows as `(privately to Baud.bot: ...)`, and the answer as a
   bot line marked **(to you)**:
   `[20:14] [BOT] <Baud.bot> (to you) Saved reminder #4.`
+  A private titled block says **to you** at the right of its title.
 - Nobody else sees either, and neither is kept in the channel's history or
   search. Like `/msg`, the answer stays among your own lines, so
   <kbd>PgUp</kbd> shows it, and it never rings your bell.

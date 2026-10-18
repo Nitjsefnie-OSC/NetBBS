@@ -4821,6 +4821,55 @@ MIGRATIONS = [
     ),
     Migration(
         description=(
+            "Issues #1375/#1376 (design doc §6.3, Chat bots): `bot_held_lines`, the host-held "
+            "lines a bot asked to say for one caller (`kind` 'line', a reminder) or a caller's tell "
+            "to a local account (`kind` 'tell', bound to the request token). A row names its "
+            "caller by local account (`caller_user_id`) or Link identity (`caller_link`, "
+            "'link:<fingerprint>:<user>'), never both, and is published in its channel on that "
+            "caller's next join, then deleted; expired rows are pruned. A tell keeps its sender "
+            "the same way, so blocks are checked again at delivery. `private` (issue #1372) shows "
+            "a line to its local caller alone, as a `(to you)` answer. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE bot_held_lines (
+            id              INTEGER PRIMARY KEY,
+            bot_id          INTEGER NOT NULL REFERENCES chat_bots(id) ON DELETE CASCADE,
+            channel_id      INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            kind            TEXT NOT NULL CHECK (kind IN ('line', 'tell')),
+            caller_user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            caller_link     TEXT,
+            sender_user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            sender_link     TEXT,
+            sender_label    TEXT,
+            text            TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            expires_at      TEXT NOT NULL,
+            private         INTEGER NOT NULL DEFAULT 0 CHECK (private IN (0, 1)),
+            CHECK ((caller_user_id IS NULL) <> (caller_link IS NULL)),
+            CHECK (private = 0 OR (kind = 'line' AND caller_user_id IS NOT NULL)),
+            CHECK (kind = 'line' OR (caller_user_id IS NOT NULL
+                                     AND (sender_user_id IS NULL) <> (sender_link IS NULL)))
+        );
+        CREATE INDEX idx_bot_held_local ON bot_held_lines(channel_id, caller_user_id);
+        CREATE INDEX idx_bot_held_link ON bot_held_lines(channel_id, caller_link);
+        CREATE INDEX idx_bot_held_bot ON bot_held_lines(bot_id, kind);
+        CREATE INDEX idx_bot_held_expiry ON bot_held_lines(expires_at);
+        """,
+    ),
+    Migration(
+        description=(
+            "Issue #1373 (design doc §16, titled block replies for bots): `channel_messages.block_json`, "
+            "a bot's titled block as JSON (its title and up to 12 rows of an optional label and a "
+            "text). A block is one row: `body` holds the host-built fallback line, which search, older "
+            "nodes and the hourly limit use, and this column the block a newer renderer draws. NULL "
+            "for every other line, and for every existing row on upgrade."
+        ),
+        sql="""
+        ALTER TABLE channel_messages ADD COLUMN block_json TEXT;
+        """,
+    ),
+    Migration(
+        description=(
             "Issue #1379 (design doc §16, Baud social commands, Decision 4): `chat_bots.quotes` and "
             "`chat_bots.polls`, the per-instance switches for Baud's per-channel quotes and quick "
             "polls. Off by default and on upgrade; dice and the coin have no switch. The quotes and "
