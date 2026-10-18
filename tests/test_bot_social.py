@@ -88,11 +88,24 @@ def test_help_lists_only_the_enabled_abilities():
     assert "roll|coin; " in off and "quote" not in off and "poll" not in off
     on = Harness(quotes=True, polls=True)("help")["text"]
     assert "roll|coin; quote; poll; " in on
-    # With every grant and switch and the longest opening, the line still fits.
-    longest = Harness(quotes=True, polls=True, queries=["stats", "seen"], model_conversation=True,
-                      phrases={"help": "x" * 168 + "{name}"})("help", name="n" * 32)["text"]
-    assert len(longest) <= 500 and longest.endswith("Replies are public.")
     assert Harness()("frobnicate")["text"].endswith("roll and coin. Conversation is not enabled.")
+
+
+@pytest.mark.parametrize("private", [True, False])
+def test_help_line_fits_whole_with_every_grant_switch_and_the_longest_names(private):
+    # The one-line help for an older host, with the longest opening, the
+    # longest bot name, a 32-character Link caller, model conversation, both
+    # queries and both switches: whole, never cut, with room for one more
+    # short command (a `top <door>; ` is 12).
+    from netbbs.bots import botkit
+    sent = []
+    baud = Baud({"name": "B" * 24 + ".bot", "queries": ["stats", "seen"], "model_conversation": True,
+                 "quotes": True, "polls": True, "phrases": {"help": "x" * 168 + "{name}"}}, sent.append)
+    baud.handle(message("help", caller_id="link:" + "a" * 64 + ":nib", name="n" * 26 + "@Node1", private=private))
+    text = sent[-1]["text"]
+    assert len(text) <= botkit.LINE_LIMIT - 12
+    assert "roll|coin; quote; poll; " in text and "Conversation is on; reset clears your context." in text
+    assert text.endswith(f"Ask privately: /msg {'B' * 24}.bot@Node <text>." if private else "Replies are public.")
 
 
 def test_switched_off_commands_are_unknown():

@@ -13,7 +13,8 @@ plumbing, so a bot is only its own handlers:
   is ignored;
 - a state cache whose writes are saved in order (``save`` and ``change``);
 - ``reply`` with the caller's name in front, cut to the 500-character limit,
-  and ``reply_block`` for a titled block, cut to the block's bounds;
+  or ``reply(text, private=True)`` to answer the caller alone, and
+  ``reply_block`` for a titled block, cut to the block's bounds;
 - flushing every line.
 
 A minimal bot::
@@ -82,8 +83,24 @@ class Message(Event):
     def name(self):
         return (self.get("caller") or {}).get("name", "")
 
-    def reply(self, text, then=None):
-        return self.bot.act("reply", then, request=self["request"], text=f"{self.name}: {text}"[:LINE_LIMIT])
+    @property
+    def private(self):
+        """True when a private answer can reach this caller."""
+        return self.get("private") is True
+
+    @property
+    def asked_privately(self):
+        """True when the caller asked privately (``/msg`` or ``/private``);
+        such a request takes only a private answer."""
+        return self.get("asked_privately") is True
+
+    def reply(self, text, then=None, private=None):
+        """Answer this caller. ``private=True`` answers them alone; left as
+        None, the answer is private exactly when the request was asked
+        privately. A public answer puts the caller's name in front."""
+        if not (self.asked_privately if private is None else private):
+            text = f"{self.name}: {text}"
+        return self.bot.act("reply", then, request=self["request"], text=text[:LINE_LIMIT], **_privacy(private))
 
     def reply_block(self, title, rows, then=None, private=None):
         """Answer with a titled block, drawn like ``/who``: ``rows`` are
@@ -100,18 +117,16 @@ class Message(Event):
             shaped.append({"label": label, "text": text} if label else {"text": text})
         fields = {"request": self["request"], "block": {"title": " ".join(str(title).split())[:BLOCK_TITLE_LIMIT],
                                                          "rows": shaped}}
-        if private is not None:
-            fields["private"] = bool(private)
-        return self.bot.act("reply", then, **fields)
+        return self.bot.act("reply", then, **fields, **_privacy(private))
 
     def query(self, query, target="", then=None):
         return self.bot.act("query", then, query=query, request=self["request"], target=target)
 
-    def model(self, then=None):
-        return self.bot.act("model", then, request=self["request"])
+    def model(self, then=None, private=None):
+        return self.bot.act("model", then, request=self["request"], **_privacy(private))
 
-    def model_reset(self, then=None):
-        return self.bot.act("model.reset", then, request=self["request"])
+    def model_reset(self, then=None, private=None):
+        return self.bot.act("model.reset", then, request=self["request"], **_privacy(private))
 
     def tell(self, to, text, then=None):
         """Hold a note from this caller for local account ``to``, said in this
@@ -124,6 +139,11 @@ class Message(Event):
 
     def cancel_tell(self, tell_id, then=None):
         return self.bot.act("tell.cancel", then, request=self["request"], tell_id=tell_id)
+
+
+def _privacy(private):
+    # Left out, the host answers the way the request was asked.
+    return {} if private is None else {"private": bool(private)}
 
 
 class Bot:

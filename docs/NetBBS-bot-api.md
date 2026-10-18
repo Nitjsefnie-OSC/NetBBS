@@ -493,7 +493,22 @@ sees a `!` line it has already gone to the channel, so Baud cannot page anyone
 and says so. `help` mentions `/sysop` too. No bot can page the SysOp: a page
 comes only from a caller's own `/sysop` (decision 1377).
 With the corresponding grants, Baud also offers `stats` and
-`seen <local-account>` and lists them in `help`. Both replies are public.
+`seen <local-account>` and lists them in `help`.
+
+Baud answers each request the way it was asked: a `!` line or `Baud.bot:`
+line publicly, with the caller's name in front, and `/msg Baud.bot <text>` or
+a `/private Baud.bot` line privately. Some answers are private whenever the
+`message` event's `private` says a private answer can reach the caller, even
+when the request was asked in the channel: `help`, `help remind` and
+`help tell`, with `help` ending "Ask privately: /msg Baud.bot <text>."
+(`Baud.bot@Node` for a Link caller), and `reminders`, which then lists all
+of the caller's reminders across channels as `#1 lobby: check the oven`.
+`cancel <id>` then reaches a reminder in any of the caller's channels, so
+every id that listing shows can be cancelled where it was read. Only a caller
+whose node cannot take a private answer gets these publicly; that `help`
+ends "Replies are public.", and that `reminders` and `cancel` keep to the
+current channel.
+
 With **Grant model conversation**, other addressed text requests the host's
 model service; `reset` clears this caller's temporary context here. Ordinary
 commands stay local and remain responsive during a provider request.
@@ -504,9 +519,10 @@ Post/file announcements likewise need only their explicit source grants and
 destination, with the corresponding Baud ability enabled. They require no
 channel reading or presence access.
 Reminder text is capped at 160 characters. Baud holds up to eight reminders
-per caller and 48 per instance, also subject to the state byte limit. Listing
-and cancelling work only for the caller's reminders in the current channel,
-so a public query cannot expose a reminder from a private channel.
+per caller and 48 per instance, also subject to the state byte limit. A
+public listing works only for the caller's reminders in the current channel,
+so a public answer cannot expose a reminder from a private channel. A reminder is said publicly in its channel when due, however it was
+set.
 
 `<when>` is a duration (`10m`, `2h`, `1s` to `30d`) or a time in the node's
 display clock, from the hello's `timezone`: `HH:MM` (today, or tomorrow once
@@ -528,8 +544,8 @@ count toward the eight and the 48. After a restart Baud asks `held.list` which
 of its held reminders are still waiting.
 
 `tell` sends the host's token-bound `tell` action, so tells live in the node,
-not in Baud's state. Baud confirms publicly where the note will be said, or
-answers `Nib is here now.`; a refusal is shown to the caller alone. `tells`
+not in Baud's state. Baud confirms where the note will be said, publicly
+unless the caller asked privately, or answers `Nib is here now.`; a refusal is shown to the caller alone. `tells`
 lists the caller's own waiting tells in this channel, and `cancel tell <id>`
 withdraws one.
 
@@ -661,6 +677,23 @@ What it does for you:
   or the reason the action was refused.
 - **Replies.** `msg.reply(text)` puts the caller's name in front and cuts the
   line to 500 characters, as Baud does. `say` is cut the same way.
+- **Private answers.** `msg.reply(text, private=True)` answers the caller
+  alone (see [Private answers](#private-answers)), without their name in
+  front. `msg.private` is true when a private answer can reach this caller,
+  and `msg.asked_privately` when they asked with `/msg` or `/private`; both
+  read false from a host that does not send them. Left out, `private`
+  follows how the request was asked, so a privately asked request is
+  answered privately and a public one publicly. `msg.model(private=True)`
+  and `msg.model_reset(private=True)` take the same flag.
+
+  ```python
+  def on_message(self, msg):
+      if msg.text == "mine":
+          msg.reply("only you see this", private=msg.private)
+  ```
+
+  With `private=msg.private`, a caller whose node cannot take a private
+  answer gets a public one instead of a refusal.
 - **Blocks.** `msg.reply_block(title, rows)` answers with a titled block; a
   row is a `(label, text)` pair, or a plain text for a row without a label.
   It cuts the title, the rows, each label and each text to the block's bounds,

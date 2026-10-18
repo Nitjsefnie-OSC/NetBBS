@@ -1004,20 +1004,25 @@ default, prefix the commands with `Baud.bot:` instead of `!`.
 To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 [Getting help from the SysOp](#getting-help-from-the-sysop).
 
-- Reminders and replies are public in that channel.
+- Baud answers `help` and `reminders` privately, where only you see the
+  answer; `reminders` then lists your reminders in every channel, and
+  `cancel` works on any of them from where you are. Its other
+  replies to a line typed in the channel are public there. To keep a question
+  and its answer to yourself, [ask privately](#ask-a-bot-privately).
+- A reminder is said publicly in its channel when it is due.
 - A longer answer, such as `help`, comes as a titled block, its rows lined
   up the way `/who` lines up its own:
 
   ```
-  ── [BOT] Baud.bot · Commands ──────────────── 20:14 ──
+  ── [BOT] Baud.bot · Commands ───────── to you · 20:14 ──
    Happy to help!
    help                  this list; help remind or help tell for more
    remind <when> <text>  a reminder here, shown publicly
   ```
 
   `[BOT] Baud.bot` is put there by your BBS, so a block always says which bot
-  it is from. One taller than your screen is shown a page at a time:
-  <kbd>PgDn</kbd> (or <kbd>Enter</kbd> on an empty line) for the next,
+  it is from; `to you` marks one only you see. One taller than your screen
+  is shown a page at a time: <kbd>PgDn</kbd> (or <kbd>Enter</kbd> on an empty line) for the next,
   <kbd>Esc</kbd> to skip the rest.
 - Reminders survive restarts, though mutes or limits can delay them.
 - A reminder takes a duration (`10m`, `2h`, up to `30d`) or a time on this
@@ -1044,6 +1049,22 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
   `seen <account>`, greet people who join, or announce new posts and files;
   its `help` lists what it offers here.
 - In a Linked channel, `Baud.bot@Node: help` asks a bot on another node.
+
+> [!NOTE]
+> If your SysOp has enabled model conversation, other text addressed to Baud
+> goes to a language model: your first such message only shows a notice
+> naming the service, the replies are public unless you
+> [asked privately](#ask-a-bot-privately), and `reset` clears your
+> conversation.
+
+As a help desk, which is how most nodes set it up, Baud answers questions
+about using the BBS, such as `Baud.bot: how do I upload a file?`. It answers
+from parts of this handbook and from facts about the node, and names the
+section it used: `(Handbook: Exchange files. May be wrong; ? for help)`.
+Asked privately, with `/msg Baud.bot` or in `/private Baud.bot`, it can also
+name the boards and file areas you can see; in the channel it names only the
+ones everyone can read. A model can be wrong, so check what it says against
+**Help** (<kbd>?</kbd>) on the main menu or ask the SysOp.
 
 #### Dice, quotes and quick polls
 
@@ -1076,21 +1097,6 @@ polls in the channel:
   `Baud.bot@Roanoke: vote 2`. A plain `!vote` asks your own BBS's Baud, which
   tells you so.
 - Guests can vote, but cannot add quotes or open polls.
-
-> [!NOTE]
-> If your SysOp has enabled model conversation, other text addressed to Baud
-> goes to a language model: your first such message only shows a notice
-> naming the service, the replies are public, and `reset` clears your
-> conversation.
-
-As a help desk, which is how most nodes set it up, Baud answers questions
-about using the BBS, such as `Baud.bot: how do I upload a file?`. It answers
-from parts of this handbook and from facts about the node, and names the
-section it used: `(Handbook: Exchange files. May be wrong; ? for help)`.
-Asked privately, with `/msg Baud.bot` or in `/private Baud.bot`, it can also
-name the boards and file areas you can see; in the channel it names only the
-ones everyone can read. A model can be wrong, so check what it says against
-**Help** (<kbd>?</kbd>) on the main menu or ask the SysOp.
 
 #### Ask a bot privately
 

@@ -149,7 +149,7 @@ def test_baud_help_is_a_block_on_a_host_that_takes_them():
     assert block.title == "Commands" and block.rows[0] == ("", "Hallo alice.")
     assert ("stats", "who is on, uptime") in block.rows
     assert {"help", "tell <name> <text>", "tells, cancel tell <id>", "roll [NdS+M], coin"} <= {label for label, _ in block.rows}
-    assert block.rows[-1] == ("", "No language model is enabled.")
+    assert block.rows[-1] == ("", "No language model is enabled. Replies are public.")
     # An older host gets the one line it always did.
     baud = Baud({}, sent.append)
     baud.handle({"type": "message", "request": "r", "caller": {"id": 7, "name": "alice"}, "channel": "c",
@@ -453,3 +453,14 @@ def test_baud_help_block_stays_in_bounds_with_every_grant_and_the_longest_openin
         {"type": "message", "request": "r", "caller": {"id": 7, "name": "n" * 32}, "channel": "c", "text": "help"})
     block = check_block(sent[-1]["block"])
     assert len(block.rows) == 12 and len(block.fallback()) <= MAX_FALLBACK
+    assert block.rows[-1][1].endswith("Replies are public.") and "private" not in sent[-1]
+    # Issue #1372: answered privately, its last row says how to ask
+    # privately; with the longest bot name and a Link caller it still fits.
+    Baud({"blocks": True, "name": "B" * 24 + ".bot", "queries": ["stats", "seen"], "model_conversation": model, "quotes": True, "polls": True,
+          "phrases": {"help": longest}}, sent.append).handle(
+        {"type": "message", "request": "r", "caller": {"id": "link:abc:bob", "name": "n" * 32}, "channel": "c",
+         "text": "help", "private": True})
+    block = check_block(sent[-1]["block"])
+    assert sent[-1]["private"] is True and len(block.rows) == 12 and len(block.fallback()) <= MAX_FALLBACK
+    assert block.rows[-1][1].endswith(f"Ask privately: /msg {'B' * 24}.bot@Node <text>.")
+    assert ("reminders, cancel <id>", "your reminders in every channel; cancel one") in block.rows
