@@ -36,7 +36,7 @@ def test_corpus_is_plain_text_split_at_headings():
     sections = helpdesk.load_corpus()
     assert len(sections) > 40
     for section in sections:
-        for markup in ("<kbd>", "</kbd>", "**", "`", "> [!", "| ---", "<details>", "](#"):
+        for markup in ("<kbd>", "</kbd>", "**", "`", "> [!", "| ---", "<details>", "](#", "&lt;", "&gt;", "&amp;"):
             assert markup not in section["text"], (section["title"], markup)
         assert section["title"] and section["chapter"] and section["text"]
     exchange_files = next(s for s in sections if s["title"] == "Exchange files")

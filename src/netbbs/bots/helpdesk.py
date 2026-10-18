@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections import Counter
 from functools import lru_cache
 from importlib import resources
+import html
 import json
 import math
 import re
@@ -60,7 +61,8 @@ def _inline(text: str) -> str:
     text = _KBD.sub(lambda m: "[" + m.group(1) + "]", text)
     text = _HTML_BLOCK.sub("", text)
     text = _LINK.sub(r"\1", text)
-    return text.replace("**", "").replace("`", "")
+    # Last, so an escaped key such as <kbd>&lt;</kbd> reads as [<].
+    return html.unescape(text.replace("**", "").replace("`", ""))
 
 
 def _plain_lines(lines: list[str]) -> str:
