@@ -514,3 +514,37 @@ def test_baud_answers_reminders_privately_through_the_real_runtime(db, lane, hub
             hub.leave(channel.name, other)
 
     asyncio.run(run())
+
+
+def test_baud_answers_every_privately_asked_command_privately(db, lane, hub, sysop, alice, channel):
+    # /msg Baud.bot <command>: each command gets its answer, to the caller
+    # alone, and nothing reaches the channel.
+    from netbbs.chat.bots import BotNotice
+    bot = install(db, sysop, channel)
+    commands = ["help", "remind 1h water the plants", "reminders", "cancel 1", "cancel 99", "sysop help",
+                "stats", "xyzzy"]
+
+    async def run():
+        pid, other = ParticipantId(alice.username, 1), ParticipantId(sysop.username, 2)
+        queue, other_queue = hub.join(channel.name, pid), hub.join(channel.name, other)
+        runtime = BotRuntime(lane, hub, poll_seconds=.03)
+        runtime.start()
+        answers = []
+        try:
+            await eventually(lambda: bot.id in runtime.running_ids)
+            for text in commands:
+                assert await runtime.ask_privately(channel, alice, "Baud.bot", text, pid) is None
+                answer = await asyncio.wait_for(queue.get(), 30)
+                assert isinstance(answer, (BotPrivateAnswer, BotNotice)), (text, answer)
+                answers.append(answer.text if isinstance(answer, BotPrivateAnswer) else str(answer))
+            assert not [m for m in get_scrollback(db, channel) if m.author_kind == "bot"]
+            assert other_queue.empty()
+        finally:
+            await runtime.close()
+            hub.leave(channel.name, pid)
+            hub.leave(channel.name, other)
+        return answers
+
+    answers = asyncio.run(run())
+    assert answers[1].startswith("Saved reminder #1") and answers[2].startswith("#1 ")
+    assert answers[3] == "Cancelled reminder #1." and not any(a.startswith("alice:") for a in answers)
