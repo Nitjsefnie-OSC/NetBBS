@@ -2603,6 +2603,13 @@ Reminders survive process and node restarts in `<db>.bots/<original-name>/`.
   reminder refused eight times is dropped so it cannot hold up the others.
 - A crash just after delivery may repeat a reminder; delivery is not an
   exactly-once guarantee.
+- Absolute times (`remind fri 20:00`) are read on the node's display clock.
+  Changing the display timezone restarts running bots; saved reminders keep
+  their moment.
+- A reminder whose owner is away when it falls due, and a caller's `!tell`
+  note, wait in the node database (not in the bot's state) until that caller
+  next joins the channel: a week for reminders, 14 days for notes. Both are
+  in node backups with the database.
 
 ### Model conversation
 
@@ -2613,10 +2620,44 @@ Model conversation is optional and stays off until you set it up:
 2. Install `netbbs[bots]` or `netbbs[web]` for its HTTP client.
 3. Grant it to an instance.
 
+**Mode** chooses what the model is for:
+
+| Mode | What it does |
+| --- | --- |
+| **Help desk** (default) | Answers "how do I..." questions from excerpts of the User Handbook and this node's facts |
+| **Companion** | Open chat with your system prompt and nothing else |
+
+Each mode has its own default **System prompt**. If you have not edited it,
+changing the mode switches it to the other mode's default; a prompt you
+wrote is kept. Changing the mode shows callers the notice again.
+
+In help desk, NetBBS adds to each request:
+
+- the two or three handbook sections that best match the question, under a
+  fixed size of about 4 KB. A copy of the User Handbook ships with NetBBS, so
+  nothing is fetched;
+- node facts: the node name and tagline, its SysOps, whether it has MRC,
+  browser links, doors and FTN networks, and the boards and file areas. A
+  public answer names only boards and areas everyone can read, with no age or
+  name requirement; a private one names those the asking caller can see.
+  Hidden Communities stay out. Link callers always get the public list;
+- the `stats` answer, if you granted that query to the bot.
+
+The answer ends with the section it came from and a hint, such as
+`(Handbook: Exchange files. May be wrong; ? for help)`, within the reply
+length. The model is told to name only menus and keys found in the excerpts
+and otherwise to point callers to **Help** (<kbd>?</kbd>). No tools are offered
+to the model.
+
+> [!NOTE]
+> The token budgets count this grounding: a help-desk request reserves up to
+> about 5,900 tokens more than a companion one before the provider reports
+> what it really used. Allow for it in **Node daily token budget**.
+
 What callers and you see:
 
-- A caller's first request only shows a notice naming the provider; replies
-  are public.
+- A caller's first request only shows a notice naming the provider and what
+  is sent; replies are public unless asked privately.
 - Token and optional money budgets, per-caller quotas and channel rates bound
   it.
 - <kbd>U</kbd> **Usage** shows today's and this month's requests, tokens and

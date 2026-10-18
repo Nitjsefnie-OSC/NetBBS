@@ -838,6 +838,9 @@ class LiveChannelBridge:
             await self.bot_link.runtime.observe(channel, message, caller={
                 "id": f"link:{node}:{user_id}", "name": message.author_label,
             })
+            if kind == "join":
+                # Lines a local bot holds for this Link caller (issue #1375).
+                self.bot_link.runtime.joined(channel, f"link:{node}:{user_id}")
         if relay_from is not None:
             await self._relay_presence(channel, node, user_id, kind)
 

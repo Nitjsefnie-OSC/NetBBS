@@ -3,9 +3,10 @@ from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 
 from netbbs.bots.model import (
-    FIELD_LABELS, LIMIT_LABELS, MONEY_KEYS, ModelSettings, SECRET_KEY, settings, save_settings, validate_settings,
-    usage_summary, disclosure,
+    DEFAULT_PERSONAS, FIELD_LABELS, LIMIT_LABELS, MODE_LABELS, MODES, MONEY_KEYS, ModelSettings, SECRET_KEY,
+    settings, save_settings, validate_settings, usage_summary, disclosure,
 )
+from netbbs.bots.helpdesk import GROUNDING_BYTES
 from netbbs.bots.registry import BotError, require_sysop
 from netbbs.config import get_config
 from netbbs.net.confirm import prompt_yes_no
@@ -53,7 +54,8 @@ async def model_editor(session, lane, actor, chrome):
                     raise BotError(f"{FIELD_LABELS[key]} must be {kind}.") from None
         value = validate_settings(ModelSettings(**converted))
         if value.enabled and (not original.enabled or any(getattr(value, k) != getattr(original, k)
-                                                          for k in ("endpoint", "model", "context_lines", "log_prompts"))):
+                                                          for k in ("endpoint", "model", "mode", "context_lines",
+                                                                    "log_prompts"))):
             if not await prompt_yes_no(session, disclosure(value) + " Enable these provider settings?", default=False):
                 raise BotError("Provider approval was not granted. Your draft has been kept.")
         return await lane.run(save_settings, value, actor=actor, api_key=values["api_key"])
@@ -71,8 +73,31 @@ async def model_editor(session, lane, actor, chrome):
         return FieldSpec(key, FIELD_LABELS[key], lambda d: "yes" if d[key] else "no", bool_field(key),
                          step=bool_step(key), help=help, section=section)
 
+    def follow_mode(before, values):
+        # A system prompt still at the shipped default follows the mode; one
+        # the SysOp wrote is kept (§16, issue #1382).
+        if values["persona"] == DEFAULT_PERSONAS[before]:
+            values["persona"] = DEFAULT_PERSONAS[values["mode"]]
+
+    mode_choice, mode_arrow = choice_field("mode", list(MODES)), choice_step("mode", list(MODES))
+
+    async def mode_field(session, lane, values):
+        before = values["mode"]
+        await mode_choice(session, lane, values)
+        follow_mode(before, values)
+
+    def mode_step(values, direction):
+        before = values["mode"]
+        mode_arrow(values, direction)
+        follow_mode(before, values)
+
     fields = [
         switch("enabled", "Off by default. Each bot also needs its own conversation grant.", "Provider"),
+        FieldSpec("mode", FIELD_LABELS["mode"], lambda d: MODE_LABELS.get(d["mode"], d["mode"]), mode_field,
+                  step=mode_step,
+                  help="Help desk (the default) answers from excerpts of the caller handbook and this node's facts: "
+                       "name, SysOps, features, public boards and file areas. Companion is open chat. Each has its "
+                       "own default system prompt.", section="Provider"),
         text("endpoint", "Local first: http://127.0.0.1:11434/v1 for Ollama, or your llama.cpp server's /v1 URL. A remote endpoint receives addressed conversation. Use HTTPS for remote providers.", "Provider"),
         text("model", "An installed local model or the name your provider accepts.", "Provider"),
         FieldSpec("api_key", "API key", lambda d: "(set; hidden)" if d["api_key"] else "(none)", secret,
@@ -81,12 +106,14 @@ async def model_editor(session, lane, actor, chrome):
                   choice_field("token_parameter", ["max_completion_tokens", "max_tokens"]),
                   step=choice_step("token_parameter", ["max_completion_tokens", "max_tokens"]),
                   help="Defaults to max_tokens for Ollama. Select max_completion_tokens for current OpenAI models that require it.", section="Provider"),
-        text("persona", "Baud's host-owned persona, 1-2,000 characters. No ordinary channel history is included.", "Privacy and access"),
+        text("persona", "Baud's host-owned persona, 1-2,000 characters. No ordinary channel history is included. Help desk adds its own rules and the grounding after it.", "Privacy and access"),
         number("context_lines", "0-20; only this caller's addressed inputs and replies in this channel. Memory only; 30-minute idle expiry and reset.", "Privacy and access"),
         switch("log_prompts", "Off by default. When on, stores each submitted input with the bounded usage ledger. Callers are told. Does not log unrelated chat or provider responses.", "Privacy and access"),
         number("min_level", "0-255. For Link callers, this is the level asserted by their authenticated home node; it grants no other local privilege.", "Privacy and access"),
         switch("allow_guests", "Off by default. Guests share their node's guest account quota and context; they are not separate authenticated people.", "Privacy and access"),
-        number("day_tokens", "1-1,000,000,000 tokens; UTC day. Includes reservations for interrupted/unmetered requests.", "Limits"),
+        number("day_tokens", "1-1,000,000,000 tokens; UTC day. Includes reservations for interrupted/unmetered requests. "
+                             f"In help desk, each request also reserves up to about {GROUNDING_BYTES:,} for the "
+                             "handbook excerpts and node facts.", "Limits"),
         number("month_tokens", "1-10,000,000,000 tokens; UTC month. Reported usage replaces the reserved estimate.", "Limits"),
         number("user_daily", "1-1,000, across all bot instances and channels on this node.", "Limits"),
         number("cooldown", "0-3,600; across all bot instances and channels.", "Limits"),

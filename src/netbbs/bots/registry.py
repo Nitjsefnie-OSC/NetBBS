@@ -33,9 +33,8 @@ TEMPERAMENTS = ("friendly", "terse", "retro")
 QUERIES = ("stats", "seen", "top")
 # Issue #1381: a phrase override is checked as the longest local caller name
 # would expand it, so "<name>: <phrase>" still fits one 500-character line.
-# The help opening shares its line with Baud's fixed command list (up to 266
-# characters with every grant, `top` included: exactly 500 with a 32-character
-# name), so it gets less room than a standalone phrase.
+# The help opening shares its line with Baud's fixed command list (up to 256
+# characters with every grant), so it gets less room than a standalone phrase.
 MAX_PHRASE = 400
 MAX_PHRASE_LENGTHS = {"greeting": MAX_PHRASE, "help": 200, "busy": MAX_PHRASE, "limit": MAX_PHRASE}
 NAME_ALLOWANCE = 32
@@ -546,11 +545,26 @@ def deliver_private(db: Database, bot_id: int, channel_name: str, body: str, cal
     return bot, channel
 
 
-def publish(db: Database, bot_id: int, channel_name: str, body: str, *, node_identity=None, source_reference=None):
-    _check_bot_text(body)
+def publish(db: Database, bot_id: int, channel_name: str, body: str | None, *, node_identity=None,
+            source_reference=None, held_id: int | None = None):
+    """Publish one bot line. With `held_id` the body is that host-held line's
+    (issue #1375), claimed in this transaction so two joins cannot both
+    deliver it. `None` is returned when it is dropped instead (expired, or a
+    tell whose recipient now refuses its sender); a refusal raised here
+    leaves it held."""
+    if held_id is None:
+        _check_bot_text(body)
     db.connection.execute("BEGIN IMMEDIATE")
     try:
         bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True)
+        if held_id is not None:
+            from netbbs.bots.held import Dropped, claim
+            try:
+                body = claim(db, held_id, bot, channel)
+            except Dropped:
+                db.connection.commit()
+                return None
+            _check_bot_text(body)
         if source_reference is not None:
             from netbbs.bots.sources import source_event
             event = source_event(db, bot_id, source_reference)
