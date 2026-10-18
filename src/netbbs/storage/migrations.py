@@ -4700,6 +4700,17 @@ MIGRATIONS = [
     ),
     Migration(
         description=(
+            "Issue #1381: `chat_bots.phrases_json`, the SysOp's per-instance overrides of the "
+            "temperament's fixed phrases (greeting, help opening, busy and reminder-limit "
+            "messages), passed to the bot in its hello. Only overrides are stored; '{}' on "
+            "upgrade, so every instance keeps its preset."
+        ),
+        sql="""
+        ALTER TABLE chat_bots ADD COLUMN phrases_json TEXT NOT NULL DEFAULT '{}';
+        """,
+    ),
+    Migration(
+        description=(
             "Issue #1377 (design doc §5.6, Pages): `staff_pages`, the shared queue of callers' "
             "`/sysop` pages. One open page per member (`guest_session` NULL), a guest's keyed on "
             "the session it came from; `place` is where the caller was, `channel` the chat channel "
