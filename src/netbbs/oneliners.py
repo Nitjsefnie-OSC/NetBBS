@@ -10,7 +10,9 @@ needed a "not this board" exception on every board surface.
 The limits are fixed here, like the chat bell's: a line is at most
 `MAX_ONELINER_COLUMNS` display columns, a caller adds at most one line per
 call and `DAILY_ONELINER_LIMIT` per account in any 24 hours (which also caps
-every guest together, since they share one account), and the wall keeps its
+every guest together, since they share one account), counted from a day's log
+of lines added (`oneliner_additions`) so that deleting a line gives no quota
+back, and the wall keeps its
 newest `MAX_KEPT_ONELINERS` lines. Who may write is a node-wide level
 (`netbbs.config.get_oneliner_min_level`, default 0); reading is open.
 
@@ -46,6 +48,7 @@ DAILY_ONELINER_LIMIT = 3
 MAX_KEPT_ONELINERS = 200
 
 _ENABLED_KEY = "oneliners_enabled"
+_PLAIN_KEY = "oneliners_plain"
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -72,6 +75,16 @@ def set_oneliners_enabled(db: Database, enabled: bool) -> None:
     set_config(db, _ENABLED_KEY, "1" if enabled else "0")
 
 
+def oneliners_plain(db: Database) -> bool:
+    """The wall's own plain style, used when it is drawn without the
+    caller roll; sharing the frame, it follows Recent callers' style."""
+    return get_config(db, _PLAIN_KEY, default="0") == "1"
+
+
+def set_oneliners_plain(db: Database, plain: bool) -> None:
+    set_config(db, _PLAIN_KEY, "1" if plain else "0")
+
+
 def normalize_oneliner(text: str) -> str:
     """`text` as the wall stores it: control and bidi characters removed,
     every run of whitespace (tabs and newlines included) one space, and
@@ -95,11 +108,15 @@ def _row(row) -> Oneliner:
     )
 
 
+def _a_day_ago() -> str:
+    return utc_iso(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1))
+
+
 def _lines_in_last_day(db: Database, user: User) -> int:
-    since = utc_iso(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1))
+    """Lines `user` added in the last 24 hours, deleted or pruned ones too."""
     return db.connection.execute(
-        "SELECT COUNT(*) FROM oneliners WHERE author_user_id = ? AND created_at > ?",
-        (user.id, since),
+        "SELECT COUNT(*) FROM oneliner_additions WHERE user_id = ? AND created_at > ?",
+        (user.id, _a_day_ago()),
     ).fetchone()[0]
 
 
@@ -111,7 +128,7 @@ def oneliner_refusal(db: Database, user: User, *, added_this_call: bool) -> str 
     if added_this_call:
         return "You've added a line this call."
     if _lines_in_last_day(db, user) >= DAILY_ONELINER_LIMIT:
-        return f"You've added {DAILY_ONELINER_LIMIT} lines today; the wall takes more tomorrow."
+        return f"You've added {DAILY_ONELINER_LIMIT} today; the wall takes more tomorrow."
     return None
 
 
@@ -139,6 +156,11 @@ def add_oneliner(db: Database, user: User, text: str, *, added_this_call: bool) 
         "DELETE FROM oneliners WHERE id NOT IN (SELECT id FROM oneliners ORDER BY id DESC LIMIT ?)",
         (MAX_KEPT_ONELINERS,),
     )
+    # The log only has to remember a day: older entries never count.
+    db.connection.execute(
+        "INSERT INTO oneliner_additions (user_id, created_at) VALUES (?, ?)", (user.id, created_at)
+    )
+    db.connection.execute("DELETE FROM oneliner_additions WHERE created_at <= ?", (_a_day_ago(),))
     db.connection.commit()
     return Oneliner(cursor.lastrowid, user.id, user.username, line, created_at)
 

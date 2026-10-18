@@ -183,7 +183,7 @@ from netbbs.guest import (
     set_guest_user_without_commit,
     set_pre_login_notice_without_commit,
 )
-from netbbs.oneliners import oneliners_enabled, set_oneliners_enabled
+from netbbs.oneliners import oneliners_enabled, oneliners_plain, set_oneliners_enabled, set_oneliners_plain
 from netbbs.session_history import (
     previous_callers_enabled,
     previous_callers_plain,
@@ -271,6 +271,7 @@ async def _system_menu(
             "previous_callers_enabled": previous_callers_enabled(db),
             "previous_callers_plain": previous_callers_plain(db),
             "oneliners_enabled": oneliners_enabled(db),
+            "oneliners_plain": oneliners_plain(db),
             "guest_username": (lambda u: u.username if u is not None else None)(guest_user(db)),
             "trust_exceptions": len(list_sole_authorities(db)),
             "description_level": menu_description_level(db, actor),
@@ -358,10 +359,18 @@ async def _system_menu(
             await _draw_system_menu(session, node_controls, link_context, stats=stats)
         elif choice == "w":
             def _toggle_oneliners(db: Database) -> None:
-                # Issue #1391: the wall after login, shown or hidden. It is
-                # drawn in the Recent callers panel's style.
-                enabled = not oneliners_enabled(db)
+                # Issue #1391: the wall after login, in the same three steps
+                # as Recent callers: neon, plain, hidden. Sharing the frame
+                # with the roll, it is drawn in the roll's style.
+                enabled, plain = oneliners_enabled(db), oneliners_plain(db)
+                if enabled and not plain:
+                    set_oneliners_plain(db, True)
+                    record_action(db, actor=actor, action="set_oneliners_plain", detail="plain=true")
+                    return
+                enabled = not enabled
                 set_oneliners_enabled(db, enabled)
+                if enabled:
+                    set_oneliners_plain(db, False)
                 record_action(
                     db, actor=actor, action="set_oneliners_enabled", detail=f"enabled={str(enabled).lower()}",
                 )
@@ -565,11 +574,16 @@ def _system_menu_entries(stats: dict[str, Any]) -> list[MenuEntry]:
         # Issue #1391: "Oneliners" would take Operating limits' key, so the
         # wall is named by its other word.
         MenuEntry(
-            label=menu_key("W", "all of oneliners") + ": " + ("shown" if stats["oneliners_enabled"] else "hidden"),
+            label=menu_key("W", "all of oneliners") + ": " + (
+                "hidden" if not stats["oneliners_enabled"]
+                else "plain" if stats["oneliners_plain"] else "neon"
+            ),
             brief=(
-                "Shown under Recent callers; press to hide"
-                if stats["oneliners_enabled"]
-                else "Hidden after login; press to show"
+                "Hidden after login; press to show (neon)"
+                if not stats["oneliners_enabled"]
+                else "Plain; press to hide"
+                if stats["oneliners_plain"]
+                else "Neon; press for plain"
             ),
         ),
         MenuEntry(label=menu_key("I", "nter-BBS chat (MRC)"), brief="Bridge channels to the MRC network"),

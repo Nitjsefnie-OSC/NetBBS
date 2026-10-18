@@ -174,7 +174,8 @@ To add a line:
 Any other key at the pause goes on to the main menu, where the result is
 shown.
 
-- You can add one line per call, and three a day.
+- You can add one line per call, and three a day. Deleting a line does not
+  give you one back.
 - A line is plain text: colour codes are not drawn.
 - The SysOp may set a level for adding lines. Below it, **Add a line** is
   not offered, but you can still read the wall.

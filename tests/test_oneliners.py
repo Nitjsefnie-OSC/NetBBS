@@ -121,14 +121,33 @@ def test_one_line_per_call_and_three_per_day(db, alice):
     assert oneliner_refusal(db, alice, added_this_call=True) == "You've added a line this call."
     for number in range(DAILY_ONELINER_LIMIT):
         _say(db, alice, f"line {number}")
-    with pytest.raises(OnelinerError, match="3 lines today"):
+    with pytest.raises(OnelinerError, match="added 3 today"):
         _say(db, alice, "one too many")
 
     # A day later the account may write again.
     old = utc_iso(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1, minutes=1))
-    db.connection.execute("UPDATE oneliners SET created_at = ?", (old,))
+    db.connection.execute("UPDATE oneliner_additions SET created_at = ?", (old,))
     db.connection.commit()
     assert oneliner_refusal(db, alice, added_this_call=False) is None
+
+
+def test_deleting_your_own_line_gives_no_quota_back(db, alice):
+    lines = [_say(db, alice, f"line {number}") for number in range(DAILY_ONELINER_LIMIT)]
+    for line in lines:
+        delete_oneliner(db, alice, line.id)
+
+    assert list_oneliners(db) == []
+    assert "added 3 today" in oneliner_refusal(db, alice, added_this_call=False)
+
+
+def test_the_additions_log_forgets_after_a_day(db, alice, bob):
+    old = utc_iso(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2))
+    db.connection.execute("INSERT INTO oneliner_additions (user_id, created_at) VALUES (?, ?)", (alice.id, old))
+    db.connection.commit()
+
+    _say(db, bob, "hi")
+
+    assert db.connection.execute("SELECT COUNT(*) FROM oneliner_additions").fetchone()[0] == 1
 
 
 def test_the_level_gates_writing_not_reading(db, alice, bob):
@@ -251,6 +270,20 @@ def test_the_wall_follows_its_own_toggle_at_logon(db, alice, bob):
     text = _visible(session)
     assert "hidden line" not in text and "[A]dd a line" not in text
     assert list_oneliners(db)[0].text == "hidden line"  # "a" did nothing
+
+
+def test_the_wall_alone_takes_its_own_plain_style(db, alice, bob):
+    from netbbs.oneliners import set_oneliners_plain
+
+    set_previous_callers_enabled(db, False)
+    set_oneliners_plain(db, True)
+    _say(db, bob, "quiet please")
+    session = _logon_session(keys=["\r"])
+
+    asyncio.run(_show_previous_callers_screen(session, db, alice, current_history_id=None))
+
+    text = _visible(session)
+    assert "Oneliners" in text and "O N E L I N E R S" not in text
 
 
 def test_the_plain_style_reaches_the_wall(db, alice, bob):
@@ -500,12 +533,21 @@ def test_the_console_toggles_the_wall_after_login_audited(db, lane):
     from tests.test_admin_flow import FakeSession as ConsoleSession, _visible as console_visible, _written_text
 
     sysop = create_user(db, "root", password="hunter2pw", user_level=SYSOP_LEVEL)
-    session = ConsoleSession(["s", "w", "b", "b"])
+    from netbbs.oneliners import oneliners_plain
+
+    # Neon, then plain, then hidden, as Recent callers.
+    session = ConsoleSession(["s", "w", "w", "b", "b"])
     asyncio.run(admin_menu(session, lane, sysop))
 
     assert oneliners_enabled(db) is False
-    assert "all of oneliners: hidden" in console_visible(_written_text(session))
-    [entry] = [a for a in list_recent_actions(db, limit=10) if a.action == "set_oneliners_enabled"]
+    text = console_visible(_written_text(session))
+    assert "all of oneliners: plain" in text and "all of oneliners: hidden" in text
+    assert [a.action for a in list_recent_actions(db, limit=10)].count("set_oneliners_plain") == 1
+
+    session = ConsoleSession(["s", "w", "b", "b"])
+    asyncio.run(admin_menu(session, lane, sysop))
+    assert oneliners_enabled(db) is True and oneliners_plain(db) is False
+    entry = [a for a in list_recent_actions(db, limit=10) if a.action == "set_oneliners_enabled"][-1]
     assert entry.detail == "enabled=false" and entry.actor_user_id == sysop.id
 
 

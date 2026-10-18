@@ -2654,15 +2654,16 @@ last start.
 login in its default neon style, the same panel plain (your header colour and
 a quiet heading), and hidden.
 
-**Settings ▸ Wall of oneliners** shows or hides the oneliner wall after
-login. The wall is the short lines callers leave, drawn as a lower
-**Oneliners** section of the Recent callers panel, in its style. With Recent
-callers hidden, the wall is shown alone. ▸ **Recent callers** on the main
-menu shows both whatever these two settings say.
+**Settings ▸ Wall of oneliners** cycles the oneliner wall after login through
+the same three states: neon, plain and hidden. The wall is the short lines
+callers leave, drawn as a lower **Oneliners** section of the Recent callers
+panel, in that panel's style. With Recent callers hidden, the wall is shown
+alone in its own style. ▸ **Recent callers** on the main menu shows both
+whatever these two settings say.
 
 - A line is plain text, up to 60 columns.
-- A caller can add one line per call and three a day. Every guest shares the
-  guest account's three.
+- A caller can add one line per call and three a day. Deleting a line does
+  not give one back. Every guest shares the guest account's three.
 - The wall keeps its newest 200 lines.
 - Who may add lines is the **Oneliner level** under
   [Limits and retention](#limits-and-retention).

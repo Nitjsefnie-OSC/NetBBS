@@ -75,7 +75,7 @@ from netbbs.link.remote_attestation import count_attestation_recipients
 from netbbs.mail import list_mail_blocks, set_shares_read_receipts, shares_read_receipts
 from netbbs.messaging_preferences import accepts_direct_messages, set_accepts_direct_messages
 from netbbs.net.oneliner_flow import add_oneliner_prompt, oneliner_wall_screen
-from netbbs.oneliners import Oneliner, list_oneliners, may_write_oneliners, oneliners_enabled
+from netbbs.oneliners import Oneliner, list_oneliners, may_write_oneliners, oneliners_enabled, oneliners_plain
 from netbbs.net.char_input import HELP_KEY, InputCancelled, reject_unhandled_key
 from netbbs.net.help_overlay import show_menu_help
 from netbbs.net.breadcrumb_preference import breadcrumb_collapsed_enabled, set_breadcrumb_collapsed_enabled
@@ -290,7 +290,9 @@ def _render_previous_callers_panel(
     has one pause. With no caller rows the frame is headed by the wall
     alone. Each line is one row, cut to the frame; the full wall wraps.
     """
-    plain = previous_callers_plain(db)
+    # Sharing the frame, the wall follows the roll's style; drawn alone it
+    # has its own (issue #1391).
+    plain = previous_callers_plain(db) if entries else oneliners_plain(db)
     # The plain style (issue #841) keeps to the node's header colour, so
     # the truecolor gradient is never used for its frame or heading.
     use_truecolor = effective_truecolor(session, db, user) and not plain

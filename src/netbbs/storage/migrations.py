@@ -4703,7 +4703,9 @@ MIGRATIONS = [
             "Issue #1391 (design doc §3.3, the oneliner wall): `oneliners`, the short lines callers "
             "leave under Recent callers, newest first. The author is kept by label beside "
             "`author_user_id ON DELETE SET NULL`, so a line outlives its account as a post does. "
-            "The index serves the per-account daily limit. Empty on upgrade."
+            "`oneliner_additions` logs each line added for a day, so the per-account daily limit "
+            "counts lines added rather than lines still on the wall: deleting one's own line gives "
+            "no quota back. Empty on upgrade."
         ),
         sql="""
         CREATE TABLE oneliners (
@@ -4713,7 +4715,11 @@ MIGRATIONS = [
             text            TEXT NOT NULL,
             created_at      TEXT NOT NULL
         );
-        CREATE INDEX idx_oneliners_author_created ON oneliners(author_user_id, created_at);
+        CREATE TABLE oneliner_additions (
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX idx_oneliner_additions_user ON oneliner_additions(user_id, created_at);
         """,
     ),
 ]
