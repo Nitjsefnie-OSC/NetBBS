@@ -879,6 +879,18 @@ it on grants exactly that: posting to the boards and speaking in the channels
 on that door's own allowlist. A door can never read the BBS, send mail, look
 up a caller, or post anywhere you did not allow.
 
+> [!IMPORTANT]
+> A door posts and chats only while **every caller may play it**: its
+> minimum play level must be 0. What a door sends can name the game and its
+> players, and a board or channel reaches callers who may not see a gated
+> door at all. While the level is above 0, `[A]llow a board` and
+> `[L]et it chat in a channel` are refused, and the door's requests are
+> refused too, even to boards and channels you allowed before you raised the
+> level. The allowlist is kept, and the outbound screen says why nothing the
+> door sends reaches anyone. Set the level back to 0 and the door posts again.
+> So when you test a new door at level 255 first, allow its boards and
+> channels after you lower the level.
+
 **Native and [VM](#foreign-platform-doors-in-a-vm) doors, not DOS yet.** A VM
 door finds its request directory beside `door_info.json` in `/mnt/node`, and
 its receipts in a copy NetBBS places there at launch. For a VM door, unlike a

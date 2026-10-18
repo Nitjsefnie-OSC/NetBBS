@@ -37,7 +37,9 @@ from netbbs.chat.hub import ChatHub
 from netbbs.chat.presence import PresenceRegistry
 from netbbs.chat.scrollback import ChannelMessage as LocalChannelMessage
 from netbbs.chat.scrollback import get_scrollback
-from netbbs.link.channels import channel_origin_fingerprint, get_channel_by_channel_id, is_channel_linked
+from netbbs.link.channels import (
+    announcement_claimed, channel_origin_fingerprint, get_channel_by_channel_id, is_channel_linked,
+)
 from netbbs.link.enforcement import (
     LinkPolicyAction,
     content_visible_for_subject,
@@ -125,8 +127,13 @@ def _snapshot_entries(db: Database, channel: Channel) -> list[dict]:
     # the origin's fingerprint would apply the subscriber's trust policy
     # to the wrong identity. Filtered *before* the cap, so a chatty MRC
     # room cannot consume the whole snapshot budget with nothing to show.
+    # Issue #1380: a `daybreak` line -- the midnight message, or a scheduled
+    # announcement without a Linked approval -- is this node's own local
+    # notice and never crosses Link, so it is not exported either. Older
+    # origins did export the midnight line; subscribers still accept it.
     eligible = [
-        message for message in get_scrollback(db, channel) if message.external_source is None
+        message for message in get_scrollback(db, channel)
+        if message.external_source is None and message.kind != "daybreak"
     ]
     for message in eligible[-_MAX_SCROLLBACK_SNAPSHOT_ENTRIES:]:
         author_node_fingerprint: str | None = None
@@ -162,7 +169,7 @@ def _snapshot_entries(db: Database, channel: Channel) -> list[dict]:
             _bounded_utf8(message.body, _MAX_SCROLLBACK_ENTRY_BODY_BYTES)
             if message.body is not None else (None, False)
         )
-        entries.append({
+        entry = {
             "kind": message.kind,
             "author_label": author_label,
             "author_node_fingerprint": author_node_fingerprint,
@@ -171,7 +178,11 @@ def _snapshot_entries(db: Database, channel: Channel) -> list[dict]:
             "body": body,
             "body_truncated": body_truncated,
             "created_at": message.created_at,
-        })
+        }
+        if message.announcement and message.kind == "message":
+            # Issue #1380: stripped again for a peer without the capability.
+            entry["announcement"] = True
+        entries.append(entry)
     return entries
 
 
@@ -204,6 +215,7 @@ def _accept_scrollback_snapshot(
             author_fingerprint=(entry["author_node_fingerprint"] if authored else None),
             body=entry["body"], created_at=entry["created_at"],
             link_content_id=entry["content_id"], body_truncated=entry["body_truncated"],
+            announcement=authored and announcement_claimed(entry.get("announcement"), entry["author_user_id"]),
         ))
     return channel, messages
 
@@ -287,6 +299,7 @@ class LiveChannelBridge:
         self, *, hub: ChatHub, lane: DatabaseLane, presence: PresenceRegistry, registry: LinkRealtimeSessionRegistry,
         peer_capable: Callable[[str], bool] | None = None,
         presence_capable: Callable[[str], bool] | None = None,
+        announcement_capable: Callable[[str], bool] | None = None,
     ) -> None:
         self._hub = hub
         self._lane = lane
@@ -300,6 +313,9 @@ class LiveChannelBridge:
         # the only peers that report their callers up or are sent a presence
         # frame's optional `node_fingerprint`. None: no peer is.
         self._presence_capable = presence_capable or (lambda fingerprint: False)
+        # Issue #1380: whether a peer advertises `CHAT_ANNOUNCEMENTS_CAPABILITY`,
+        # the only peers sent the optional `announcement` key.
+        self._announcement_capable = announcement_capable or (lambda fingerprint: False)
         # Content IDs of channel lines already shown live here, oldest first,
         # so the signed event that follows is not shown again.
         self._shown_live: OrderedDict[ShownKey, None] = OrderedDict()
@@ -588,6 +604,11 @@ class LiveChannelBridge:
         entries = await self._lane.run(_snapshot_entries, channel)
         if not entries:
             return
+        if not self._announcement_capable(session.remote_fingerprint):
+            # The entry validator refuses unknown keys: an older peer gets the
+            # plain line, which still reads "Announcement: ...".
+            for entry in entries:
+                entry.pop("announcement", None)
         # JSON escaping can make valid per-field values exceed the frame
         # ceiling. Drop oldest catch-up entries until the fully serialized
         # frame fits; never enqueue a frame that will later kill the session.
@@ -709,6 +730,7 @@ class LiveChannelBridge:
             # render the friendly label by default.
             author_fingerprint=author_node,
             body=payload["body"], created_at=payload["created_at"],
+            announcement=announcement_claimed(payload.get("announcement"), payload["user_id"]),
         )
         await self._hub.broadcast(channel.name, message)
         if origin == own:
@@ -732,11 +754,15 @@ class LiveChannelBridge:
             payload["channel_id"], payload["user_id"], payload["display_label"],
             payload["body"], payload["created_at"], author_node_fingerprint=author_node,
         )
+        marked = build_channel_message_frame(
+            payload["channel_id"], payload["user_id"], payload["display_label"],
+            payload["body"], payload["created_at"], author_node_fingerprint=author_node, announcement=True,
+        ) if payload.get("announcement") is True else relayed
         for session in await self._live_subscribers(channel):
             if session.remote_fingerprint == author_node or not self._peer_capable(session.remote_fingerprint):
                 continue
             try:
-                await session.send(relayed)
+                await session.send(marked if self._announcement_capable(session.remote_fingerprint) else relayed)
             except LinkTransportError:
                 pass
 
@@ -812,6 +838,9 @@ class LiveChannelBridge:
             await self.bot_link.runtime.observe(channel, message, caller={
                 "id": f"link:{node}:{user_id}", "name": message.author_label,
             })
+            if kind == "join":
+                # Lines a local bot holds for this Link caller (issue #1375).
+                self.bot_link.runtime.joined(channel, f"link:{node}:{user_id}")
         if relay_from is not None:
             await self._relay_presence(channel, node, user_id, kind)
 
@@ -1053,9 +1082,14 @@ class LiveChannelBridge:
             channel.channel_id, message.author_label, message.author_label,
             message.body or "", message.created_at,
         )
+        # Issue #1380: the marker only for a peer that takes it.
+        marked = build_channel_message_frame(
+            channel.channel_id, message.author_label, message.author_label,
+            message.body or "", message.created_at, announcement=True,
+        ) if message.announcement else frame
         for session in sessions:
             try:
-                await session.send(frame)
+                await session.send(marked if self._announcement_capable(session.remote_fingerprint) else frame)
             except LinkTransportError:
                 pass
 

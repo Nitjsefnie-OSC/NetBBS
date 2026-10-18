@@ -518,6 +518,13 @@ Choose a chat channel to join the conversation. Type a line and press
 > newest line, or by sending a line. Your terminal's own scrollback jumps back
 > to the bottom whenever chat redraws, so use these keys instead.
 
+Gray lines with no name in front are the BBS itself speaking: a good-morning
+line at midnight, and announcements the SysOp has scheduled, such as
+`Announcement: Net meeting tonight at 20:00 in #main.` They stay in the
+channel's scrollback, so you see them even if you arrive later. In a channel
+shared with linked BBSes, an announcement from another BBS names it:
+`Announcement from Vertigo: Tournament at 21:00.`
+
 #### Aliases and names from other BBSes
 
 An alias is always shown with the username beside it, as
@@ -985,14 +992,37 @@ default, prefix the commands with `Baud.bot:` instead of `!`.
 | --- | --- | --- |
 | Help | `!help` | `Baud.bot: help` |
 | Set a reminder | `!remind 10m check the oven` | `Baud.bot: remind 10m check the oven` |
+| Set a reminder for a time | `!remind fri 20:00 net meeting` | `Baud.bot: remind fri 20:00 net meeting` |
 | List reminders | `!reminders` | `Baud.bot: reminders` |
 | Cancel a reminder | `!cancel 1` | `Baud.bot: cancel 1` |
+| Leave someone a note | `!tell Nib check the Retro board` | `Baud.bot: tell Nib check the Retro board` |
+| List your notes | `!tells` | `Baud.bot: tells` |
+| Cancel a note | `!cancel tell 4` | `Baud.bot: cancel tell 4` |
 
 To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 [Getting help from the SysOp](#getting-help-from-the-sysop).
 
 - Reminders and replies are public in that channel.
 - Reminders survive restarts, though mutes or limits can delay them.
+- A reminder takes a duration (`10m`, `2h`, up to `30d`) or a time on this
+  board's clock: `20:00`, `tomorrow 09:00`, `mon` to `sun` with a time, or a
+  date as `2026-11-01 20:00`. Times are 24-hour. A time already past today
+  means tomorrow. Baud's answer names the moment, for example
+  `Saved reminder #3 for Fri 20:00 CET.`
+- If you are not in the channel when a reminder falls due, Baud keeps it for
+  a week and says it when you next join that channel, marked
+  `held until you came back`. `!reminders` shows it as `waiting since 18:00`
+  until then; after a week it is dropped without a word.
+- `!tell` leaves a note of up to 160 characters for an account on this board.
+  Baud says it publicly in the same channel the next time they join it, within
+  14 days, as `Nib: Quill asked me to tell you (3h ago): ...`. If they are in
+  the channel already, Baud says so and keeps nothing. You can have three
+  notes waiting, and one person five.
+
+> [!NOTE]
+> Turning off **Direct messages** in Profile, or blocking someone, also stops
+> their notes through Baud: a new one is refused, and one already waiting is
+> quietly dropped instead of being said.
 - Ordinary conversation is not sent to an addressed-only bot.
 - Depending on what your SysOp allows, Baud may also answer `stats` and
   `seen <account>`, greet people who join, or announce new posts and files;

@@ -1745,6 +1745,18 @@ def _mention_bell_sender(db: Database, channel: Channel, viewer: User, message: 
     return f"{message.external_source or 'local'}:{message.author_label}"
 
 
+def _announcement_text(message: ChannelMessage, link_speaker: tuple[str, str] | None) -> str:
+    """`Announcement: <text>`, or `Announcement from <node>: <text>` for one
+    carried from another node (issue #1380), sanitized."""
+    from netbbs.chat.announcements import PREFIX
+
+    body = message.body or ""
+    text = body[len(PREFIX):] if body.startswith(PREFIX) else body
+    if link_speaker is None:
+        return sanitize_text(PREFIX + text)
+    return sanitize_text(f"Announcement from {link_speaker[1]}: {text}")
+
+
 def _render_channel_message(
     db: Database, channel: Channel, viewer: User, message: ChannelMessage, *, self_message: bool = False
 ) -> str:
@@ -1813,6 +1825,11 @@ def _render_channel_message(
                 + colored(">", fg_color=MUTED_COLOR)
             )
             line = f"{label} {_mrc_body(db, viewer, body)}"
+        elif message.announcement:
+            # Issue #1380: a SysOp's scheduled announcement reads as the
+            # system notice it is here, naming the node it came from; its
+            # signed author is only how Link carries it.
+            line = colored(_announcement_text(message, link_speaker), fg_color=MUTED_COLOR)
         elif _is_door_line(db, message):
             # Issue #520: a door's line reads as the game talking, not as a
             # caller -- muted throughout, and marked, so nobody answers it
@@ -6582,6 +6599,7 @@ async def _chat_loop(
         await hub.broadcast(channel.name, recorded_join, exclude={participant_id})
         if hub.bot_runtime is not None:
             await hub.bot_runtime.observe(channel, recorded_join, caller={"id": user.id, "name": user.username})
+            hub.bot_runtime.joined(channel, user.id)  # Lines held for this caller (issue #1375).
         if link_context is not None and link_context.realtime_bridge is not None:
             await link_context.realtime_bridge.broadcast_local_presence_live(
                 channel, change="join", username=user.username
