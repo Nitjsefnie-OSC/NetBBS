@@ -380,8 +380,9 @@ def test_real_chat_dispatch_roster_mute_and_no_replay_triggers(db, lane, hub, pr
             await eventually(lambda: "No language model" in "".join(session.written))
             assert "[BOT] Baud.bot" in "".join(session.written)
             assert "addressed messages only" in "".join(session.written)
-            # Help answers privately (issue #1372): drawn "(to you)", kept out of history.
-            assert "(to you)" in "".join(session.written)
+            # Help answers privately (issue #1372): a block whose title ends
+            # "to you", kept out of history.
+            assert "to you" in "".join(session.written)
             assert not [m for m in get_scrollback(db, channel) if m.author_kind == "bot"]
             session.input.put_nowait("/mute Baud.bot")
             await eventually(lambda: "was muted" in "".join(session.written))

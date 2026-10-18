@@ -83,6 +83,10 @@ def describe_bot(action):
     if kind == "say":
         return f"say #{action.get('channel')} {_quoted(action.get('text', ''))}"
     if kind == "reply":
+        block = action.get("block")
+        if isinstance(block, dict):
+            rows = block.get("rows")
+            return f"reply block {_quoted(block.get('title', ''))}, {len(rows) if isinstance(rows, list) else 0} rows"
         return f"reply {_quoted(action.get('text', ''))}"
     if kind == "state.set":
         return "state.set " + _compact(action.get("value"))
@@ -116,11 +120,16 @@ async def _render(session, lane_db_render, trial, entry):
 
 
 async def _flush(session, trial, shown, stderr_shown):
-    from netbbs.net.chat_flow import _render_channel_message
+    from netbbs.chat.bots import BotPrivateAnswer
+    from netbbs.net.chat_flow import _render_bot_private_answer, _render_channel_message, _rendered_lines
 
     async def render_chat(message):
+        if isinstance(message, BotPrivateAnswer):
+            return await trial.lane.run(_render_bot_private_answer, trial.user, message,
+                                        width=session.terminal_width)
         return await trial.lane.run(_render_channel_message, trial.channel, trial.user, message,
-                                    self_message=message.author_label == trial.user.username)
+                                    self_message=message.author_label == trial.user.username,
+                                    width=session.terminal_width)
 
     # The watermark is the one this snapshot was taken at: entries added
     # while it renders (the awaits below) are shown next time, not skipped.
@@ -129,7 +138,9 @@ async def _flush(session, trial, shown, stderr_shown):
     for entry in entries:
         line = await _render(session, render_chat, trial, entry)
         if line:
-            await session.write_line(line)
+            # A bot's titled block is several lines (issue #1373).
+            for part in _rendered_lines(line):
+                await session.write_line(part)
     if errors:
         await session.write_line(colored(f"stderr (last {STDERR_LIMIT // 1024} KiB kept):", fg_color=LABEL_COLOR))
         for row in errors.rstrip("\n").splitlines():

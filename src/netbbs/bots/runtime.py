@@ -15,7 +15,7 @@ import uuid
 
 from netbbs.bots import BOT_API_VERSION
 from netbbs.bots.registry import (
-    Bot, BotError, allowed_channel, bot_for_label, deliver_private, list_bots, publish, select_request,
+    Bot, BotError, allowed_channel, bot_for_label, check_block, deliver_private, list_bots, publish, select_request,
     set_runtime_status, reset_runtime_status,
 )
 from netbbs.bots.state import read_state, write_state, state_path
@@ -346,7 +346,7 @@ class _Worker:
         if target:
             if target[3] is not None:
                 if private is not None:
-                    await target[3](text, message, private.text)
+                    await target[3](text, message, private)
                 else:
                     await target[3](text, message)
             elif private is not None:
@@ -427,7 +427,9 @@ class _Worker:
                                "board_sources": self.bot.board_sources, "file_sources": self.bot.file_sources,
                                "announcement_channel": self.bot.announcement_channel,
                                "announce_posts": self.bot.announce_posts, "announce_files": self.bot.announce_files,
-                               "model_conversation": self.model_enabled, "timezone": self.timezone})
+                               "model_conversation": self.model_enabled, "timezone": self.timezone,
+                               # Issue #1373: this host takes a reply's titled block.
+                               "blocks": True})
             ready = await asyncio.wait_for(self._read(), 5)
             if ready != {"type": "ready", "version": BOT_API_VERSION}:
                 raise BotError("Bot did not acknowledge BOT_API_VERSION 1.")
@@ -648,6 +650,10 @@ class _Worker:
                 caller=pending[4], online=self.owner.presence.online_usernames(),
                 uptime_seconds=int(time.monotonic() - self.owner.started_at),
             )
+        if value.get("block") is not None and action != "reply":
+            # Issue #1373: only an answer may be a titled block; reminders,
+            # held lines, tells and announcements stay one line.
+            raise BotError("Only reply takes a block; say and announce stay one line.")
         if action in HELD_ACTIONS:
             return await self._held_action(action, value)
         if action not in {"say", "reply", "announce"}:
@@ -655,6 +661,15 @@ class _Worker:
                            "state.get, state.set, query, held.list, held.cancel, tell, tell.list, tell.cancel.")
         body = value.get("text")
         request = value.get("request")
+        block = value.get("block")
+        if block is not None:
+            # Issue #1373: an answer may be a titled block; reminders and
+            # announcements stay one line.
+            if action != "reply":
+                raise BotError("Only reply takes a block; say and announce stay one line.")
+            if body is not None:
+                raise BotError("A reply carries text or a block, not both.")
+            block = check_block(block)
         if action == "announce":
             token = value.get("event")
             reference = self.announcements.pop(token, None) if isinstance(token, str) else None
@@ -666,7 +681,7 @@ class _Worker:
                 raise BotError("Reply request has expired or does not belong to this bot.")
             channel_name = self.pending[request][0]
             if self._answer_privacy(request, value):
-                return await self._private_reply(request, channel_name, body)
+                return await self._private_reply(request, channel_name, body, block)
         else:
             channel_name = value.get("channel")
             if not isinstance(channel_name, str):
@@ -674,7 +689,8 @@ class _Worker:
         link = self.owner.link
         channel, message = await lane.run(publish, self.bot.id, channel_name, body,
                                           node_identity=link.node.identity if link else None,
-                                          source_reference=reference[0] if action == "announce" else None)
+                                          source_reference=reference[0] if action == "announce" else None,
+                                          block=block)
         await self.owner.publish_live(channel, message)
         if action == "reply":
             await self.notify(request, "", message)
@@ -753,17 +769,24 @@ class _Worker:
             raise _TokenKept("This caller's node cannot take private answers; reply publicly instead.")
         return private
 
-    async def _private_reply(self, request, channel_name, body):
+    async def _private_reply(self, request, channel_name, body, block=None):
         pending = self.pending[request]
+        if block is not None:
+            body = block.fallback()
         bot, _channel = await self.owner.lane.run(deliver_private, self.bot.id, channel_name, body,
                                                   str(pending[4]["id"]))
-        await self.notify(request, "", private=BotPrivateAnswer(bot.label, body, utc_now_iso()))
+        await self.notify(request, "", private=BotPrivateAnswer(bot.label, body, utc_now_iso(), block=block))
         return {"private": True}
 
     async def _model_reply(self, request, pending, *, reset, private=False):
         try:
-            text, accept = await self.owner.model.respond(self.bot.id, pending[0], pending[4], pending[5], reset=reset,
-                                                          private=private)
+            presence = self.owner.presence
+            # Help desk's node facts include `stats` when granted, through
+            # the same run_query and caller check as the query action.
+            text, accept = await self.owner.model.respond(
+                self.bot.id, pending[0], pending[4], pending[5], reset=reset, private=private,
+                online=presence.online_usernames() if presence is not None else None,
+                uptime_seconds=int(time.monotonic() - self.owner.started_at))
             if self.pending.get(request) is not pending or pending[2] <= time.monotonic():
                 return
             await self._action({"action": "reply", "request": request, "text": text, "private": private})

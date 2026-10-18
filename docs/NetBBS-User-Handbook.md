@@ -1008,6 +1008,20 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
   replies to a line typed in the channel are public there. To keep a question
   and its answer to yourself, [ask privately](#ask-a-bot-privately).
 - A reminder is said publicly in its channel when it is due.
+- A longer answer, such as `help`, comes as a titled block, its rows lined
+  up the way `/who` lines up its own:
+
+  ```
+  ── [BOT] Baud.bot · Commands ───────── to you · 20:14 ──
+   Happy to help!
+   help                  this list; help remind or help tell for more
+   remind <when> <text>  a reminder here, shown publicly
+  ```
+
+  `[BOT] Baud.bot` is put there by your BBS, so a block always says which bot
+  it is from; `to you` marks one only you see. One taller than your screen
+  is shown a page at a time: <kbd>PgDn</kbd> (or <kbd>Enter</kbd> on an empty line) for the next,
+  <kbd>Esc</kbd> to skip the rest.
 - Reminders survive restarts, though mutes or limits can delay them.
 - A reminder takes a duration (`10m`, `2h`, up to `30d`) or a time on this
   board's clock: `20:00`, `tomorrow 09:00`, `mon` to `sun` with a time, or a
@@ -1041,6 +1055,15 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 > [asked privately](#ask-a-bot-privately), and `reset` clears your
 > conversation.
 
+As a help desk, which is how most nodes set it up, Baud answers questions
+about using the BBS, such as `Baud.bot: how do I upload a file?`. It answers
+from parts of this handbook and from facts about the node, and names the
+section it used: `(Handbook: Exchange files. May be wrong; ? for help)`.
+Asked privately, with `/msg Baud.bot` or in `/private Baud.bot`, it can also
+name the boards and file areas you can see; in the channel it names only the
+ones everyone can read. A model can be wrong, so check what it says against
+**Help** (<kbd>?</kbd>) on the main menu or ask the SysOp.
+
 #### Ask a bot privately
 
 A question typed into the channel is seen by everyone there. To ask a bot
@@ -1055,6 +1078,7 @@ where only you see the question and its answer:
 - What you asked shows as `(privately to Baud.bot: ...)`, and the answer as a
   bot line marked **(to you)**:
   `[20:14] [BOT] <Baud.bot> (to you) Saved reminder #4.`
+  A private titled block says **to you** at the right of its title.
 - Nobody else sees either, and neither is kept in the channel's history or
   search. Like `/msg`, the answer stays among your own lines, so
   <kbd>PgUp</kbd> shows it, and it never rings your bell.

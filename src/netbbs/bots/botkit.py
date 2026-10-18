@@ -13,7 +13,8 @@ plumbing, so a bot is only its own handlers:
   is ignored;
 - a state cache whose writes are saved in order (``save`` and ``change``);
 - ``reply`` with the caller's name in front, cut to the 500-character limit,
-  or ``reply(text, private=True)`` to answer the caller alone;
+  or ``reply(text, private=True)`` to answer the caller alone, and
+  ``reply_block`` for a titled block, cut to the block's bounds;
 - flushing every line.
 
 A minimal bot::
@@ -40,6 +41,12 @@ from collections import deque
 
 API_VERSION = 1
 LINE_LIMIT = 500
+# A titled block's bounds (issue #1373): its title, its rows, a row's label
+# and text. The host refuses a block outside them; reply_block cuts to them.
+BLOCK_TITLE_LIMIT = 40
+BLOCK_ROWS_LIMIT = 12
+BLOCK_LABEL_LIMIT = 24
+BLOCK_TEXT_LIMIT = 200
 # Commands that wait in change() for earlier saves; one more is refused.
 MAX_CHANGES = 32
 
@@ -95,6 +102,23 @@ class Message(Event):
             text = f"{self.name}: {text}"
         return self.bot.act("reply", then, request=self["request"], text=text[:LINE_LIMIT], **_privacy(private))
 
+    def reply_block(self, title, rows, then=None, private=None):
+        """Answer with a titled block, drawn like ``/who``: ``rows`` are
+        ``(label, text)`` pairs or plain texts, a label of ``""`` meaning
+        none. Cut to the block's bounds: a title of 40 characters, 12 rows,
+        a label of 24 and a text of 200. The host titles it with the bot's
+        name, so no caller name goes in front. Check ``bot.blocks`` first:
+        a host that does not take blocks refuses the action."""
+        shaped = []
+        for row in list(rows)[:BLOCK_ROWS_LIMIT]:
+            label, text = row if isinstance(row, (tuple, list)) else ("", row)
+            text = " ".join(str(text).split())[:BLOCK_TEXT_LIMIT] or "-"
+            label = " ".join(str(label or "").split())[:BLOCK_LABEL_LIMIT]
+            shaped.append({"label": label, "text": text} if label else {"text": text})
+        fields = {"request": self["request"], "block": {"title": " ".join(str(title).split())[:BLOCK_TITLE_LIMIT],
+                                                         "rows": shaped}}
+        return self.bot.act("reply", then, **fields, **_privacy(private))
+
     def query(self, query, target="", then=None):
         return self.bot.act("query", then, query=query, request=self["request"], target=target)
 
@@ -141,6 +165,8 @@ class Bot:
         self.announce_posts = bool(hello.get("announce_posts", False))
         self.announce_files = bool(hello.get("announce_files", False))
         self.model_conversation = bool(hello.get("model_conversation", False))
+        # Whether the host takes a reply's titled block (issue #1373).
+        self.blocks = bool(hello.get("blocks", False))
         # The IANA name of the node's display clock ("UTC" from an older host).
         self.timezone = hello.get("timezone") or "UTC"
         self.state = hello.get("state")

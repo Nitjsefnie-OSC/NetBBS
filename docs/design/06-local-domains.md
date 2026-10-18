@@ -601,7 +601,8 @@ protocol is `docs/NetBBS-bot-api.md`. What a caller sees of one:
   `[BOT] Name.bot · <title>`, up to 12 rows of an optional label and a text
   of up to 200 characters, costing one line of the channel's hourly limit.
   The host builds a plain fallback line from it, which older nodes show and
-  search matches. A private block's title ends `to you`. Reminders,
+  search matches. A private block's title ends `to you`. A live block taller
+  than the chat area is paged; join replay draws blocks whole, unpaged. Reminders,
   announcements and other unprompted lines stay one line (§16, issue #1373).
 - **Lines held for a caller.** A bot may ask the host to say a line when one
   caller next joins the channel; the host holds it in its own table, with an
@@ -615,6 +616,13 @@ protocol is `docs/NetBBS-bot-api.md`. What a caller sees of one:
   Linked. A message event says whether the caller is a moderator of the
   channel or the guest, and whether a private answer can reach them (§16,
   issues #1372, #1375 and #1379).
+- **Help desk.** With model conversation on, the default help-desk mode
+  answers "how do I..." from excerpts of the caller handbook, shipped as
+  package data and chosen per request by a keyword score, and from node facts;
+  the host ends the answer with the section it used and a "may be wrong"
+  hint. A public answer names only boards and areas everyone can read; a
+  local caller's private answer may name what that caller can see. Companion
+  mode is plain chat (§16, issue #1382).
 - **Writing and trying bots.** NetBBS ships a stdlib helper,
   `netbbs.bots.botkit`, that owns the handshake, result correlation and
   state; Baud is written on it, and a second example, Tally, ships installed

@@ -1158,6 +1158,7 @@ async def run(
                 )
                 from netbbs.link.events import (
                     CHANNEL_RELAY_CAPABILITY,
+                    CHAT_BOT_BLOCKS_CAPABILITY,
                     CHAT_ANNOUNCEMENTS_CAPABILITY,
                     PRESENCE_RELAY_CAPABILITY,
                     descriptor_has_capability,
@@ -1175,6 +1176,7 @@ async def run(
                     hub=hub, lane=background_lane, presence=presence, registry=link_realtime_registry,
                     peer_capable=_peer_advertises(CHANNEL_RELAY_CAPABILITY),
                     presence_capable=_peer_advertises(PRESENCE_RELAY_CAPABILITY),
+                    blocks_capable=_peer_advertises(CHAT_BOT_BLOCKS_CAPABILITY),
                     announcement_capable=_peer_advertises(CHAT_ANNOUNCEMENTS_CAPABILITY),
                 )
                 # Issue #860: a channel line that arrives by sync is shown to
@@ -1404,6 +1406,9 @@ async def run(
                     # no-op rather than a special case.
                     announce_identity=lambda: link_node.identity if link_node is not None else None,
                 )
+        # Help desk's node facts say whether browser links are offered
+        # (§16, issue #1382): only with grants that can print a reachable URL.
+        bot_runtime.model.browser_links = transfer_grants is not None and transfer_grants.base_url is not None
 
         servers = await _start_servers(
             config, db, session_handler, ssh_session_handler, throttle, link_node, background_lane,

@@ -732,9 +732,35 @@ def _validate_node_presence_delta_payload(payload: dict, *, path: str) -> None:
     )
 
 
+#: Issue #1373: the most a bot's titled block may take, as compact UTF-8
+#: JSON -- in the signed `channel_message` event and on the live frames that
+#: carry it. Twelve rows of a 24-character label and a 200-character text,
+#: four bytes a character, and a 40-character title fit; the block's shape
+#: is judged where it is shown (`netbbs.chat.blocks`), and a malformed one
+#: is shown as its fallback line.
+BOT_BLOCK_MAX_BYTES = 12 * 1024
+
+
+def bot_block_bytes(value: object) -> int:
+    """The size `BOT_BLOCK_MAX_BYTES` bounds; an unencodable value is too big."""
+    try:
+        return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError, RecursionError):
+        return BOT_BLOCK_MAX_BYTES + 1
+
+
+def _validate_bot_block_field(value: object, *, path: str) -> None:
+    if not isinstance(value, dict):
+        raise LinkProtocolError(f"{path} must be an object")
+    if bot_block_bytes(value) > BOT_BLOCK_MAX_BYTES:
+        raise LinkProtocolError(f"{path} exceeds {BOT_BLOCK_MAX_BYTES} bytes")
+
+
 _CHANNEL_MESSAGE_FRAME_KEYS = frozenset({"channel_id", "user_id", "display_label", "body", "created_at"})
 # Issue #860, sent only to a peer advertising `CHANNEL_RELAY_CAPABILITY`.
 _CHANNEL_MESSAGE_FRAME_OPTIONAL_KEYS = frozenset({"author_node_fingerprint", "content_id"})
+# Issue #1373, sent only to a peer advertising `CHAT_BOT_BLOCKS_CAPABILITY`.
+_CHANNEL_MESSAGE_FRAME_BLOCK_KEY = "block"
 # Issue #1380, sent only to a peer advertising `CHAT_ANNOUNCEMENTS_CAPABILITY`:
 # the line is a SysOp's scheduled announcement. Always `true` when present.
 _CHANNEL_MESSAGE_FRAME_FLAG_KEYS = frozenset({"announcement"})
@@ -742,11 +768,12 @@ _CHANNEL_MESSAGE_FRAME_FLAG_KEYS = frozenset({"announcement"})
 
 def _validate_channel_message_payload(payload: dict, *, path: str) -> None:
     keys = set(payload)
-    optional = _CHANNEL_MESSAGE_FRAME_OPTIONAL_KEYS | _CHANNEL_MESSAGE_FRAME_FLAG_KEYS
+    optional = (_CHANNEL_MESSAGE_FRAME_OPTIONAL_KEYS | _CHANNEL_MESSAGE_FRAME_FLAG_KEYS
+                | {_CHANNEL_MESSAGE_FRAME_BLOCK_KEY})
     if not _CHANNEL_MESSAGE_FRAME_KEYS <= keys or keys - _CHANNEL_MESSAGE_FRAME_KEYS - optional:
         raise LinkProtocolError(
             f"{path} must contain exactly channel_id, user_id, display_label, body, and created_at, "
-            "optionally with author_node_fingerprint, content_id and announcement"
+            "optionally with author_node_fingerprint, content_id, announcement and block"
         )
     for key in _CHANNEL_MESSAGE_FRAME_FLAG_KEYS & keys:
         if payload[key] is not True:
@@ -754,6 +781,12 @@ def _validate_channel_message_payload(payload: dict, *, path: str) -> None:
     _validate_bounded_id(payload["channel_id"], path=f"{path}.channel_id")
     for key in _CHANNEL_MESSAGE_FRAME_OPTIONAL_KEYS & keys:
         _validate_bounded_id(payload[key], path=f"{path}.{key}")
+    if _CHANNEL_MESSAGE_FRAME_BLOCK_KEY in keys:
+        # A bot's block (issue #1373) and a SysOp's announcement marker
+        # (issue #1380) are never one line.
+        if "announcement" in keys:
+            raise LinkProtocolError(f"{path} carries an announcement or a block, not both")
+        _validate_bot_block_field(payload["block"], path=f"{path}.block")
     _validate_bounded_id(payload["user_id"], path=f"{path}.user_id")
     _validate_bounded_text(
         payload["display_label"], path=f"{path}.display_label", max_bytes=_REALTIME_MAX_DISPLAY_LABEL_BYTES
@@ -772,11 +805,21 @@ def _validate_scrollback_entry(entry: object, *, path: str) -> None:
         "content_id", "body", "body_truncated", "created_at",
     }
     # Issue #1380: `announcement`, only to a peer advertising
-    # `CHAT_ANNOUNCEMENTS_CAPABILITY`, on an authored message entry.
-    if not isinstance(entry, dict) or not expected <= set(entry) or set(entry) - expected - {"announcement"}:
+    # `CHAT_ANNOUNCEMENTS_CAPABILITY`, on an authored message entry. Issue
+    # #1373: a bot's `block`, only to a peer advertising
+    # `CHAT_BOT_BLOCKS_CAPABILITY`. Never both: one is a SysOp's line, the
+    # other a bot's.
+    if (not isinstance(entry, dict) or not expected <= set(entry)
+            or set(entry) - expected - {"announcement", "block"}):
         raise LinkProtocolError(f"{path} has unexpected or missing fields")
     if "announcement" in entry and (entry["announcement"] is not True or entry["kind"] != "message"):
         raise LinkProtocolError(f"{path}.announcement must be true, on a message entry")
+    if "block" in entry:
+        if entry["kind"] != "message":
+            raise LinkProtocolError(f"{path}.block belongs on a message")
+        if "announcement" in entry:
+            raise LinkProtocolError(f"{path} carries an announcement or a block, not both")
+        _validate_bot_block_field(entry["block"], path=f"{path}.block")
     if not isinstance(entry["kind"], str) or entry["kind"] not in _REALTIME_SCROLLBACK_ENTRY_KINDS:
         raise LinkProtocolError(f"{path}.kind is not a recognized scrollback event kind")
     # author_label is display-only. The separate node/user identity fields
@@ -1033,8 +1076,12 @@ def _validate_bot_result_payload(payload: dict, *, path: str) -> None:
     _validate_bounded_text(payload["error"], path=f"{path}.error", max_bytes=500)
     if "private" in payload:
         answer = payload["private"]
-        if not isinstance(answer, dict) or set(answer) != {"text"}:
-            raise LinkProtocolError(f"{path}.private must contain exactly text")
+        # Issue #1373: `block`, a private titled block beside its fallback
+        # text, only to a peer advertising `CHAT_BOT_BLOCKS_CAPABILITY`.
+        if not isinstance(answer, dict) or set(answer) not in ({"text"}, {"text", "block"}):
+            raise LinkProtocolError(f"{path}.private must contain exactly text, optionally with block")
+        if "block" in answer:
+            _validate_bot_block_field(answer["block"], path=f"{path}.private.block")
         _validate_bounded_text(answer["text"], path=f"{path}.private.text", max_bytes=4 * BOT_PRIVATE_ANSWER_MAX_CHARS)
         if not answer["text"].strip() or len(answer["text"]) > BOT_PRIVATE_ANSWER_MAX_CHARS:
             raise LinkProtocolError(f"{path}.private.text must contain 1-{BOT_PRIVATE_ANSWER_MAX_CHARS} characters")
@@ -1179,12 +1226,13 @@ def build_node_presence_delta_frame(
 def build_channel_message_frame(
     channel_id: str, user_id: str, display_label: str, body: str, created_at: str,
     *, message_id: str | None = None, content_id: str | None = None,
-    author_node_fingerprint: str | None = None, announcement: bool = False,
+    author_node_fingerprint: str | None = None, announcement: bool = False, block: dict | None = None,
 ) -> RealtimeFrame:
     """`content_id` and `author_node_fingerprint` (issue #860) only for a
     peer advertising `CHANNEL_RELAY_CAPABILITY`, `announcement` (issue
-    #1380) only for one advertising `CHAT_ANNOUNCEMENTS_CAPABILITY`; see
-    their docstrings."""
+    #1380) only for one advertising `CHAT_ANNOUNCEMENTS_CAPABILITY`, and
+    `block` (issue #1373) only for one advertising
+    `CHAT_BOT_BLOCKS_CAPABILITY`; see their docstrings."""
     payload = {
         "channel_id": channel_id, "user_id": user_id, "display_label": display_label,
         "body": body, "created_at": created_at,
@@ -1195,12 +1243,19 @@ def build_channel_message_frame(
         payload["author_node_fingerprint"] = author_node_fingerprint
     if announcement:
         payload["announcement"] = True
+    if block is not None:
+        payload["block"] = block
     frame = RealtimeFrame(
         type="channel_message",
         message_id=message_id or new_realtime_message_id(),
         payload=payload,
     )
     validate_realtime_frame_payload(frame)
+    if block is not None or announcement:
+        # An optional key beside a body's JSON escaping can outgrow the
+        # frame ceiling, which the per-field bounds do not see; refused
+        # here, before the transport's writer would close the session on it.
+        frame.to_json_bytes()
     return frame
 
 
@@ -4745,6 +4800,16 @@ class LinkNode:
                 # naturally a no-op here (payload.get("subject", "")
                 # falls back to "") -- no synthetic dict needed.
                 self._check_board_post_content_size(channel_message.payload, sender_fingerprint, "channel_message")
+                if "block" in channel_message.payload:
+                    # Issue #1373: a bot's block travels inside its line; a
+                    # malformed one is shown as the fallback body, an
+                    # oversized one is refused here, as a poll is.
+                    block_bytes = bot_block_bytes(channel_message.payload["block"])
+                    if block_bytes > BOT_BLOCK_MAX_BYTES:
+                        raise LinkProtocolError(
+                            f"{sender_fingerprint} sent a channel_message with a {block_bytes}-byte block, more "
+                            f"than the {BOT_BLOCK_MAX_BYTES} bytes this node accepts -- refusing"
+                        )
                 # Before `known_event_ids`/`events` are touched, like every
                 # other check on this branch (Codex review). `created_at`
                 # is rendered on every entry into the channel now that chat

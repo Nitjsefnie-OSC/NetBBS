@@ -182,7 +182,11 @@ def test_real_baud_receives_phrases_in_its_hello(db, lane, hub, sysop, alice, ch
             assert (await next_line(queue, "Carrier up")).body == "Carrier up, alice."
             sent = record_message(db, channel, kind="message", author_label=alice.username, body="!help")
             assert await runtime.addressed(channel, alice, sent, pid) is None
-            assert (await next_line(queue, "Befehle:")).text.startswith("Befehle: help;")  # private
+            # Issue #1373: the help is a titled block, the opening its first
+            # row; issue #1372: it answers the caller privately.
+            answer = await next_line(queue, "Befehle:")
+            assert answer.block.rows[:2] == (("", "Befehle:"), ("help", "this list; help remind or help tell for more"))
+            assert answer.text.startswith("Commands: Befehle:; help this list; help remind or help tell")
         finally:
             await runtime.close()
             hub.leave(channel.name, pid)

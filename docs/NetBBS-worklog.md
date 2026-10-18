@@ -1198,6 +1198,16 @@ idempotent design already covers.
   private request, private answer to a node without `chat_bot_private_v1`)
   raises `runtime._TokenKept`, which keeps the request token live and does
   not tell the caller.
+- A bot's titled block (issue #1373) is one `channel_messages` row whose
+  `body` is the host-built fallback line and whose `block_json` is the block.
+  `_render_channel_message` (and `_render_bot_private_answer`) return a
+  `_BlockLines` for it: a `str` whose value is the fallback line, with the
+  block's screen lines in `.lines`. A writer that knows only lines still shows
+  the whole fallback; one that draws blocks iterates `_rendered_lines`. The
+  block is width-dependent, so callers pass `width`. Every node, old or new,
+  keys live dedup on the fallback body, so a block and its plain copy are one
+  line. A received block is kept only for a `.bot` author, and on the live
+  frames only from a peer advertising `chat_bot_blocks_v1`.
 
 `ChatHub` routes opaque objects and owns bounded per-participant queues. It
 does not render messages or decide moderation semantics.
@@ -6480,6 +6490,18 @@ Noise sessions proves disclosure suppression, caller isolation, cancellation,
 accounting and public delivery without credentials or paid requests. Link
 caller access is a capability-gated assertion from the direct authenticated
 home node, solely for model admission; older peers cannot imply authentication.
+
+Model settings are read by `model.load_settings`, which ignores unknown keys
+and defaults missing ones (issue #1382). Keep it that way: a release whose
+reader is strict breaks on any field a newer one saved, and rolling back past
+the tolerant loader (anything before help desk) still needs the release
+note's step for a saved `mode`. A persona equal to any shipped default follows
+the mode on load, so a node saved before modes existed gets the help-desk
+default. Help desk's grounding is a system-message addition, never part of the
+context lines, and is capped in bytes because the ledger reserves bytes as
+tokens. `src/netbbs/bots/handbook.json` is generated from the User Handbook by
+`scripts/build_helpdesk_handbook.py`; the test that compares them is the only
+thing keeping the shipped copy current, so a handbook edit regenerates it.
 
 A VM guest can write its node directory, so the drop directory is guest-
 controlled: `outbound` or any request in it may be a symlink to a host path.

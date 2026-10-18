@@ -33,6 +33,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
+from netbbs.chat.blocks import BotBlock, block_from_json
 from netbbs.chat.channels import Channel
 from netbbs.chat.bots import bot_origin
 from netbbs.config import get_config, set_config
@@ -96,6 +97,10 @@ class ChannelMessage:
     # author could not be told apart from a later holder of the name, which
     # resolves to nobody (`netbbs.net.chat_flow._resolve_message_author`).
     author_user_id: int | None = None
+    # Issue #1373: a bot's titled block, drawn in place of `body`, which
+    # then holds the host-built fallback line. `None` for every other line,
+    # and for a malformed stored or received block (the fallback shows).
+    block: BotBlock | None = None
     # Issue #1380: a SysOp's scheduled announcement carried as a signed line
     # -- this node's own in a channel approved for announcements, or one
     # received with the event's `announcement` marker. Drawn as an
@@ -149,6 +154,7 @@ def record_message(
     mrc_nick_color: int | None = None,
     mrc_handle: str | None = None,
     author_user_id: int | None = None,
+    block: BotBlock | None = None,
     announcement: bool = False,
 ) -> ChannelMessage:
     """
@@ -175,6 +181,8 @@ def record_message(
     """
     if kind in ("message", "daybreak") and body is None:
         raise ValueError(f"body is required for kind={kind!r}")
+    if block is not None and announcement:
+        raise ValueError("a line is a bot's block or a SysOp's announcement, not both")
 
     if mrc_nick_color is not None and (external_source != "mrc" or not 0 <= mrc_nick_color <= 15):
         raise ValueError("MRC nickname color must be 0-15 on an MRC message")
@@ -215,6 +223,10 @@ def record_message(
         db.connection.execute(
             "UPDATE channel_messages SET author_user_id = ? WHERE id = ?", (author_user_id, message_id),
         )
+    if block is not None:
+        # Issue #1373: `body` is the block's fallback line, so search and
+        # older nodes see that; the block itself is what is drawn.
+        db.connection.execute("UPDATE channel_messages SET block_json = ? WHERE id = ?", (block.to_json(), message_id))
     if announcement:
         db.connection.execute("UPDATE channel_messages SET announcement = 1 WHERE id = ?", (message_id,))
     # Capture *this* row now, inside the transaction and before the trim:
@@ -308,5 +320,6 @@ def _row_to_message(row: sqlite3.Row) -> ChannelMessage:
         mrc_handle=row["mrc_handle"] if "mrc_handle" in columns else None,
         author_kind=row["author_kind"] if "author_kind" in columns else "user",
         author_user_id=row["author_user_id"] if "author_user_id" in columns else None,
+        block=block_from_json(row["block_json"]) if "block_json" in columns else None,
         announcement=bool(row["announcement"]) if "announcement" in columns else False,
     )
