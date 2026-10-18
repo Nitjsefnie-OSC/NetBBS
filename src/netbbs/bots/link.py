@@ -12,9 +12,12 @@ from collections import OrderedDict
 import logging
 
 from netbbs.bots.registry import BotError, active_labels, allowed_channel, bot_for_label, list_bots, channel_readers
-from netbbs.chat.bots import BotNotice, remote_bot_visible
+from netbbs.chat.bots import BotNotice, BotPrivateAnswer, remote_bot_visible
 from netbbs.link.channels import channel_origin_fingerprint, is_channel_linked
-from netbbs.link.events import CHAT_BOTS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY, descriptor_has_capability
+from netbbs.link.events import (
+    CHAT_BOTS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY, CHAT_BOT_PRIVATE_CAPABILITY,
+    descriptor_has_capability,
+)
 from netbbs.link.enforcement import LinkPolicyAction, decide_node_action
 from netbbs.link.node_profiles import identity_for_fingerprint, link_address_label
 from netbbs.link.protocol import (
@@ -24,9 +27,11 @@ from netbbs.link.protocol import (
 from netbbs.link.realtime_channels import _decide_channel_subscribe_authorization, _live_author_allowed
 from netbbs.link.transport import LinkTransportError
 from netbbs.rendering import sanitize_text
+from netbbs.timeutil import utc_now_iso
 
 _logger = logging.getLogger(__name__)
 MAX_REQUESTS = 256
+_NO_PRIVATE = "That node's bots cannot answer privately yet; address the bot in the channel instead."
 MAX_REMOTE_ROSTERS = 512
 
 
@@ -94,15 +99,23 @@ class BotLink:
         except LinkTransportError:
             pass
 
-    def request(self, channel, user, participant_id, fingerprint, label, text):
-        """Bounded background delivery; dialing never holds chat's input lock."""
+    def request(self, channel, user, participant_id, fingerprint, label, text, *, private=False):
+        """Bounded background delivery; dialing never holds chat's input lock.
+
+        `private` (issue #1372): the caller asked privately, with `/msg` or
+        `/private`. The flag goes only to a host advertising
+        `chat_bot_private_v1`; an older one is refused here, never asked in
+        a way it could answer publicly."""
         if not self.capable(fingerprint):
             return "That node does not advertise live bot support."
+        if private and not self.capable(fingerprint, CHAT_BOT_PRIVATE_CAPABILITY):
+            return _NO_PRIVATE
         if len(self.requests) >= MAX_REQUESTS:
             return "Bot requests are busy; try again shortly."
         try:
             frame = build_bot_frame("bot_request", {"channel_id": channel.channel_id, "bot": label,
-                                                    "caller": user.username, "text": text})
+                                                    "caller": user.username, "text": text,
+                                                    **({"private": True} if private else {})})
         except LinkProtocolError:
             return "That bot request is too long or has an invalid address."
         task = asyncio.create_task(self._request(channel, participant_id, fingerprint, label, frame, user_id=user.id),
@@ -122,6 +135,8 @@ class BotLink:
                 session = await self.direct.ensure_session(fingerprint)
                 if not self.capable(fingerprint):
                     raise BotError("That node does not advertise live bot support.")
+                if "private" in frame.payload and not self.capable(fingerprint, CHAT_BOT_PRIVATE_CAPABILITY):
+                    raise BotError(_NO_PRIVATE)
                 if user_id is not None and self.capable(fingerprint, CHAT_BOT_CALLERS_CAPABILITY):
                     from netbbs.bots.model import caller_access
                     access = await self.lane.run(caller_access, user_id)
@@ -129,7 +144,13 @@ class BotLink:
                 done = asyncio.get_running_loop().create_future()
                 self.pending[frame.message_id] = (fingerprint, done)
                 await session.send(frame)
-                reason = await done
+                reason, private = await done
+                if private is not None:
+                    # Checked again on receipt (issue #1372): a mute or
+                    # `/bots local|none` set while the bot worked hides it.
+                    if await self.lane.run(remote_bot_visible, channel, label, fingerprint):
+                        await self.hub.send_to(channel.name, participant_id, BotPrivateAnswer(
+                            label, sanitize_text(private), utc_now_iso(), node_fingerprint=fingerprint))
         except asyncio.CancelledError:
             reason = "Bot requests stopped before the remote bot replied."
             raise
@@ -150,10 +171,13 @@ class BotLink:
             raise LinkProtocolError("Peer has not advertised chat_bot_readers_v1")
         if not self.capable(session.remote_fingerprint):
             raise LinkProtocolError("Peer has not advertised chat_bots_v1")
+        if "private" in frame.payload and not self.capable(session.remote_fingerprint, CHAT_BOT_PRIVATE_CAPABILITY):
+            raise LinkProtocolError("Peer has not advertised chat_bot_private_v1")
         if frame.type == "bot_result":
             pending = self.pending.get(frame.payload["request_id"])
             if pending and pending[0] == session.remote_fingerprint and not pending[1].done():
-                pending[1].set_result(frame.payload["error"])
+                answer = frame.payload.get("private")
+                pending[1].set_result((frame.payload["error"], answer["text"] if answer else None))
         elif frame.type == "bot_request":
             if "access" in frame.payload and not self.capable(session.remote_fingerprint, CHAT_BOT_CALLERS_CAPABILITY):
                 raise LinkProtocolError("Peer has not advertised chat_bot_callers_v1")
@@ -168,7 +192,10 @@ class BotLink:
             await self._presence(session, frame)
 
     async def _incoming(self, session, frame):
-        async def completed(error, message=None):
+        asked_privately = frame.payload.get("private") is True
+        private_reachable = self.capable(session.remote_fingerprint, CHAT_BOT_PRIVATE_CAPABILITY)
+
+        async def completed(error, message=None, private=None):
             # The requester may reach the bot while the channel origin is
             # offline. Deliver its public reply directly too; the bridge's
             # ordinary author/time/body dedup hides any origin-relayed copy.
@@ -177,8 +204,11 @@ class BotLink:
                     frame.payload["channel_id"], message.author_label, message.author_label,
                     message.body, message.created_at,
                 ))
+            # A private answer travels only inside the result (issue #1372),
+            # never as a direct message or a channel event.
             await self._send(session, build_bot_frame("bot_result", {
-                "request_id": frame.message_id, "error": error[:120],
+                "request_id": frame.message_id, "error": "" if private is not None else error[:120],
+                **({"private": {"text": private}} if private is not None else {}),
             }))
 
         def authorize(db):
@@ -193,15 +223,18 @@ class BotLink:
             bot = bot_for_label(db, p["bot"])
             if bot is None:
                 raise BotError("No running bot with that name is available here.")
-            allowed_channel(db, bot.id, channel.name, check_rate=True)
+            caller_id = f"link:{session.remote_fingerprint}:{caller}"
+            allowed_channel(db, bot.id, channel.name, check_rate=True,
+                            private_caller=caller_id if asked_privately else None)
             home = identity_for_fingerprint(db, session.remote_fingerprint).label
-            return bot, channel, {"id": f"link:{session.remote_fingerprint}:{caller}",
+            return bot, channel, {"id": caller_id,
                                   "name": link_address_label(caller, home),
                                   "access": p.get("access")}
 
         try:
             bot, channel, caller = await self.lane.run(authorize)
-            await self.runtime.enqueue(bot, channel, caller, frame.payload["text"], completed=completed)
+            await self.runtime.enqueue(bot, channel, caller, frame.payload["text"], completed=completed,
+                                       asked_privately=asked_privately, private_reachable=private_reachable)
         except (BotError, LinkProtocolError):
             await completed("This bot is unavailable here, busy, or not permitted to respond.")
         except Exception:

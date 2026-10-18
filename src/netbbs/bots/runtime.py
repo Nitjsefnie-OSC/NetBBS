@@ -15,17 +15,24 @@ import uuid
 
 from netbbs.bots import BOT_API_VERSION
 from netbbs.bots.registry import (
-    Bot, BotError, allowed_channel, list_bots, publish, select_request, set_runtime_status,
-    reset_runtime_status,
+    Bot, BotError, allowed_channel, bot_for_label, deliver_private, list_bots, publish, select_request,
+    set_runtime_status, reset_runtime_status,
 )
 from netbbs.bots.state import read_state, write_state, state_path
-from netbbs.chat.bots import BotNotice
+from netbbs.chat.bots import BotNotice, BotPrivateAnswer
 from netbbs.rendering import sanitize_text
+from netbbs.timeutil import utc_now_iso
 
 MAX_LINE_BYTES = 32768
 MAX_PENDING = 32
 REQUEST_SECONDS = 60
 _logger = logging.getLogger(__name__)
+
+
+class _TokenKept(BotError):
+    """A refusal the bot can act on with another answer (issue #1372): the
+    request token stays live and the caller is not told, so a bot whose
+    private answer cannot reach this caller may still reply publicly."""
 
 
 class BotRuntime:
@@ -117,8 +124,32 @@ class BotRuntime:
             return str(exc)
         return None
 
-    async def enqueue(self, bot, channel, caller, text, participant_id=None, *, completed=None):
-        await self.lane.run(allowed_channel, bot.id, channel.name, check_rate=True)
+    async def ask_privately(self, channel, user, label, text, participant_id) -> str | None:
+        """A local caller's private request (issue #1372): `/msg Baud.bot`
+        and `/private Baud.bot`. The chat screen calls this instead of the
+        public send path, so the request is never recorded, broadcast,
+        queued for Link, relayed to MRC or observed. A refusal is returned
+        for the caller to see."""
+        try:
+            bot = await self.lane.run(bot_for_label, label)
+            if bot is None:
+                raise BotError("No local bot has that name. Use /names to see running bots here.")
+            await self.enqueue(bot, channel, {"id": user.id, "name": user.username}, text, participant_id,
+                               asked_privately=True)
+        except BotError as exc:
+            return str(exc)
+        return None
+
+    async def enqueue(self, bot, channel, caller, text, participant_id=None, *, completed=None,
+                      asked_privately=False, private_reachable=True):
+        """Dispatch one addressed request. A privately asked one is checked
+        against the caller's private-answer limit before dispatch, a public
+        one against the channel's, since its answer may be public (issue
+        #1372 Decision 4). `private_reachable` says whether a private answer
+        can reach this caller: false for a Link caller whose home node lacks
+        `chat_bot_private_v1`."""
+        await self.lane.run(allowed_channel, bot.id, channel.name, check_rate=True,
+                            private_caller=str(caller["id"]) if asked_privately else None)
         worker = self.workers.get(bot.id)
         if worker is None or not worker.ready:
             raise BotError(f"{bot.label} is not ready. The SysOp can check its status in Chat bots.")
@@ -130,8 +161,11 @@ class BotRuntime:
         text = sanitize_text(text).replace("\t", " ")
         request = uuid.uuid4().hex
         worker.pending[request] = (channel.name, participant_id, time.monotonic() + REQUEST_SECONDS, completed, dict(caller), text)
+        worker.privacy[request] = (bool(asked_privately), bool(private_reachable or asked_privately))
         worker.events.put_nowait({"type": "message", "request": request, "channel": channel.name,
-                                 "caller": caller, "text": text})
+                                 "caller": caller, "text": text,
+                                 "private": bool(private_reachable or asked_privately),
+                                 "asked_privately": bool(asked_privately)})
 
     async def observe(self, channel, message, *, caller=None):
         """Only accepted live human paths call this; no tokens or replay dispatch."""
@@ -167,6 +201,8 @@ class _Worker:
         self.model_enabled = model_enabled
         self.events: asyncio.Queue = asyncio.Queue(maxsize=64)
         self.pending: dict[str, tuple] = {}
+        # request -> (asked privately, a private answer can reach the caller)
+        self.privacy: dict[str, tuple[bool, bool]] = {}
         self.announcements = {}
         self.source_cursor = 0
         self.ready = False
@@ -178,11 +214,23 @@ class _Worker:
     async def status(self, state: str, error: str = "") -> None:
         await self.owner.lane.run(set_runtime_status, self.bot.id, state, error)
 
-    async def notify(self, request: str, text: str, message=None) -> None:
+    def request_privacy(self, request: str) -> tuple[bool, bool]:
+        """(asked privately, private answer reachable) for a live token."""
+        return self.privacy.get(request, (False, True))
+
+    async def notify(self, request: str, text: str, message=None, private: BotPrivateAnswer | None = None) -> None:
         target = self.pending.pop(request, None)
+        self.privacy.pop(request, None)
         if target:
             if target[3] is not None:
-                await target[3](text, message)
+                if private is not None:
+                    await target[3](text, message, private.text)
+                else:
+                    await target[3](text, message)
+            elif private is not None:
+                # Only the requesting session; dropped if it has left, as
+                # an online-only /msg is (issue #1372).
+                await self.owner.hub.send_to(target[0], target[1], private)
             elif text:
                 await self.owner.hub.send_to(target[0], target[1],
                                              BotNotice(f"{self.bot.label}: {sanitize_text(text)}", private=True))
@@ -415,7 +463,8 @@ class _Worker:
                 result.update(ok=False, error=str(exc)[:300])
                 await self.status("running", str(exc))
                 request = value.get("request")
-                if isinstance(request, str) and value.get("action") != "query":
+                if (isinstance(request, str) and value.get("action") != "query"
+                        and not isinstance(exc, _TokenKept)):
                     await self.notify(request, str(exc))
             if self.events.full():
                 raise BotError("Bot stopped consuming host events.")
@@ -431,7 +480,9 @@ class _Worker:
                 raise BotError("Model actions need this bot's live addressed request token.")
             if request in self.model_tasks:
                 raise BotError("This request is already being handled by the model.")
-            task = asyncio.create_task(self._model_reply(request, pending, reset=action == "model.reset"), name="bot-model-reply")
+            private = self._answer_privacy(request, value)
+            task = asyncio.create_task(self._model_reply(request, pending, reset=action == "model.reset",
+                                                         private=private), name="bot-model-reply")
             self.model_tasks[request] = task
             def finished(done):
                 self.model_tasks.pop(request, None)
@@ -471,6 +522,8 @@ class _Worker:
             if not isinstance(request, str) or request not in self.pending:
                 raise BotError("Reply request has expired or does not belong to this bot.")
             channel_name = self.pending[request][0]
+            if self._answer_privacy(request, value):
+                return await self._private_reply(request, channel_name, body)
         else:
             channel_name = value.get("channel")
             if not isinstance(channel_name, str):
@@ -486,12 +539,37 @@ class _Worker:
             await self.notify(request, "", message)
         return {"message_id": message.id}
 
-    async def _model_reply(self, request, pending, *, reset):
+    def _answer_privacy(self, request, value) -> bool:
+        """Whether this answer is private: the action's `private` flag,
+        which defaults to how the request was asked. A privately asked
+        request takes no public answer, and a private one is refused, never
+        made public, when it cannot reach the caller (issue #1372). Both
+        refusals keep the token, so the bot can answer the other way."""
+        flag = value.get("private")
+        if flag is not None and type(flag) is not bool:
+            raise BotError("An action's private flag must be true or false.")
+        asked, reachable = self.request_privacy(request)
+        private = asked if flag is None else flag
+        if asked and not private:
+            raise _TokenKept("This request was asked privately; answer it privately.")
+        if private and not reachable:
+            raise _TokenKept("This caller's node cannot take private answers; reply publicly instead.")
+        return private
+
+    async def _private_reply(self, request, channel_name, body):
+        pending = self.pending[request]
+        bot, _channel = await self.owner.lane.run(deliver_private, self.bot.id, channel_name, body,
+                                                  str(pending[4]["id"]))
+        await self.notify(request, "", private=BotPrivateAnswer(bot.label, body, utc_now_iso()))
+        return {"private": True}
+
+    async def _model_reply(self, request, pending, *, reset, private=False):
         try:
-            text, accept = await self.owner.model.respond(self.bot.id, pending[0], pending[4], pending[5], reset=reset)
+            text, accept = await self.owner.model.respond(self.bot.id, pending[0], pending[4], pending[5], reset=reset,
+                                                          private=private)
             if self.pending.get(request) is not pending or pending[2] <= time.monotonic():
                 return
-            await self._action({"action": "reply", "request": request, "text": text})
+            await self._action({"action": "reply", "request": request, "text": text, "private": private})
             accept()
         except asyncio.CancelledError:
             raise

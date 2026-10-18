@@ -2434,6 +2434,14 @@ In channels:
 
 - Moderators can `/mute Baud.bot [duration] [reason]` and `/unmute Baud.bot`.
 - Output limits apply per bot and channel and survive a restart.
+- Callers can ask a bot privately with `/msg Baud.bot <text>` or
+  `/private Baud.bot`, and a bot may answer any request privately. Neither
+  the question nor the answer enters the channel, its history, Link or MRC,
+  and bots with **Read whole channels** do not see the question. Private
+  answers need no grant of their own: the bot must be allowed in the
+  caller's channel, and mutes and the channel's `/bots` setting apply. They
+  have a fixed limit of 30 an hour per caller per bot instead of the
+  channel's output limit.
 - `/who`, `/names` and the status line distinguish bots from people.
 
 ### Linked channels and external bots
