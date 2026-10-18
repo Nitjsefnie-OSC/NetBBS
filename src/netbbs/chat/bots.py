@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import datetime as dt
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from netbbs.auth.users import BOT_LABEL_SUFFIX, AuthError, User, get_user_by_username
@@ -42,6 +43,22 @@ class BotNotice(str):
         notice = super().__new__(cls, text)
         notice.private = private
         return notice
+
+
+@dataclass(frozen=True)
+class BotPrivateAnswer:
+    """A bot's private answer to one caller (issue #1372), queued with
+    `ChatHub.send_to` for the requesting session alone.
+
+    It is content, not a notice: the chat screen draws it as a timestamped
+    bot line marked `(to you)`. It is never a `ChannelMessage`, so it is in
+    no history, search or replay, only in the session's own kept lines.
+    `node_fingerprint` is the bot's host for a remote bot, else `None`."""
+
+    label: str
+    text: str
+    created_at: str
+    node_fingerprint: str | None = None
 
 
 def bot_label_origin(db: Database, label: str, *, remote: bool = False) -> BotOrigin | None:

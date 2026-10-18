@@ -4764,4 +4764,22 @@ MIGRATIONS = [
         CREATE INDEX idx_oneliner_additions_user ON oneliner_additions(user_id, created_at);
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1372 (design doc §16, private bot replies, Decision 4): "
+            "`bot_private_history`, one row per private answer a bot instance gave one caller, "
+            "for the fixed limit of 30 private answers per caller per hour per bot. A caller is "
+            "the bot API's caller id as text: a local account id, or "
+            "`link:<home-fingerprint>:<username>`. Rows older than an hour are pruned on write. "
+            "Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE bot_private_history (
+            bot_id INTEGER NOT NULL REFERENCES chat_bots(id) ON DELETE CASCADE,
+            caller TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_bot_private_rate ON bot_private_history(bot_id, caller, created_at);
+        """,
+    ),
 ]

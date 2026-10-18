@@ -24,6 +24,9 @@ from netbbs.timeutil import utc_now_iso, utc_iso
 MAX_BOTS = 16
 MAX_CHANNELS = 32
 MAX_BODY = 500
+# Issue #1372 Decision 4: private answers make no noise in the channel, so
+# they have their own fixed limit per caller per bot instead of the channel's.
+PRIVATE_PER_HOUR = 30
 TEMPERAMENTS = ("friendly", "terse", "retro")
 # Issue #1381: a phrase override is checked as the longest local caller name
 # would expand it, so "<name>: <phrase>" still fits one 500-character line.
@@ -403,7 +406,21 @@ def reset_runtime_status(db: Database) -> None:
     db.connection.commit()
 
 
-def allowed_channel(db: Database, bot_id: int, name: str, *, check_rate: bool = False) -> tuple[Bot, Channel]:
+def _check_private_rate(db: Database, bot: Bot, caller: str) -> None:
+    cutoff = utc_iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
+    count = db.connection.execute(
+        "SELECT COUNT(*) FROM bot_private_history WHERE bot_id=? AND caller=? AND created_at > ?",
+        (bot.id, caller, cutoff),
+    ).fetchone()[0]
+    if count >= PRIVATE_PER_HOUR:
+        raise BotError(f"{bot.label} reached its limit of {PRIVATE_PER_HOUR} private answers per hour for you.")
+
+
+def allowed_channel(db: Database, bot_id: int, name: str, *, check_rate: bool = False,
+                    private_caller: str | None = None) -> tuple[Bot, Channel]:
+    """The bot's gates in one channel. With `check_rate`, the hourly limit
+    that applies: the channel's, or with `private_caller` (issue #1372) that
+    caller's own private-answer limit, which never touches the channel's."""
     bot = get_bot(db, bot_id)
     if not bot.enabled:
         raise BotError("This bot is stopped.")
@@ -417,7 +434,9 @@ def allowed_channel(db: Database, bot_id: int, name: str, *, check_rate: bool = 
         raise BotError(f"{bot.label} is muted here.")
     if channel_bot_policy(db, channel) == "none":
         raise BotError("Bots are disabled by this channel's policy.")
-    if check_rate:
+    if check_rate and private_caller is not None:
+        _check_private_rate(db, bot, private_caller)
+    elif check_rate:
         cutoff = utc_iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
         count = db.connection.execute(
             "SELECT COUNT(*) FROM bot_output_history WHERE bot_id=? AND channel_id=? AND created_at > ?",
@@ -486,11 +505,34 @@ def observation_targets(db: Database, channel_name: str, kind: str) -> list[int]
     return result
 
 
-def publish(db: Database, bot_id: int, channel_name: str, body: str, *, node_identity=None, source_reference=None):
+def _check_bot_text(body) -> None:
     if not isinstance(body, str) or not body.strip() or len(body) > MAX_BODY:
         raise BotError("A bot line must contain 1-500 characters.")
     if any(c in body for c in "\r\n\t") or sanitize_text(body) != body:
         raise BotError("Bot lines must be plain text without terminal controls.")
+
+
+def deliver_private(db: Database, bot_id: int, channel_name: str, body: str, caller: str) -> tuple[Bot, Channel]:
+    """Debit one private answer (issue #1372) after the gates a public reply
+    passes, but against `caller`'s own hourly limit. Nothing is recorded in
+    the channel: the answer exists only in the requesting session."""
+    _check_bot_text(body)
+    db.connection.execute("BEGIN IMMEDIATE")
+    try:
+        bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True, private_caller=caller)
+        cutoff = utc_iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
+        db.connection.execute("DELETE FROM bot_private_history WHERE created_at <= ?", (cutoff,))
+        db.connection.execute("INSERT INTO bot_private_history(bot_id, caller, created_at) VALUES (?, ?, ?)",
+                              (bot.id, caller, utc_now_iso()))
+        db.connection.commit()
+    except BaseException:
+        db.connection.rollback()
+        raise
+    return bot, channel
+
+
+def publish(db: Database, bot_id: int, channel_name: str, body: str, *, node_identity=None, source_reference=None):
+    _check_bot_text(body)
     db.connection.execute("BEGIN IMMEDIATE")
     try:
         bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True)
