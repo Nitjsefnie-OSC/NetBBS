@@ -88,8 +88,16 @@ Each decision lives in its own file under [`decisions/`](decisions/), named afte
 | #1354 | [the New Year and clock changes in chat](decisions/1354-the-new-year-and-clock-changes-in-chat.md) | decided |
 | #1357 | [Link moderation: delegated moderators for linked boards and channels](decisions/1357-link-moderation-delegated-moderators-for-linked.md) | decided |
 | #1368 | [Link DMs: cross-node `/dm` direct chats](decisions/1368-link-dms-cross-node-dm-direct-chats.md) | decided and built |
+| #1372 | [private bot replies](decisions/1372-private-bot-replies.md) | decided |
+| #1373 | [titled block replies for bots](decisions/1373-titled-block-replies-for-bots.md) | decided |
+| #1374 | [a bot developer kit](decisions/1374-a-bot-developer-kit.md) | decided |
+| #1375 | [Baud reminders: absolute times and delivery when the owner is back](decisions/1375-baud-reminders-absolute-times-and-held-delivery.md) | decided |
+| #1376 | [Baud `!tell`: a note delivered on the next join](decisions/1376-baud-tell.md) | decided |
 | #1377 | [paging the SysOp](decisions/1377-paging-the-sysop.md) | decided |
+| #1378 | [door events as a bot announcement source](decisions/1378-door-events-as-a-bot-announcement-source.md) | decided |
+| #1379 | [Baud social commands](decisions/1379-baud-social-commands.md) | decided |
 | #1380 | [scheduled SysOp announcements in chat](decisions/1380-scheduled-sysop-announcements-in-chat.md) | decided |
+| #1382 | [a help-desk mode for Baud's model conversation](decisions/1382-a-help-desk-mode-for-baud.md) | decided |
 | #1391 | [the oneliner wall](decisions/1391-the-oneliner-wall.md) | decided |
 | #1394 | [splitting the design document by area](decisions/1394-splitting-the-design-document-by-area.md) | decided and built |
 | — | [Staff edit a member's Profile](decisions/staff-edit-a-members-profile.md) | decided |

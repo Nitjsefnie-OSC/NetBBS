@@ -40,7 +40,8 @@ last-seen query grants now serve Baud and external programs through the same
 host-bound request API. Statistics expose node name, uptime and online human
 count. Last-seen exposes public online status or the latest recorded login or
 logout on the bot's host, respecting hidden session history even for SysOp
-requests because replies are public. No private activity is queried.
+requests because a reply may be public: private answers (#1372) do not
+change what these queries return. No private activity is queried.
 Whole-channel reading and channel-specific live join/leave grants are now
 available separately. Baud's optional greetings require join events, not
 conversation access. Channel headings, `/who` and live grant-change notices
@@ -136,8 +137,10 @@ program arguments, provider details and numeric budgets remain editable text.
   `BOT_API_VERSION`.
   - NetBBS sends events: a line, a join or a leave, a new post or file in an
     area the bot watches, and a timer tick.
-  - The bot sends actions: say a line in a channel, reply to a user, read
-    or write its own state, and make specifically permitted node queries.
+  - The bot sends actions: say a line in a channel, reply to a user
+    publicly or privately, read or write its own state, and make
+    specifically permitted node queries. The current set of actions is in
+    §6.3, "Chat bots".
   - The door hook's file drop is rejected for this: a bot has to receive
     events as they happen.
 - **Scopes** are explicit and additive. The SysOp grants them per bot and
@@ -145,23 +148,26 @@ program arguments, provider details and numeric budgets remain editable text.
   - `addressed`, the default: the bot receives only messages directed to it,
     through explicit naming or the channel's default-bot commands below;
   - `channel`: everything said in the channel;
-  - `events`: posts, files, joins and leaves from specifically approved
-    sources. Greetings require join events from the approved channel;
-    announcements require events from approved boards or file areas.
+  - `events`: posts, files, door events, joins and leaves from specifically
+    approved sources. Greetings require join events from the approved
+    channel; announcements require events from approved boards, file areas
+    or doors (§16, issue #1378).
 
   A grant of `channel` comes with a warning. While a bot holds it, the
   channel's heading and `/who` say that the bot reads the channel.
   Enabling an ability shows the SysOp the additional access it needs and
   requires the corresponding explicit grants.
-- **Node queries** have specific permissions for statistics and `!seen`,
-  rather than general database access. `!seen` follows the requesting
-  caller's visibility rules and reports when someone was last online,
-  without exposing their private-channel activity.
+- **Node queries** have specific permissions for statistics, `!seen` and
+  door standings (`top`, §16, issue #1378), rather than general database
+  access. `!seen` follows the requesting caller's visibility rules and
+  reports when someone was last online, without exposing their
+  private-channel activity.
 - **Announcement audiences.** Initially, automatic announcements may carry
   information only from boards and file areas readable by every caller
-  allowed into the destination channel. NetBBS refuses a source-to-channel
-  mapping if it cannot establish this; even a restricted post's title must
-  not leak through an announcement.
+  allowed into the destination channel, and from doors whose play level is
+  0 (§16, issue #1378). NetBBS refuses a source-to-channel mapping if it
+  cannot establish this; even a restricted post's title must not leak
+  through an announcement.
 - **Addressing.** Explicit names work for commands and conversation alike:
   `Baud.bot: help` or `Baud.bot: <message>`. Each channel may have one default
   bot, selected locally by each node. Short commands such as `!help` and
@@ -191,12 +197,19 @@ program arguments, provider details and numeric budgets remain editable text.
 - **Temperament.** A few presets shape its fixed phrases. They need no
   language model.
 - **Abilities:**
-  - `!help`;
+  - `!help`, which also points to `/sysop` for paging the SysOp (§16, issue
+    #1377);
   - `!seen`;
   - node statistics;
-  - reminders;
-  - greetings and announcements of new posts and files, each switched on
-    separately.
+  - reminders, by duration or at an absolute time in the node clock, held
+    for an owner who is not in the channel when they fall due (§16, issue
+    #1375);
+  - `!tell`, a note held for a local account's next join (§16, issue #1376);
+  - `!roll` and `!coin`, always on, and per-channel quotes and quick polls,
+    each switched on separately (§16, issue #1379);
+  - greetings and announcements of new posts, files and door events, each
+    switched on separately, and door standings with `!top` (§16, issue
+    #1378).
 - **Scope.** Baud starts with `addressed` alone; help and reminders work
   with that scope. Enabling greetings or announcements requires the
   corresponding source-specific `events` grants. Statistics and `!seen`
@@ -214,9 +227,13 @@ and off by default.**
   plus at most N lines of prior context; the SysOp sets N, and it may be 0.
   Context is separate for each authenticated caller, bot instance and
   channel, and contains only that caller's addressed messages and the bot's
-  replies to them. Ordinary chat and other callers' exchanges never enter
-  it. Replies remain visible in the channel where the caller addressed the
-  bot; separate context does not make channel conversation private.
+  delivered replies to them. Ordinary chat and other callers' exchanges
+  never enter it. In help-desk mode, the default, the host also sends
+  excerpts of the shipped caller handbook and public node facts, chosen per
+  request under a fixed size (§16, issue #1382). A reply is visible in the
+  channel unless the caller asked privately or the bot answered privately
+  (§16, issue #1372); separate context alone does not make channel
+  conversation private.
 - **Context lifetime.** Context stays in memory only, expires after 30
   minutes of inactivity, and is cleared on restart. A caller has an explicit
   command to clear their current conversation context. The command explains
@@ -246,5 +263,6 @@ and off by default.**
   - The API key is stored as a secret, the way FTN passwords are.
   - Prompts are not logged unless the SysOp turns logging on, and callers are
     told when it is on.
-- **Persona.** NetBBS ships a default system prompt for Baud, and the SysOp
-  can edit it.
+- **Persona and mode.** The SysOp chooses help desk (the default) or
+  companion; NetBBS ships a default system prompt for each, and the SysOp can
+  edit it (§16, issue #1382).

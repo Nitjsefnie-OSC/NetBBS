@@ -808,6 +808,19 @@ ignored: it is the sender's unverified claim. An older subscriber gets relayed
 lines through async catch-up instead; an older origin still shows a
 subscriber's plain frame to its own callers.
 
+The signed event's optional `block` and `announcement` fields (§9.6) ride the
+live `channel_message` frame and `scrollback_snapshot` entries the same way:
+as optional keys sent only to peers advertising the capability for each
+(working names `chat_bot_blocks_v1` and `chat_announcements_v1`, issues #1373
+and #1380). Every other peer gets the plain line, with a block's host-built
+fallback as its body. A remote request's reply that goes directly to the
+caller's node carries the same block, so live deduplication sees one line.
+Bot request and result frames are a separate, optional family under
+`chat_bots_v1` (§16, issue #1208). A private answer travels only inside
+`bot_result`, and a privately asked request is flagged in `bot_request`,
+both under `chat_bot_private_v1` (issue #1372): never as a direct message and
+never as a channel event, and never sent to a peer without that capability.
+
 A line that arrives by async sync is shown at once to callers already in its
 channel, not only on their next join. The bridge remembers the lines it has
 shown (bounded), so the signed event that follows a live line is not shown

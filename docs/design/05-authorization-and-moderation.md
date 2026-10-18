@@ -573,6 +573,25 @@ it is shown it reads "away since" the day it was set, and the person's own
 console landing view shows it to them each time they log in, as a reminder
 to end it.
 
+**Pages** (issue #1377). A caller pages the node's staff from chat with
+`/sysop <reason>` (§6.3). A page goes to the usable SysOps and to everyone
+holding any staff permission, resolved when it is delivered and shown, and
+not to moderators. It is stored in a shared Pages queue: the console
+dashboard's ATTENTION panel and the Staff console's landing view count open
+pages, and the main menu tells each recipient "1 page waiting: SysOp →
+Pages." Online recipients get a live notice with the chat bell, routed as mail
+arrivals are: at once in chat and the Monitor, queued on other screens, never
+into a door or an editor. A page offers `[C]hat` (break-in, while the paging
+session is connected), `[M]ail reply` (members only) and `[D]one`, and one
+person handling it clears it for all. Away staff are still paged, and the
+caller's answer names the one expected back first when everyone is away. The
+Monitor and the node log record where the caller was, never the reason. A
+caller has at most one open page, a new one replacing its reason, and pages
+at most once every 10 minutes, counted per account (per session for guests).
+A guest may page only while a recipient is online. Staff cannot page their
+own node, and no bot can page. Open pages are kept until handled, handled ones
+for 30 days. See §16, "Issue #1377 — paging the SysOp".
+
 Staff permissions, the Staff list and the away notice are local to the node.
 None of them is carried over Link: a staff member's moderation of carried
 content follows §5.2 and §9.5 exactly as a moderator's does.

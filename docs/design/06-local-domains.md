@@ -577,6 +577,74 @@ nothing more: rendering must never be able to shut a caller out of a channel.
 `/msg` and `/private` remain ephemeral and online-only. They never silently
 fall back to asynchronous mail.
 
+**Chat bots.** A bot is an external program speaking as `<Name>.bot`, never
+taken for a person; its design is §16, "Issue #1208 — chat bots", and its
+protocol is `docs/NetBBS-bot-api.md`. What a caller sees of one:
+- **Asking privately.** `/msg Baud.bot <text>` sends one request only the bot
+  sees, and `/private Baud.bot` sends every plain line to it until `/close`,
+  as `/private <user>` does with a person; `Baud.bot@Node` reaches a bot on a
+  linked BBS. Such a request is never recorded, broadcast, carried over Link,
+  relayed to MRC or seen by bots that read the channel, and its answer is
+  always private. Its channel is the caller's current one, so the bot must be
+  allowed there and every grant, mute and `/bots` setting applies (§16,
+  issue #1372).
+- **Private answers.** A bot may answer any request privately. The answer is
+  a bot line marked `(to you)`, shown only to the requesting session, kept
+  in that session's lines like `/msg` and never in the channel's history,
+  search or replay, and it never rings. A private answer is implied by the
+  `addressed` grant and has its own fixed per-caller limit, 30 an hour per
+  bot, instead of the channel's. Over Link it travels only in the bot's own
+  result frame, never as a direct message or a channel event, and it is
+  refused rather than made public when the caller's node cannot take it
+  (§16, issue #1372).
+- **Titled blocks.** A bot's answer may be a titled block drawn like `/who`:
+  `[BOT] Name.bot · <title>`, up to 12 rows of an optional label and a text
+  of up to 200 characters, costing one line of the channel's hourly limit.
+  The host builds a plain fallback line from it, which older nodes show and
+  search matches. A private block's title ends `to you`. Reminders,
+  announcements and other unprompted lines stay one line (§16, issue #1373).
+- **Lines held for a caller.** A bot may ask the host to say a line when one
+  caller next joins the channel; the host holds it in its own table, with an
+  expiry, and says it only in that channel, once per join of the account.
+  Baud uses this for reminders whose owner is not there when they fall due
+  (held 7 days) and for `!tell` notes (held 14 days, local recipients only,
+  the block list checked at creation and again at delivery, §6.4) (§16,
+  issues #1375 and #1376).
+- **What a bot is told.** Its `hello` carries the node's display timezone,
+  so times are read in the node clock, and lists which of its channels are
+  Linked. A message event says whether the caller is a moderator of the
+  channel or the guest, and whether a private answer can reach them (§16,
+  issues #1372, #1375 and #1379).
+- **Writing and trying bots.** NetBBS ships a stdlib helper,
+  `netbbs.bots.botkit`, that owns the handshake, result correlation and
+  state; Baud is written on it, and a second example, Tally, ships installed
+  and off. The bot editor's **Try** and the Chat bots list's `[T]ry selected`
+  run a bot against a scratch database, state and channel, showing every
+  host event and bot action, its results and a bounded stderr excerpt; model
+  actions are rehearsed, never sent (§16, issue #1374).
+
+**Paging the SysOp.** `/sysop <reason>` pages the node's staff from any
+channel, MRC rooms included, with or without a bot. The reason never enters
+the channel, its history, Link or MRC; the caller is answered with a private
+titled block saying who was told or that the page waits, and the away notice
+where it applies. A bare `/sysop` shows its usage. Baud's help names the
+command, and a `!sysop` line, which is already public, gets Baud's pointer to
+it. The queue and its limits are §5.6, "Pages" (§16, issue #1377).
+
+**Scheduled announcements.** Beside the midnight, New Year and clock-change
+lines (§16, issue #1354), the SysOp can schedule announcements per channel:
+once on a date, daily, weekly on chosen weekdays, or monthly on the first to
+fourth of a weekday, at a time in the node clock, with 1 to 160 characters of
+text. Each is said as a muted system notice, `Announcement: <text>`, stored as
+the local `daybreak` kind, and recorded even when nobody is in the channel. A
+missed slot is skipped. A channel holds at most 8 rules, and rules less than
+an hour apart are refused on Save. In a Linked channel an announcement reaches
+other nodes only after the SysOp approves that channel for announcements; it
+then travels as a signed channel message authored by the SysOp who saved the
+rule, marked as an announcement (§9.6), and is said on this node only if that
+account is no longer a usable SysOp. The rules are edited in a draft editor
+under Content > Chat channels (§16, issue #1380).
+
 A separate mutual invite/accept direct chat also exists, alongside `/msg`/
 `/private` rather than replacing either: unlike both (one-off, or a one-sided
 redirect the target never agrees to), both sides must explicitly be in the
@@ -901,7 +969,10 @@ already received stays.
   It answers the opt-out first -- the recipient's general choice, which says
   nothing about the sender -- and then the block, with the same SysOp
   exemption as mail. `/msg` and `/private` now respect the opt-out too;
-  before #925 they were the one live path that did not.
+  before #925 they were the one live path that did not. A bot's `!tell`
+  note (§6.3, issue #1376) is checked the same way, with the sender the host
+  took from the request: at creation, where the sender is told, and again
+  when it is delivered, where a block made since drops it silently.
 - A blocked live sender on this node is told, as a blocked letter's sender
   is: "<name> does not accept messages from you". An inbound Link direct
   message from a blocked sender is dropped without an answer, as one to an
@@ -936,7 +1007,10 @@ already received stays.
   invitation into a channel is covered (above). MRC
   private messages come from another network's users, not accounts or Link
   addresses, and are not covered. SysOp messages (the console's message to a
-  caller) and system notices never pass the check.
+  caller) and system notices never pass the check. A page to staff (§5.6)
+  is addressed to the node's staff, not to a person, and is not covered.
+  Nor are a bot's quotes and polls, or the oneliner wall (§6.9): they are
+  public like a channel, and deletion and moderation are the tools there.
 
 **The mailbox is a list; a message is read on its own screen** (issue #810),
 the shape the board post list has (§6.1, issue #679). `[E]-mail` opens the
@@ -2165,3 +2239,37 @@ sanitized before display like any other external content.
 **Not part of this design:** file echoes (TIC), file requests, acting as a
 hub for downlinks (AreaFix robot, SEEN-BY fan-out to other nodes), nodelist
 publishing, and QWK. Each needs its own decision.
+
+### 6.9 The oneliner wall (issue #1391)
+
+The oneliner wall is a short list of the latest one-line messages callers
+leave for whoever calls next. It is local to the node; a Link-wide wall would
+need a signed event kind of its own and is a separate, later issue.
+
+- **At logon,** after sign-in, the wall is the lower section of the Recent
+  callers frame (§3.3), so a call has one pause. Each section follows its own
+  SysOp toggle and is left out when empty; the wall shows at most 10 lines
+  and is left out when not one fits. The keys are `[A]dd a line   [Enter]
+  Continue`; the logon never asks a question about the wall (§3.5).
+- **On the menu,** `[R]ecent callers` draws the same panel, and its bar adds
+  `[A]dd a line` and `[O]neliners`, the full wall: newest first, numbered
+  rows, paging, Find and help, with `[A]dd a line`, `[D]elete` and `[B]ack`.
+  An empty wall says so.
+- **A line** is plain, sanitized text of at most 60 display columns, typed at
+  one prompt; Esc or a blank answer cancels, and the outcome is carried into
+  the redraw. A caller adds at most one line per call and 3 per account per
+  day. Who may write is a node-wide minimum level, default 0; a guest writes
+  only if the guest account meets it. `[A]dd a line` is hidden below the
+  level and refused with its reason at the rate limit.
+- **Deleting:** the author deletes their own lines, and a SysOp or a staff
+  member who may moderate everything deletes any, after "Delete this line?
+  (y/N)". A moderator's deletion is audited. The block list does not hide
+  lines (§6.4).
+- **Storage:** its own `oneliners` table, newest 200 lines kept. A line shows
+  its author's account name, kept as a label so the line outlives the
+  account; the Recent callers privacy choice does not apply to a line the
+  caller chose to write.
+- **The SysOp toggle,** shown, plain or hidden, sits beside Previous callers
+  in System settings and governs the logon panel only.
+
+See §16, "Issue #1391 — the oneliner wall".
