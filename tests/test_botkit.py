@@ -119,7 +119,7 @@ def test_baud_reminders_sent_during_a_save_both_survive():
     baud.handle(message("remind 1h second"))
     assert sent[-1] is first
     baud.handle({"type": "result", "id": first["id"], "ok": True})
-    assert sent[-2]["text"] == "alice: Saved reminder #1; it will appear publicly here."
+    assert sent[-2]["text"].startswith("alice: Saved reminder #1 for ")
     assert sent[-1]["action"] == "state.set"
     baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
     assert [r["text"] for r in baud.state["reminders"]] == ["first", "second"]
@@ -309,7 +309,7 @@ def test_baud_reminder_saved_during_a_delivery_is_not_lost():
                                                     "due": 0, "text": "due now"}]}}, sent.append)
     baud.handle({"type": "tick", "time": 1})
     say = sent[-1]
-    assert say["action"] == "say"
+    assert say["action"] == "say.for"
     baud.handle(message("remind 1h keep me"))
     remind_save = sent[-1]
     assert remind_save["action"] == "state.set"
@@ -450,7 +450,7 @@ def test_baud_help_is_private_when_it_can_reach_the_caller():
     assert "Replies are public" not in sent[-1]["text"]
     # A Link caller addresses the bot by its node.
     baud.handle({**private_message("help"), "caller": {"id": "link:abc:bob", "name": "bob@Home"}})
-    assert sent[-1]["text"].endswith("/msg Baud.bot@<node> <text>.")
+    assert sent[-1]["text"].endswith("/msg Baud.bot@Node <text>.")
     # A caller whose node cannot take a private answer is told the truth.
     baud.handle(private_message("help", private=False))
     assert "private" not in sent[-1] and sent[-1]["text"].startswith("alice: ")
@@ -522,7 +522,8 @@ def test_baud_answers_every_privately_asked_command_privately(db, lane, hub, sys
     from netbbs.chat.bots import BotNotice
     bot = install(db, sysop, channel)
     commands = ["help", "remind 1h water the plants", "reminders", "cancel 1", "cancel 99", "sysop help",
-                "stats", "xyzzy"]
+                "stats", "xyzzy", "help remind", "help tell", f"tell {sysop.username} hello", "tells",
+                "cancel tell 99"]
 
     async def run():
         pid, other = ParticipantId(alice.username, 1), ParticipantId(sysop.username, 2)
@@ -548,3 +549,20 @@ def test_baud_answers_every_privately_asked_command_privately(db, lane, hub, sys
     answers = asyncio.run(run())
     assert answers[1].startswith("Saved reminder #1") and answers[2].startswith("#1 ")
     assert answers[3] == "Cancelled reminder #1." and not any(a.startswith("alice:") for a in answers)
+
+
+def test_baud_private_cancel_reaches_every_id_the_private_listing_shows():
+    # Review of #1422: an id the private listing shows from another channel
+    # can be cancelled from here; a public cancel keeps to this channel.
+    sent = []
+    state = {"next": 3, "reminders": [
+        {"id": 2, "user": 7, "name": "alice", "channel": "staff", "due": 9e9, "text": "rota"}]}
+    baud = Baud({"state": state}, sent.append)
+    baud.handle(private_message("cancel 2", private=False))
+    assert sent[-1]["text"] == "alice: No reminder with that id belongs to you in this channel."
+    baud.handle(private_message("cancel 2"))
+    assert sent[-1]["action"] == "state.set" and sent[-1]["value"]["reminders"] == []
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
+    assert sent[-1]["text"] == "alice: Cancelled reminder #2."
+    baud.handle(private_message("cancel 5", asked=True))
+    assert sent[-1]["text"] == "No reminder with that id is yours."

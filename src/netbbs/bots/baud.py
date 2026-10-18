@@ -7,6 +7,7 @@ botkit is a sibling module, imported from this directory when Baud runs by
 filename.
 """
 
+import datetime as dt
 import re
 import time
 
@@ -20,6 +21,92 @@ VERSION = botkit.API_VERSION
 # the reminders behind it (a deleted channel or removed grant never heals).
 MAX_DELIVERY_ATTEMPTS = 8
 LINE_LIMIT = botkit.LINE_LIMIT
+HORIZON = 30 * 86400
+# A due reminder whose owner is not in its channel is held by the host this
+# long, then dropped silently (decision #1375).
+HELD_SECONDS = 7 * 86400
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+WHEN_USAGE = ("Use remind <when> <text of 1-160 characters>; when is 10m, 2h, 20:00, tomorrow 09:00, "
+              "fri 20:00 or 2026-11-01 20:00.")
+TELL_USAGE = "Use tell <name> <text of 1-160 characters>."
+
+
+class WhenError(ValueError):
+    """A time the caller wrote that Baud will not guess at; the text says why."""
+
+
+def zone(name):
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:  # noqa: BLE001 - no tzdata, or an unknown name: the UTC clock
+        return dt.timezone.utc
+
+
+def _clock(text):
+    match = re.fullmatch(r"([01]?[0-9]|2[0-3]):([0-5][0-9])", text)
+    return (int(match[1]), int(match[2])) if match else None
+
+
+def _instant(day, hour, minute, tz):
+    # As backup_schedule._slot_on: a wall time in a spring-forward gap is read
+    # at its pre-transition offset, a repeated one at its first occurrence.
+    return dt.datetime.combine(day, dt.time(hour, minute), tzinfo=tz).astimezone(dt.timezone.utc).timestamp()
+
+
+def parse_when(rest, now, tz):
+    """`(due timestamp, text)` from `remind`'s arguments: a duration, `HH:MM`,
+    `tomorrow HH:MM`, a weekday `HH:MM` or `YYYY-MM-DD HH:MM`, in the node clock."""
+    words = rest.split(" ", 2)
+    first = words[0].lower()
+    duration = re.fullmatch(r"([1-9][0-9]{0,6})([smhd])", first)
+    if duration:
+        seconds = int(duration[1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[duration[2]]
+        if seconds > HORIZON:
+            raise WhenError("Reminders reach at most 30 days ahead.")
+        return now + seconds, " ".join(words[1:])
+    today = dt.datetime.fromtimestamp(now, tz).date()
+    clock = _clock(first)
+    if clock is not None:
+        due = _instant(today, *clock, tz)
+        if due <= now:  # already past today: tomorrow
+            due = _instant(today + dt.timedelta(days=1), *clock, tz)
+        return due, " ".join(words[1:])
+    if re.fullmatch(r"[0-9]{1,4}[./][0-9]{1,2}([./][0-9]{0,4})?", first):
+        raise WhenError("Write dates as YYYY-MM-DD: " + first + " could be day or month first.")
+    clock = _clock(words[1]) if len(words) > 1 else None
+    text = words[2] if len(words) > 2 else ""
+    if first == "tomorrow" and clock is not None:
+        due = _instant(today + dt.timedelta(days=1), *clock, tz)
+    elif first in WEEKDAYS and clock is not None:
+        ahead = (WEEKDAYS.index(first) - today.weekday()) % 7
+        due = _instant(today + dt.timedelta(days=ahead), *clock, tz)
+        if due <= now:  # that weekday is today and the time has passed
+            due = _instant(today + dt.timedelta(days=ahead + 7), *clock, tz)
+    elif re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", first) and clock is not None:
+        try:
+            day = dt.date.fromisoformat(first)
+        except ValueError:
+            raise WhenError(f"There is no date {first}.") from None
+        due = _instant(day, *clock, tz)
+        if due <= now:
+            raise WhenError("That time has already passed.")
+    else:
+        raise WhenError(WHEN_USAGE)
+    if due - now > HORIZON:
+        raise WhenError("Reminders reach at most 30 days ahead.")
+    return due, text
+
+
+def describe(when, now, tz):
+    """`Fri 20:00 CET`, with the date when it is a week or more away."""
+    local = dt.datetime.fromtimestamp(when, tz)
+    abbreviation = local.strftime("%Z") or "UTC"
+    day = DAY_NAMES[local.weekday()]
+    if when - now >= 6 * 86400:
+        day += local.strftime(" %Y-%m-%d")
+    return f"{day} {local:%H:%M} {abbreviation}"
 
 # Issue #1381: the temperament presets are only defaults. The SysOp may
 # override each phrase per instance; the host passes the overrides in the
@@ -57,6 +144,12 @@ class Baud(botkit.Bot):
         # time, so a slow result never delivers the same reminder twice.
         self.delivering = None
         self.forgetting = None
+        self.tz = zone(self.timezone)
+        # Held reminders the host delivered or expired, to remove on the next
+        # save; and held ids to record once a save in flight is done.
+        self.dropping = set()
+        self.marking = {}
+        self.reconciled = False
 
     def phrase(self, key, name):
         # The host validates every phrase on Save; a hand-edited or older
@@ -110,32 +203,109 @@ class Baud(botkit.Bot):
         if self.greetings and event.kind == "join":
             self.say(event.channel, self.phrase("greeting", event.caller["name"]))
 
+    def clock(self, when):
+        return dt.datetime.fromtimestamp(when, self.tz).strftime("%H:%M")
+
+    def on_held(self, event):
+        # The host said a held reminder on its owner's return, or it expired.
+        if any(r.get("held") == event.held_id for r in self.state["reminders"]):
+            self.dropping.add(event.held_id)
+            self.settle_held()
+
+    def settle_held(self):
+        """Record held ids and drop finished held reminders, in one save that
+        waits for any save in flight (`change`)."""
+        def step():
+            if not (self.marking or self.dropping):
+                return
+            reminders = [{**r, "held": self.marking[r["id"]]} if r["id"] in self.marking else r
+                         for r in self.state["reminders"] if r.get("held") not in self.dropping]
+            if self.delivering in self.marking:
+                self.delivering = None
+            self.marking, self.dropping = {}, set()
+            self.state = {**self.state, "reminders": reminders}
+            self.store(self.state)
+        if (self.marking or self.dropping) and not self.change(step):
+            pass  # the queue is full: retried on the next tick
+
+    def said(self, reminder_id, result):
+        value = result.value if result.ok and isinstance(result.value, dict) else {}
+        if value.get("held"):
+            # Not in the channel: the host holds it for their next join.
+            self.marking[reminder_id] = value["held_id"]
+            self.settle_held()
+        else:
+            self.delivered(reminder_id, result.ok)
+
+    def reconcile(self, result):
+        # Held lines the host delivered or expired while Baud was not running.
+        if result.ok and isinstance(result.value, list):
+            waiting = {line.get("held_id") for line in result.value}
+            self.dropping |= {r["held"] for r in self.state["reminders"] if r.get("held") and r["held"] not in waiting}
+            self.settle_held()
+
     def on_tick(self, event):
+        if not self.reconciled:
+            self.reconciled = True
+            if any(r.get("held") for r in self.state["reminders"]):
+                self.held_lines(self.reconcile)
         if self.forgetting is not None and not self.saving:
             self.forget(self.forgetting)
+            return
+        if (self.marking or self.dropping) and not self.saving:
+            self.settle_held()
             return
         if self.delivering is not None or self.saving:
             return
         for reminder in self.state["reminders"]:
-            if reminder["due"] <= event.time and self.failures.get(reminder["id"], (0, 0))[1] <= event.time:
-                self.delivering = reminder["id"]
-                self.say(reminder["channel"], f"{reminder['name']}: reminder #{reminder['id']}: {reminder['text']}",
-                         then=lambda result, ident=reminder["id"]: self.delivered(ident, result.ok))
+            if (not reminder.get("held") and reminder["due"] <= event.time
+                    and self.failures.get(reminder["id"], (0, 0))[1] <= event.time):
+                self.delivering = ident = reminder["id"]
+                prefix = f"{reminder['name']}: reminder #{ident}"
+                self.say_for(reminder["channel"], reminder["user"], f"{prefix}: {reminder['text']}",
+                             held_text=f"{prefix} (due {self.clock(reminder['due'])}, held until you came back): "
+                                       f"{reminder['text']}",
+                             expires=HELD_SECONDS, then=lambda result, ident=ident: self.said(ident, result))
                 break
 
     def on_message(self, msg):
         command, _, rest = msg.text.strip().lstrip("!").partition(" ")
         command = command.lower()
-        if command in {"", "help"}:
+        topic = rest.strip().lower()
+        if command in {"", "help"} and topic == "remind":
+            msg.reply(f"remind <when> <text>: when is 10m, 2h, 20:00, tomorrow 09:00, fri 20:00 or "
+                      f"2026-11-01 20:00, 24-hour, in the node clock ({dt.datetime.now(self.tz).strftime('%Z') or 'UTC'}"
+                      "), up to 30 days ahead. I say it publicly here when it is due, or when you next join "
+                      "this channel if you are away (within 7 days).", private=msg.private or None)
+        elif command in {"", "help"} and topic == "tell":
+            msg.reply("tell <name> <text>: a note of up to 160 characters for a local account. I say it "
+                      "publicly here when they next join this channel (within 14 days). tells lists yours; "
+                      "cancel tell <id> withdraws one. Nobody who blocks you or takes no direct messages "
+                      "gets your tells.", private=msg.private or None)
+        elif command in {"", "help"}:
             opening = self.phrase("help", msg.name).strip()
-            msg.reply((opening + " " if opening else "") + "help; remind <1s-30d> <text>; reminders; cancel <id>. "
+            msg.reply((opening + " " if opening else "") + "help; remind <when> <text>; reminders; cancel <id>; "
+                      "tell <name> <text>; tells; cancel tell <id>. "
                       + ("stats; " if "stats" in self.queries else "")
-                      + ("seen <local-account>; " if "seen" in self.queries else "") +
-                      "Reminders appear publicly here, including after restart. "
-                      "/sysop <reason>: page staff. " +
+                      + ("seen <name>; " if "seen" in self.queries else "") +
+                      "help remind|tell: more. /sysop <reason>: page staff. " +
                       ("Conversation is enabled; reset clears your temporary context here. " if self.model_conversation
                        else "No language model is enabled. ") + self._privacy_note(msg),
                       private=msg.private or None)
+        elif command == "tell":
+            self._tell(msg, rest.strip())
+        elif command == "tells":
+            msg.tells(then=lambda result: msg.reply(
+                "; ".join(f"tell #{t['tell_id']} to {t['to']}: {t['text'][:35]}" for t in result.value)
+                or "No tells of yours wait here.") if result.ok else None)
+        elif command == "cancel" and topic.split(" ")[0] == "tell":
+            ident = topic[4:].strip().lstrip("#")
+            if not ident.isdigit():
+                msg.reply("Use cancel tell <id>; tells lists yours.")
+            else:
+                msg.cancel_tell(int(ident), then=lambda result: msg.reply(
+                    f"Cancelled tell #{ident}." if result.value.get("cancelled")
+                    else "No waiting tell with that id is yours in this channel.") if result.ok else None)
         elif command in {"stats", "seen"}:
             if command not in self.queries:
                 msg.reply("The SysOp has not enabled this query ability.")
@@ -157,7 +327,7 @@ class Baud(botkit.Bot):
         elif self.model_conversation:
             msg.model()
         else:
-            known = ["help", "remind", "reminders", "cancel", *sorted(self.queries & {"seen", "stats"})]
+            known = ["help", "remind", "reminders", "cancel", "tell", "tells", *sorted(self.queries & {"seen", "stats"})]
             msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
 
     def _privacy_note(self, msg):
@@ -167,45 +337,79 @@ class Baud(botkit.Bot):
             return "Replies are public."
         name = self.name or "Baud.bot"
         if str(msg.caller["id"]).startswith("link:"):
-            name += "@<node>"
+            name += "@Node"
         return f"Ask privately: /msg {name} <text>."
 
     def _own(self, msg):
         return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]
 
     def _reminders(self, msg, rest):
+        def entry(r, where=""):
+            return (f"#{r['id']}{where}: {r['text'][:35]}"
+                    + (f" (waiting since {self.clock(r['due'])})" if r.get("held") else ""))
         if msg.private:
             # Answered to the caller alone, so every channel's reminders.
-            msg.reply("; ".join(f"#{r['id']} {r['channel']}: {r['text'][:35]}" for r in self._own(msg))
+            msg.reply("; ".join(entry(r, " " + r["channel"]) for r in self._own(msg))
                       or "You have no reminders.", private=True)
             return
         # A public answer must not reveal reminder text from a different,
         # possibly private channel.
         here = [r for r in self._own(msg) if r["channel"] == msg.channel]
-        msg.reply("; ".join(f"#{r['id']}: {r['text'][:35]}" for r in here) or "No reminders here.")
+        msg.reply("; ".join(entry(r) for r in here) or "No reminders here.")
 
     def _cancel(self, msg, rest):
-        match = next((r for r in self._own(msg) if str(r["id"]) == rest and r["channel"] == msg.channel), None)
+        # Where the private listing shows every channel, cancelling reaches
+        # every channel too; a public answer keeps to this one.
+        match = next((r for r in self._own(msg) if str(r["id"]) == rest
+                      and (msg.private or r["channel"] == msg.channel)), None)
         if match is None:
-            msg.reply("No reminder with that id belongs to you in this channel.")
+            msg.reply("No reminder with that id is yours." if msg.private
+                      else "No reminder with that id belongs to you in this channel.")
         else:
+            if match.get("held"):
+                self.cancel_held(match["held"])
             self.store({**self.state, "reminders": [r for r in self.state["reminders"] if r != match]},
                        msg, f"Cancelled reminder #{match['id']}.")
 
     def _remind(self, msg, rest):
-        duration, _, text = rest.partition(" ")
-        match = re.fullmatch(r"([1-9][0-9]{0,6})([smhd])", duration.lower())
-        seconds = int(match[1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match[2]] if match else 0
-        if not 1 <= seconds <= 30 * 86400 or not 1 <= len(text.strip()) <= 160:
-            msg.reply("Use remind <1s-30d> <text of 1-160 characters>.")
+        now = time.time()
+        try:
+            due, text = parse_when(rest, now, self.tz)
+        except WhenError as exc:
+            msg.reply(str(exc))
+            return
+        if not 1 <= len(text.strip()) <= 160:
+            msg.reply(WHEN_USAGE)
         elif len(self._own(msg)) >= 8 or len(self.state["reminders"]) >= 48:
+            # Held reminders still count: they are waiting for their owner.
             msg.reply(self.phrase("limit", msg.name))
         else:
             ordinal = self.state["next"]
             reminder = {"id": ordinal, "user": msg.caller["id"], "name": msg.name,
-                        "channel": msg.channel, "due": time.time() + seconds, "text": text.strip()}
+                        "channel": msg.channel, "due": due, "text": text.strip()}
             self.store({"next": ordinal + 1, "reminders": [*self.state["reminders"], reminder]},
-                       msg, f"Saved reminder #{ordinal}; it will appear publicly here.")
+                       msg, f"Saved reminder #{ordinal} for {describe(due, now, self.tz)}. I'll say it here then, "
+                            "or when you next join if you're away.")
+
+    def _tell(self, msg, rest):
+        to, _, text = rest.partition(" ")
+        to = to.rstrip(":,")
+        if not to or not 1 <= len(text.strip()) <= 160:
+            msg.reply(TELL_USAGE)
+            return
+
+        def told(result):
+            # A refusal (no such account, a block, a limit) was already shown
+            # to the caller alone by the host; nothing public follows it.
+            if not result.ok:
+                return
+            name = result.value.get("name", to)
+            if result.value.get("present"):
+                msg.reply(f"{name} is here now.")
+            else:
+                msg.reply(f"I'll tell {name} here, publicly, when they next join this channel "
+                          "(within 14 days). tells lists yours.")
+        msg.tell(to, text.strip(), then=told)
 
 
 def main():
