@@ -504,7 +504,7 @@ Choose a chat channel to join the conversation. Type a line and press
 | `/join channel` | Switch to another channel |
 | `/leave` | Return to the channel picker |
 | `/quit` | Leave chat |
-| `/msg user text` | Send a live private message |
+| `/msg user text` | Send a live private message; `/msg Baud.bot text` asks a bot privately |
 | `/away text` | Set an away message |
 | `/nick name` | Set a chat alias; a bare `/nick` clears it |
 | `/dm user` | Invite someone online to a private direct chat; `user@TheirBBS` for someone on a linked BBS |
@@ -1027,6 +1027,32 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 > goes to a language model: your first such message only shows a notice
 > naming the service, the replies are public, and `reset` clears your
 > conversation.
+
+#### Ask a bot privately
+
+A question typed into the channel is seen by everyone there. To ask a bot
+where only you see the question and its answer:
+
+| To | Type |
+| --- | --- |
+| Ask one question | `/msg Baud.bot reminders` |
+| Keep asking | `/private Baud.bot`, then type your questions; `/close` ends it |
+| Ask a bot on a linked BBS | `/msg Baud.bot@Node help` or `/private Baud.bot@Node` |
+
+- What you asked shows as `(privately to Baud.bot: ...)`, and the answer as a
+  bot line marked **(to you)**:
+  `[20:14] [BOT] <Baud.bot> (to you) Saved reminder #4.`
+- Nobody else sees either, and neither is kept in the channel's history or
+  search. Like `/msg`, the answer stays among your own lines, so
+  <kbd>PgUp</kbd> shows it, and it never rings your bell.
+- A bot may also answer a question you asked in the channel this way.
+- The bot has to be allowed in the channel you are in. If it is muted there,
+  or the channel's `/bots` setting hides it, you are told why.
+- A bot answers each caller at most 30 times an hour privately; when that
+  runs out, you are told so.
+- A bot on another node can answer privately only if that BBS, and yours,
+  support it; otherwise you are told to ask in the channel instead.
+- If you leave the channel before the answer arrives, it is not shown.
 
 ### MRC: chat across BBSes
 

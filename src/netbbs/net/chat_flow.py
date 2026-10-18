@@ -96,7 +96,7 @@ from netbbs.auth.users import (
     list_users,
 )
 from netbbs.chat.bots import (
-    BOT_POLICIES, BotNotice, BotPolicyError, bot_label_origin, bot_origin, bot_origin_allowed,
+    BOT_POLICIES, BotNotice, BotPolicyError, BotPrivateAnswer, bot_label_origin, bot_origin, bot_origin_allowed,
     channel_bot_policy, set_channel_bot_policy,
     bot_message_visible, mute_remote_bot, remote_bot_visible,
 )
@@ -2259,6 +2259,22 @@ class RemotePrivateTarget:
 
 
 @dataclass(frozen=True)
+class PrivateBotTarget:
+    """Issue #1372: a `/private Baud.bot` counterpart -- every plain line is
+    a private request to that bot, in the caller's current channel. `label`
+    is the bot's label as the caller is shown it; `node` and
+    `node_fingerprint` name a bot on a linked BBS (`Baud.bot@Node`)."""
+
+    label: str
+    node: str | None = None
+    node_fingerprint: str | None = None
+
+    @property
+    def display(self) -> str:
+        return f"{self.label}@{self.node}" if self.node else self.label
+
+
+@dataclass(frozen=True)
 class _EnterPrivate:
     """Enter private-conversation mode targeting `target` — `/private
     <user>`'s meaning. Unlike `_ToPicker`/`_SwitchTo`, this
@@ -2268,7 +2284,7 @@ class _EnterPrivate:
     is running in. `target` is a local `User`, or a `RemotePrivateTarget`
     for a user on a linked node (issue #270)."""
 
-    target: User | RemotePrivateTarget
+    target: User | RemotePrivateTarget | PrivateBotTarget
 
 
 @dataclass(frozen=True)
@@ -2609,6 +2625,14 @@ async def _handle_msg(ctx: ChatCommandContext, args: str) -> None:
         return
     target_name, body = parts
 
+    bot_target = await _private_bot_target(ctx, target_name)
+    if isinstance(bot_target, str):
+        await ctx.session.write_line(colored(sanitize_text(bot_target), fg_color=MUTED_COLOR))
+        return
+    if bot_target is not None:
+        await _ask_bot_privately(ctx, bot_target, body)
+        return
+
     if "@" in target_name:
         # Issue #168: `user@node-name-or-dns` reaches a user on a linked
         # node live, over a direct or relayed real-time session. Lazy
@@ -2665,6 +2689,21 @@ async def _handle_private(ctx: ChatCommandContext, args: str) -> ChatAction | No
         await _show_usage(ctx.session, "private")
         return None
 
+    bot_target = await _private_bot_target(ctx, target_name, entering=True)
+    if isinstance(bot_target, str):
+        await ctx.session.write_line(colored(sanitize_text(bot_target), fg_color=MUTED_COLOR))
+        return None
+    if bot_target is not None:
+        close_hint = menu_key("/close", "")
+        await ctx.session.write_line(
+            colored(
+                f"Entering private conversation with {sanitize_text(bot_target.display)}. Only you see "
+                f"what you ask and what it answers. Type {close_hint} to return.",
+                fg_color=MUTED_COLOR,
+            )
+        )
+        return _EnterPrivate(bot_target)
+
     if "@" in target_name:
         # Issue #270: private mode with a user on a linked node.
         from netbbs.net.link_direct import check_live_reachability, parse_remote_address
@@ -2720,6 +2759,83 @@ async def _handle_private(ctx: ChatCommandContext, args: str) -> ChatAction | No
 
 async def _handle_close(ctx: ChatCommandContext, args: str) -> ChatAction:
     return _ExitPrivate()
+
+
+_BOT_TARGET = re.compile(r"([A-Za-z][A-Za-z0-9_-]{0,23}\.bot)(?:@(.+))?", re.IGNORECASE)
+
+
+async def _private_bot_target(
+    ctx: ChatCommandContext, name: str, *, entering: bool = False,
+) -> PrivateBotTarget | str | None:
+    """Issue #1372: `name` as a bot to ask privately -- `Baud.bot` on this
+    node or `Baud.bot@Node` on a linked one -- or a refusal to show, or
+    `None` when `name` is not a bot (a person, for `/msg` and `/private`).
+
+    A local name is a bot only when this node has that bot: an account from
+    before `.bot` names were reserved keeps getting its messages. `entering`
+    (`/private`) checks now that the bot can be asked here, as `/private
+    <user>` checks that the user is online; each request is checked again."""
+    match = _BOT_TARGET.fullmatch(name)
+    if match is None:
+        return None
+    label, node = match.groups()
+    runtime = ctx.hub.bot_runtime
+    if node is None:
+        from netbbs.bots.registry import BotError, allowed_channel, bot_for_label
+
+        bot = await ctx.lane.run(bot_for_label, label)
+        if bot is None:
+            return None
+        if runtime is None:
+            return "Chat bots are not running on this node."
+        if entering:
+            try:
+                await ctx.lane.run(allowed_channel, bot.id, ctx.channel.name)
+            except BotError as exc:
+                return str(exc)
+        return PrivateBotTarget(bot.label)
+    if runtime is None or runtime.link is None or ctx.link_context is None:
+        return "Remote bot addressing needs a running NetBBS Link connection."
+    from netbbs.net.link_direct import resolve_node_fingerprint
+
+    fingerprint = resolve_node_fingerprint(ctx.link_context, node)
+    if isinstance(fingerprint, list):
+        return ("That node name is ambiguous; use its DNS name or fingerprint." if fingerprint else
+                "No known node matches that name.")
+    if entering:
+        from netbbs.link.events import CHAT_BOT_PRIVATE_CAPABILITY
+
+        if not runtime.link.capable(fingerprint):
+            return "That node does not advertise live bot support."
+        if not runtime.link.capable(fingerprint, CHAT_BOT_PRIVATE_CAPABILITY):
+            return "That node's bots cannot answer privately yet; address the bot in the channel instead."
+    return PrivateBotTarget(label, node=node, node_fingerprint=fingerprint)
+
+
+async def _ask_bot_privately(ctx: ChatCommandContext, target: PrivateBotTarget, text: str) -> None:
+    """The one seam for a privately asked bot request (issue #1372).
+
+    It hands the request to the bot runtime and nothing else: it never
+    reaches `record_message`, the Link queue, the live Link push, the
+    channel broadcast, the bots that read the channel (`observe`) or the
+    MRC relay, all of which belong to the public send path in `send_loop`.
+    The caller sees what they asked as an aside; the answer, or the reason
+    there is none, comes back to this session alone."""
+    runtime = ctx.hub.bot_runtime
+    await ctx.session.write_line(
+        colored(f"(privately to {sanitize_text(target.display)}: {sanitize_text(text)})", fg_color=MUTED_COLOR)
+    )
+    if runtime is None:
+        problem = "Chat bots are not running on this node."
+    elif target.node_fingerprint is None:
+        problem = await runtime.ask_privately(ctx.channel, ctx.user, target.label, text, ctx.participant_id)
+    elif runtime.link is None:
+        problem = "Remote bot addressing needs a running NetBBS Link connection."
+    else:
+        problem = runtime.link.request(ctx.channel, ctx.user, ctx.participant_id, target.node_fingerprint,
+                                       target.label, text, private=True)
+    if problem:
+        await ctx.session.write_line(colored(sanitize_text(problem), fg_color=MUTED_COLOR))
 
 
 async def _handle_dm(ctx: ChatCommandContext, args: str) -> ChatAction | None:
@@ -4442,6 +4558,28 @@ def _bot_notice_line(notice: BotNotice) -> str:
             + colored(text, fg_color=MUTED_COLOR))
 
 
+def _render_bot_private_answer(db: Database, viewer: User, answer: BotPrivateAnswer) -> str:
+    """A bot's private answer (issue #1372): a timestamped bot line, badge
+    and speaker as a public bot line has them, then `(to you)` so it is not
+    taken for public speech, then the body in the chat body colour."""
+    accent = effective_accent_color_256(db)
+    if answer.node_fingerprint is not None:
+        name, node = link_address_parts(
+            sanitize_text(answer.label), sanitize_text(short_node_name(db, answer.node_fingerprint))
+        )
+        speaker = (colored(name, fg_color=accent) + colored("@", fg_color=MUTED_COLOR)
+                   + colored(node, fg_color=NODE_COLOR))
+    else:
+        speaker = colored(sanitize_text(answer.label), fg_color=accent)
+    line = (
+        colored("[BOT] ", fg_color=MUTED_COLOR, bold=True)
+        + colored("<", fg_color=MUTED_COLOR) + speaker + colored(">", fg_color=MUTED_COLOR)
+        + " " + colored("(to you)", fg_color=MUTED_COLOR)
+        + " " + colored(sanitize_text(answer.text), fg_color=CHAT_BODY_COLOR)
+    )
+    return format_with_preference(db, viewer, line, answer.created_at)
+
+
 def _bot_presence_readers(db: Database, channel: Channel) -> set[str]:
     from netbbs.bots.registry import list_bots
     return {bot.label for bot in list_bots(db) if channel.name in bot.event_channels}
@@ -5085,8 +5223,16 @@ _COMMAND_INFO: dict[str, tuple[str, str]] = {
     "join": ("/join <channel>", "Switch to another chat channel; inside an MRC room, /join <room> opens that MRC room (mrc:<room> from anywhere)."),
     "rooms": ("/rooms", "List the rooms on the MRC network (the hub's reply is shown to you alone)."),
     "topic": ("/topic [text]", "Set the chat channel topic; a bare /topic clears it (requires edit permission)."),
-    "msg": ("/msg <user> <text>", "Send a one-off private message; quote a user@node name containing spaces."),
-    "private": ("/private <user>", "Enter a private conversation with an online user (name@TheirBBS for someone on a linked BBS)."),
+    "msg": (
+        "/msg <user> <text>",
+        "Send a one-off private message; quote a user@node name containing spaces. "
+        "/msg Baud.bot <text> asks a bot privately: only you see the question and its answer.",
+    ),
+    "private": (
+        "/private <user>",
+        "Enter a private conversation with an online user (name@TheirBBS for someone on a linked BBS), "
+        "or with a bot (/private Baud.bot), until /close.",
+    ),
     "close": ("/close", "Leave the current private conversation."),
     "dm": ("/dm <user>", "Invite an online user, or user@TheirBBS, to a live, fullscreen direct chat."),
     "help": ("/help [command]", "List available commands, or show detail for one."),
@@ -6763,6 +6909,12 @@ async def _chat_loop(
                 if isinstance(message, BotNotice):
                     await deliver(_bot_notice_line(message))
                     continue
+                if isinstance(message, BotPrivateAnswer):
+                    # Issue #1372: content for this session alone. Kept in
+                    # its lines like /msg; no bell, as the hub's answer has
+                    # none: it answers the caller's own question.
+                    await deliver(await lane.run(_render_bot_private_answer, user, message))
+                    continue
                 await deliver(message)
 
         async def send_loop() -> ChatAction | None:
@@ -6775,7 +6927,7 @@ async def _chat_loop(
             # is always a command attempt" rule) -- only *non-slash* lines change
             # meaning, routed to the private conversation instead of posted
             # to the channel.
-            private_target: User | RemotePrivateTarget | None = None
+            private_target: User | RemotePrivateTarget | PrivateBotTarget | None = None
 
             def command_context(*, pinned: bool) -> ChatCommandContext:
                 return ChatCommandContext(
@@ -7023,6 +7175,12 @@ async def _chat_loop(
                                 mrc_session_state=mrc_session_state,
                                 hub_reply=hub_reply,
                             )
+                            if isinstance(private_target, PrivateBotTarget):
+                                # Issue #1372: each line is one private
+                                # request; a refusal is said, and the
+                                # conversation stays open until /close.
+                                await _ask_bot_privately(ctx, private_target, line)
+                                continue
                             if isinstance(private_target, RemotePrivateTarget):
                                 # Issue #270: each line is one live direct
                                 # message; a refusal (peer gone, unreachable)
