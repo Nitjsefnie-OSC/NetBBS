@@ -371,6 +371,17 @@ class _Worker:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
+                    if asyncio.current_task().cancelling():
+                        # A stop is under way and the session's cleanup failed
+                        # on its way out. That failure replaced the stop's
+                        # CancelledError; restarting here would swallow the
+                        # stop, and stop() (Try's /quit, Kill, node shutdown)
+                        # would wait forever on a bot that keeps running.
+                        # The callers gather and drop the result, so the
+                        # failure is logged here.
+                        _logger.warning("%s: cleanup failed while stopping (%s); stopped anyway.",
+                                        self.bot.label, type(exc).__name__)
+                        raise asyncio.CancelledError() from exc
                     # No raw process output or prompts in logs/status.
                     reason = str(exc) if isinstance(exc, BotError) else f"Bot process failed ({type(exc).__name__})."
                     await self.status("restarting", reason)
@@ -466,29 +477,44 @@ class _Worker:
             await self._reap()
 
     async def _reap(self) -> None:
+        # Bounded, and it raises nothing of its own: it runs in _session's
+        # finally, where an exception would replace a stop's CancelledError.
+        # On a loaded machine the child's exit can reach the event loop
+        # seconds after the kill, so a wait that runs out is logged and left
+        # there; asyncio still collects the process when its exit arrives.
         proc = self.proc
         if proc is None:
             return
         try:
             if proc.returncode is None:
-                if os.name == "nt":
-                    proc.terminate()
-                else:
-                    os.killpg(proc.pid, signal.SIGTERM)
-                try:
-                    await asyncio.wait_for(proc.wait(), 2)
-                except asyncio.TimeoutError:
-                    if os.name == "nt":
-                        proc.kill()
-                    else:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    await asyncio.wait_for(proc.wait(), 2)
-        except ProcessLookupError:
-            await proc.wait()
+                self._signal(proc, kill=False)
+                if not await self._exited(proc):
+                    self._signal(proc, kill=True)
+                    if not await self._exited(proc):
+                        _logger.warning("%s: the bot process had not reported its exit 2 seconds after a kill; "
+                                        "no longer waiting for it.", self.bot.label)
         finally:
             if proc.stdin:
                 proc.stdin.close()
             self.proc = None
+
+    @staticmethod
+    def _signal(proc, *, kill: bool) -> None:
+        try:
+            if os.name == "nt":
+                proc.kill() if kill else proc.terminate()
+            else:
+                os.killpg(proc.pid, signal.SIGKILL if kill else signal.SIGTERM)
+        except ProcessLookupError:
+            pass  # Already gone; the wait that follows sees its exit.
+
+    @staticmethod
+    async def _exited(proc, seconds: float = 2) -> bool:
+        try:
+            await asyncio.wait_for(proc.wait(), seconds)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     async def _read(self) -> dict:
         # BotError is a ValueError: keep the specific reasons out of the
