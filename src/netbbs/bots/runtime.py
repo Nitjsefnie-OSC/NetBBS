@@ -251,7 +251,7 @@ class _Worker:
             tasks.append(asyncio.create_task(self._drain_stderr()))
             await self._write({"type": "hello", "version": BOT_API_VERSION, "name": self.bot.label,
                                "scope": "addressed", "channels": self.bot.channels,
-                               "temperament": self.bot.temperament, "state": state, "queries": self.bot.queries,
+                               "temperament": self.bot.temperament, "phrases": self.bot.phrase_overrides, "state": state, "queries": self.bot.queries,
                                "reading_channels": self.bot.reading_channels,
                                "event_channels": self.bot.event_channels, "greetings": self.bot.greetings,
                                "board_sources": self.bot.board_sources, "file_sources": self.bot.file_sources,

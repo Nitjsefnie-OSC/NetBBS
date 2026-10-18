@@ -2383,6 +2383,23 @@ Baud reads only messages addressed to it. Its replies and reminders are
 public in the channel. Friendly, terse and retro temperaments change its
 fixed phrases.
 
+#### Baud's phrases
+
+Each instance can say its own words, in any language. Under **Phrases** in
+the instance's editor:
+
+1. Pick **Greeting**, **Help opening**, **Busy message** or
+   **Reminder-limit message**. A blank one shows the temperament's text as
+   `(preset)`.
+2. Type the phrase. `{name}` is replaced by the caller's name; write `{{` or
+   `}}` for a literal brace.
+3. <kbd>S</kbd> **Save**. The running bot picks it up within about a second.
+
+> [!NOTE]
+> Save refuses any other placeholder, an unmatched brace, terminal controls,
+> or a phrase over 400 characters (200 for the help opening, which Baud's
+> command list follows; each `{name}` counts as 32), and keeps your draft. Clear a phrase to go back to the preset.
+
 Everything else is a separate grant in the editor, off until you set it:
 
 - reading whole channels;
@@ -2394,7 +2411,7 @@ Everything else is a separate grant in the editor, off until you set it:
 
 The [bot API guide](NetBBS-bot-api.md) describes each. The editor groups its
 fields under Bot, Channels, Greetings and announcements, Queries and
-conversation, and Behaviour and program.
+conversation, Behaviour and program, and Phrases.
 
 ### Manage running bots
 

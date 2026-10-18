@@ -39,8 +39,18 @@ Each line is one UTF-8 JSON object, at most 32 KiB including the newline.
 `BOT_API_VERSION = 1`. The host sends:
 
 ```json
-{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"model_conversation":false}
+{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"model_conversation":false}
 ```
+
+`temperament` is `friendly`, `terse` or `retro`. `phrases` holds the SysOp's
+overrides of the temperament's fixed phrases, keyed `greeting`, `help`, `busy`
+and `limit`; a key is present only when the SysOp wrote that phrase, so an
+absent key means "use your preset". The host checks each phrase on Save: plain
+text on one line, no placeholder but `{name}` (the caller's name; `{{` and `}}`
+are literal braces), and at most 400 characters with each `{name}` counted as
+32, so `<caller>: <phrase>` fits one 500-character line; `help` is held to 200,
+since Baud's command list follows it on the same line. Any bot may honour
+them; Baud does (see below).
 
 The bot must answer within five seconds with exactly:
 
@@ -289,6 +299,23 @@ can repeat one. This is not an exactly-once delivery guarantee. If a channel
 is renamed or a grant removed, old reminders retain their original
 destination, cannot migrate to another channel automatically, and are dropped
 once their refusals run out.
+
+Its temperament sets four fixed phrases, and the SysOp may override any of
+them per instance under **Phrases** in the instance's editor (they arrive in
+the hello's `phrases`):
+
+| Key | Used for | Friendly preset |
+| --- | --- | --- |
+| `greeting` | A live join, with greetings on | `Welcome, {name}!` |
+| `help` | The opening of the `help` reply | `Happy to help!` |
+| `busy` | The reply while a full queue waits on a reminder save | `Busy saving reminders; try again shortly.` |
+| `limit` | The reply at the reminder limit | `Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first.` |
+
+Terse greets with `Welcome, {name}.` and has no help opening; retro says
+`Carrier detected: welcome, {name}!` and `Carrier detected.`. An empty override
+falls back to the preset, and a phrase that does not format is ignored the
+same way rather than stopping Baud. Command syntax and the help list itself
+are not phrases and stay as they are.
 
 Baud's standalone implementation in `src/netbbs/bots/baud.py` is an API example:
 it uses standard input/output only and has no database or filesystem access.
