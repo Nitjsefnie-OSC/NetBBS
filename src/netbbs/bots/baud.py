@@ -143,7 +143,7 @@ class Baud:
                        + ("stats; " if "stats" in self.queries else "")
                        + ("seen <local-account>; " if "seen" in self.queries else "") +
                        "Reminders appear publicly here, including after restart. "
-                       "To page the SysOp privately, type /sysop <reason>. " +
+                       "/sysop <reason>: page staff. " +
                        ("Conversation is enabled; reset clears your temporary context here. Replies are public." if self.model_conversation
                         else "No language model is enabled."))
         elif command in {"stats", "seen"}:
