@@ -1,0 +1,345 @@
+{
+ "source": "docs/NetBBS-User-Handbook.md",
+ "sections": [
+  {
+   "chapter": "NetBBS User Handbook",
+   "title": "NetBBS User Handbook",
+   "text": "NetBBS is a text-based community with message boards, chat, mail, files,\nand games. Each BBS is run by a SysOp: the person who manages that node,\nsets its rules, and can help with your account.\n\nAll documentation · Running a node"
+  },
+  {
+   "chapter": "Connect and sign in",
+   "title": "Connect and sign in",
+   "text": "At a glance\nYou need: The web address or terminal connection details your SysOp provides\nNew here?: Type new at the username prompt\nLater: Change your password under Profile ▸ Password"
+  },
+  {
+   "chapter": "Connect and sign in",
+   "title": "Connect",
+   "text": "Use the web address or terminal connection details your SysOp provides:\n\n- A browser needs no terminal software.\n- SSH looks like ssh -p 2222 yourname@bbs.example.org; substitute the\n  actual port and address.\n\nTip:\nUse SSH or HTTPS when available: plain Telnet does not encrypt your login."
+  },
+  {
+   "chapter": "Connect and sign in",
+   "title": "Sign in or create an account",
+   "text": "Log in with your account. If registration is offered, type new at the\nusername prompt (over SSH, connect as new).\n\nUsernames use:\n\n- the letters A-Z without accents, digits, _, - and .;\n- up to 32 characters.\n\nThe name is checked before you choose a password.\n\nSome nodes require approval before you can log in. Until the SysOp approves\nyour account, logging in tells you it is still waiting, and you cannot look\naround in the meantime. If registration is closed, contact the SysOp.\n\nNote:\nAccounts and access rules belong to each node."
+  },
+  {
+   "chapter": "Connect and sign in",
+   "title": "Change your password",
+   "text": "Under Profile ▸ Password, you type the current password, then the new one\ntwice, and nothing is echoed.\n\nIf you have forgotten it, ask the SysOp to set a new one; nobody can recover\nthe old one."
+  },
+  {
+   "chapter": "Connect and sign in",
+   "title": "Change your username",
+   "text": "Your username is the name you log in with, and who you are to other nodes on\nNetBBS Link, so the SysOp decides on a new one.\n\n1. Open Profile ▸ Username and type the name you would like. It is\n   checked at once, as a new account's name is.\n2. The SysOp approves or refuses it. Until then you keep your current name.\n   Typing another name replaces your request; a blank line withdraws it.\n3. If it is refused, you see why when you next log in.\n4. If it is approved, you are logged out with a line naming your new\n   username. Log in again with it.\n\nWhat changes and what stays:\n\n- Mail written to your old name from other nodes or an FTN network still\n  reaches you, and so does a /msg. On this node, write to your new name.\n- Your posts, files and sent mail keep the name they were written under.\n  Chat lines you wrote show your new name.\n- The SysOp approves one change every 30 days."
+  },
+  {
+   "chapter": "Find your way around",
+   "title": "Find your way around",
+   "text": "At a glance\nChoose: Press a highlighted letter, such as [M] for Message boards\nGo back: [B] or [Esc]\nStuck?: [?] shows help for the screen you are on"
+  },
+  {
+   "chapter": "Find your way around",
+   "title": "Moving around",
+   "text": "Press a highlighted letter such as [M] for Message boards. Most\nmenus react immediately, without [Enter]. In the browser you can\nalso click an entry or a numbered row.\n\n- In a list, type a row's number: two digits (03) or one digit and\n  Enter (3 [Enter]).\n- Settings screens such as Profile number their settings the same\n  way: type a setting's number, or move to it with [Up]/[Down]\n  and press [Enter], and [Left]/[Right] step the\n  highlighted one's value. The numbers run on through a screen's sections, so\n  a number works from any page of it.\n- A pause that waits for you reads [Enter] Continue: any key goes on,\n  and in the browser so does a click on it.\n- When typing text, use [Enter] to submit it. [Ctrl+U]\n  clears the line you are typing, and at a field that allows it,\n  [Esc] leaves it without changing anything.\n\nFollow the action bar on the current screen: letters can mean different\nthings in different places. A few keys mean the same on every screen:\n\nKey: What it does\n[B] or [Esc]: Back, one level up: from a board to the list you picked it from, and from there to the menu. [Esc] first clears a highlighted row, if there is one\n[<] [>]: The previous or next page of a list or a long text; [PgUp]/[PgDn] do the same, and so do [Left]/[Right] on a list\n[/]: Find, wherever a list can be searched\n[?]: Help for the screen you are on; [F1] and [Ctrl-H] do the same\n\nTip:\nHelp ([?]) on the main menu sums up how the board works and\nwho runs it. To write to the SysOp, send E-mail To: sysop."
+  },
+  {
+   "chapter": "Find your way around",
+   "title": "The main menu",
+   "text": "Main-menu choice: What it does\n[M] Message boards: Every message board on this node\n[C] Chat: Every chat channel\n[F] Files: Every file area\n[G] Games: Door games, when the SysOp has set some up\n[T] Topics: The node's Communities: topics the SysOp set up, each with its own boards, chat channels, file areas and games\n[N] New scan: See unread activity and resources you have not visited (below)\nFind ([/]): Search your own mail and the posts, files and retained chat on this node (below)\n[E] E-mail: Read and send persistent NetBBS mail, from the level the SysOp chose; not offered to the guest account\n[W] Who's online: See callers and available ways to contact them\n[R] Recent callers: Who called lately, and the newest lines on the oneliner wall (below)\n[P] Profile: Change your public profile and personal preferences\nApprovals ([A]): Posts and uploads waiting for your decision, if the SysOp made you a moderator\n[S] Staff: Your staff console, if the SysOp gave you staff permissions\n[O] Operators: Who runs this node: the SysOps, staff and moderators, when each was last on, and who is away\n\nSome choices appear only when they have something to show or you have\npermission to use them.\n\nNew scan:\n\n- Back from each one brings you back with the next new one ready for\n  [Enter].\n- [R] Replies opens the replies to your posts.\n- [E] E-mail opens your mailbox, whose unread count is shown\n  above the list.\n\nFind searches your own mail (your Inbox and Sent, never anyone else's)\nand the posts, files and retained chat on this node.\n\n- Mail results come first, up to 20 of each kind.\n- A letter opens as it does in the mailbox, and Back returns to the results.\n- Mail is left out where the SysOp has not opened mail to you.\n\nNote:\nSearch covers content held by this node, including carried NetBBS Link\ncontent; it is not a search of the entire network."
+  },
+  {
+   "chapter": "Find your way around",
+   "title": "The oneliner wall",
+   "text": "The oneliner wall is a list of short lines callers leave for the callers\nafter them. After you sign in, its newest lines are shown under\nRecent callers, on the same screen and with one pause.\n\nTo add a line:\n\n1. Press [A] Add a line, at that pause or on\n   ▸ Recent callers.\n2. Type your line, up to 60 columns, and press [Enter].\n   [Esc] or an empty line cancels.\n\nAny other key at the pause goes on to the main menu, where the result is\nshown.\n\n- You can add one line per call, and three a day. Deleting a line does not\n  give you one back.\n- A line is plain text: colour codes are not drawn.\n- The SysOp may set a level for adding lines. Below it, Add a line is\n  not offered, but you can still read the wall.\n\n▸ Recent callers ▸ [O] Oneliners shows the whole wall,\nnewest first. Page it with [<] and [>], and press\n[/] to find a name or a word. To remove one of your own lines,\npress [D] Delete, type its number and answer [Y].\n\nNote:\nYour line shows your account name, even if you hide your name from\nRecent callers. The SysOp and staff who moderate everything can delete\nany line."
+  },
+  {
+   "chapter": "Find your way around",
+   "title": "Lists of boards and areas",
+   "text": "Lists of boards and file areas keep the SysOp's order, so the number you\nremember for a board still picks it next time.\n\n- [O] Order in a list sorts it another way, by activity, name,\n  newest or size, just this once or from then on;\n  [S] SysOp's order there puts it back.\n- Find ([/]) in a list shows only the names containing what you\n  type; a blank answer shows the whole list again.\n\nA board, file area or chat channel whose name is drawn in pale turquoise is\nLinked: shared with other nodes over NetBBS Link. If your terminal shows\nplain ASCII, or the SysOp drew the list as art, its name ends in  ~\ninstead."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Read and post",
+   "text": "At a glance\nWhere: [M] Message boards, or [E] E-mail for letters, on the main menu\nTry first: Open a board, select a post, and reply to it\nWhile writing: The editor shows its commands; in the fullscreen editor [Ctrl+G] shows help"
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Read and reply",
+   "text": "Open a message board, select a post, and use the displayed actions to read,\nreply, or start a topic. Follow a resource to make it easier to revisit.\n\nA post keeps the lines you write: a list, a short line or your sign-off stays\nas you typed it, and only a line too wide for the reader's screen wraps.\n\nOn a moderated board, your post may wait for approval before others see it.\nYou are told at the main menu when it is approved or rejected; a rejection\nalso arrives as mail from System, with the reason and what you wrote.\n\nEchoes. Some boards may carry an echo from an FTN network such as\nFidoNet or fsxNet. People on many other BBSes read and write in an echo, and\nwhat you post there goes out to them too.\n\n- Their posts are signed with a name and an FTN address, as in\n  Joe Bloggs (21:3/110).\n- Reply works as on any board.\n\nNote:\nIn an echo, an edit or a deletion stays on this BBS, because other BBSes\nkeep the copy they already received."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Polls",
+   "text": "A poll asks the board a question with answers to vote on.\n\n1. On a board's list press [N] New poll.\n2. Type the question and two to ten answers, and choose whether voters pick one\n   answer or up to a number of them, when the poll closes (seven days ahead\n   unless you change it), and whether results show after voting or only after\n   the poll closes.\n3. [N] Next, write the post that introduces the poll, and\n   [P] Post it on the review screen.\n\nReading a poll's post shows the poll under it. [V] Vote ticks\nyour answers; you can change your vote until the poll closes. Results show\nonce you have voted, or straight away if you cannot vote there, or only when\nthe poll closes if its author chose that. The poll's author and the board's\nmoderators can end it early with [C] Close poll.\n\n- Once anyone has voted, the answers can no longer change. The closing date\n  can, with [E] Edit.\n- Withdrawing the post, or a moderator taking it down, closes the poll and\n  hides its results.\n\nImportant:\nWho can see your vote. No screen shows who voted what -- not to the poll's\nauthor, a moderator or the SysOp: only totals and the number of voters. But\nthis BBS's database records each account's vote, and a SysOp with the\ndatabase file can read it. On a board shared with other BBSes your vote also\ntravels to every BBS that carries the board, signed with your name, and each\nof their operators can read it the same way. Such a poll says \"Your vote is\nshared with every BBS that carries this board.\" before you vote."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Point a post at files",
+   "text": "A post can point at files that are already in a file area here, up to five --\nthe practice page you want an opinion on, say.\n\n1. On the review screen press [A] Attach file.\n2. Choose the file area and then the file.\n\n[R] Remove file takes one off again.\n\nNothing is copied: the post names the file, and whoever reads it downloads it\nfrom its file area. The files are listed under the post's byline, and\n[G] Get file downloads one -- with several, you choose which --\nby Zmodem, or with a browser link where your terminal has no Zmodem.\n\n- A reader who may not open that file area sees only that a file is there,\n  not its name; the review screen tells you when a file's area is closed to\n  some of the board's readers.\n- A file deleted or expired since shows as no longer available.\n- When you edit a post, its files come along and can be changed on the\n  review screen.\n- On a board shared with other BBSes, readers there get a line naming each\n  file, its size, its file area and this BBS at the end of the post, not a\n  download.\n- A draft keeps the text, not the files."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Post to several boards",
+   "text": "A new post can go to more than one board at once -- a question that belongs\nin two places, say. Replies and edits always stay on one board.\n\n1. On the review screen press [T] To boards.\n2. Tick each board the post should go to, and press [B] Back.\n\nThe board you wrote it on is always ticked. A row under the subject lists the\nboards, and nothing is posted until you press [P] Post.\n\n- How many: the SysOp sets how many boards one post may go to, five\n  unless they changed it, counting the board you wrote it on. The list tells\n  you when you reach it.\n- Boards you can't use: the list shows them dimmed, with - instead of a\n  number and the reason beside the name -- a level you don't have yet, say,\n  or a board without color for an art post.\n- All or nothing: if one of the boards refuses the post when you press\n  Post, nothing is posted anywhere; the review screen names the board and\n  why, and To boards lets you take it off.\n- One copy on each board: each board gets its own copy, with its own\n  replies. A moderated board may hold its copy for approval while the others\n  appear at once. Editing or withdrawing a copy changes only that one.\n- Read once: opening one copy marks the others read for you too, and new\n  scan and search count the post once. A copy's byline names the other boards\n  it is on, as in \"also in Showcase\", when you can open them.\n- Shared and FTN boards: a copy on a board shared with other BBSes goes\n  out like any post there. In an echo, the copy starts with a line such as\n  * Crossposted in FSX_BBS naming the other echoes of that network it went\n  to."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "The line editor",
+   "text": "The text editor shows its commands. In the line editor:\n\nType: What it does\nA blank line: Starts a new paragraph\n[Enter] on an empty line twice, or /done: Finishes\n/insert N: Writes the next lines before line N until you type /end -- this is how you answer between the quoted lines of a reply\n/list: Shows every line and where you are writing\n/unquote: Removes the whole quote a reply opens with\n/delete N-M: Removes lines N to M, so you can keep only the part you answer\n/exit or /quit: Keeps a draft for later\n/cancel: Discards it\n\nTip:\nBoth editors keep what you have typed if the connection drops."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "The fullscreen editor",
+   "text": "In the fullscreen editor, [Ctrl+G] shows help and\n[Ctrl+X] opens the exit choices, including Keep draft & exit.\nIt also has these keys:\n\nKey: What it does\n[Ctrl+K]: Cut the line. Press it again to add the next line.\n[Ctrl+Y]: Paste the cut lines.\n[Ctrl+E]: Erase all the text, after a yes. [Ctrl+Y] brings it back.\n[Ctrl+W]: Delete the word before the cursor. In a browser, which closes the tab on [Ctrl+W], use [Alt+Backspace].\n[Ctrl+R]: Rewrap the quoted (>) paragraph under the cursor to fit the screen, keeping its >.\n\nIt shows what you are writing above the text: the recipient or board, and\nthe subject. The status line shows how many characters you have used and the\nlimit. The limit assumes the rest is plain letters: an accented letter or\nother special character takes more room and lowers it by one.\n\nTurn the fullscreen editor on or off in Profile with\nFullscreen editor (all writing). It is used for mail, posts, your bio and\nsignature, and file descriptions."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Drafts come back where you started",
+   "text": "A draft comes back where you started it:\n\n- A new post's draft is offered when you return to that board.\n- A reply's draft is offered when you reply to the same post or message\n  again.\n- An unfinished letter is shown on the mail screen under [D] Draft,\n  with its recipient and subject, and [C] Compose offers it\n  before starting a new one: resume it, delete it, or leave it for later.\n\nA draft is never sent or posted by itself."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Address a letter",
+   "text": "Writing a message or a post opens a screen of its own. Mail asks who it is\nfor first: a user name, or name@TheirBBS for someone on a linked BBS. An\nempty line or [Esc] there cancels.\n\n- Complete a name: press [Tab] to complete a name, or, after the\n  @, the name of a linked BBS; if several fit, they are listed under the\n  prompt. Tab only completes names you can write to.\n- Pick from a list: type ? and press [Enter] for a list of\n  everyone you can write to: people you had mail with lately first, then the\n  members of this board, then the linked BBSes. Choose a BBS and you are asked\n  for the person's user name there; name@? lists just the BBSes for that\n  name.\n- Who you can't reach: the list also shows who you can't write to right\n  now, dimmed, with - instead of a number and the reason beside the name:\n  they don't accept your mail, their account is disabled or awaiting\n  approval, or their BBS is not linked yet (this board's SysOp hasn't\n  finished linking it).\n\nSeveral people. A letter can go to several people, up to 20, here and on\nlinked BBSes alike: separate them with commas, as in bob, carol@Farpoint.\n\n- [Tab] completes the name after the last comma, and ? as the last\n  name opens the list for that one.\n- Each name is checked as you type it; if one can't be used, you are told\n  which and why, and the prompt opens again on what you typed, to fix.\n- Each person gets their own copy, and every copy shows everyone it went to\n  -- there is no blind copy.\n- If one of them can't take it when you press Send -- their mailbox is\n  full, say -- nothing is sent to anyone: the review screen names them, and\n  [T] To lets you take them off and send to the rest."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Send netmail to an FTN network",
+   "text": "If this BBS is on an FTN network such as FidoNet or fsxNet, you may be able to\nsend netmail to someone on another BBS of that network. Write their name\nand FTN address on the To line, as in Joe Bloggs (21:3/110). The screen\nnames the network the letter goes out on.\n\n- Not private: every system netmail passes through can read it.\n- One person at a time: a netmail can't go to a list of names.\n- Who may send it: the SysOp decides who may send netmail. Until they\n  choose otherwise, only the SysOp can.\n- Replies: Reply to a netmail in your Inbox, or to one in Sent, writes\n  netmail back."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Point a letter at files",
+   "text": "A letter can point at files that are already in a file area here, up to\nfive.\n\n1. On the review screen press [A] Attach file.\n2. Choose the file area and then the file.\n\n[R] Remove file takes one off again. Nothing is copied: the\nletter names the file, and whoever reads it downloads it from the file area.\n\n- Only someone who may open that file area can be sent the letter -- if one\n  of your recipients can't, Send names them and nothing goes out.\n- Someone on another BBS can't download from here: their copy ends with a\n  line naming each file, its size, its file area and this BBS, as in\n  File: report.zip (12.3 KiB) in file area \"Uploads\" on Farpoint.\n- A forward takes the files of the letter it passes on along, and the draft\n  of a letter keeps them."
+  },
+  {
+   "chapter": "Read and post",
+   "title": "Review and send",
+   "text": "Nothing is sent or posted until you choose to on the review screen, which\nkeeps To and Subject at the top and shows a long message a page at a time.\n\n- Turn the pages with [<] [>] or\n  [PgUp]/[PgDn].\n- [E] Edit body reopens the text.\n- [B] Back (or [Esc]) leaves without sending, after\n  asking first if you have written anything.\n\nA post or message needs a subject. Leave it empty and mail asks again; press\n[Esc] there to cancel the message. A subject that is too long is\ncaught as soon as you press [Enter], with how many characters to\nremove, and the field stays open so you can shorten it.\n\nNote:\nIf your signature pushes a message over its length limit, the review\nscreen says so before you can send it."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Chat and mail",
+   "text": "At a glance\nWhere: [C] Chat and [E] E-mail on the main menu\nTry first: Join a chat channel and type /help\nGood to know: Mail is NetBBS mail, not an Internet email account"
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Chat",
+   "text": "Choose a chat channel to join the conversation. Type a line and press\n[Enter] to speak. /help lists the commands available there.\n\nCommand: Use\n/who: See who's online\n/list: List the channels, with how many are in each, here and on MRC or a linked BBS\n/join channel: Switch to another channel\n/leave: Return to the channel picker\n/quit: Leave chat\n/msg user text: Send a live private message; /msg Baud.bot text asks a bot privately\n/away text: Set an away message\n/nick name: Set a chat alias; a bare /nick clears it\n/dm user: Invite someone online to a private direct chat; user@TheirBBS for someone on a linked BBS\n/bell: Show when chat rings your bell; /bell off, /bell private or /bell mentions sets it\n\nTip:\n[PgUp] scrolls back through the conversation, a page at a time, and\n[PgDn] forward again. While you are scrolled back the chat holds\nstill, so you can read or copy at leisure; new lines wait, counted at the\nbottom, until you return with [Esc], with [PgDn] past the\nnewest line, or by sending a line. Your terminal's own scrollback jumps back\nto the bottom whenever chat redraws, so use these keys instead.\n\nGray lines with no name in front are the BBS itself speaking: a good-morning\nline at midnight, and announcements the SysOp has scheduled, such as\nAnnouncement: Net meeting tonight at 20:00 in #main. They stay in the\nchannel's scrollback, so you see them even if you arrive later. In a channel\nshared with linked BBSes, an announcement from another BBS names it:\nAnnouncement from Vertigo: Tournament at 21:00."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Aliases and names from other BBSes",
+   "text": "An alias is always shown with the username beside it, as\nQuill (Copperplate), so everyone can see who is speaking: the alias first\nand in color, the username after it in gray. An alias is refused when it\n\n- reads like someone else's username, or like a staff title such as \"SysOp\";\n- contains any of ( ) | [ ] < > * ~.\n\nSomeone on a linked BBS is shown as name@TheirBBS, with their BBS in a\ncolor of its own. If two BBSes you are linked with share a name, the name\ngets its address added, like alice@Twin BBS · twin.example.org, so you can\ntell them apart.\n\nIn a channel shared with linked BBSes, /who lists everyone in it on every\none of them, each with the BBS they are on, whichever BBS the channel started\non. A BBS running an older NetBBS version only shows up from the BBS the\nchannel started on."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Direct chats and live messages",
+   "text": "A direct-chat invitation opens on your main menu. If you are somewhere else\non the board, a line tells you who invited you; go back to the main menu\nwithin a minute to answer.\n\nYou can also chat this way with someone on a linked BBS: /dm name@TheirBBS\nin chat, or [I] Invite to chat on their entry in Who's online.\nTheir invitations to you open the same way, named name@TheirBBS.\n\n- If their BBS doesn't support it yet, you are told so; /msg still works.\n- If they can't be reached, they don't take live messages, or they block you,\n  you are only told they can't be reached right now.\n- If the connection between the two BBSes drops, the chat ends and says so.\n\nLive private messages need the recipient to be online. E-mail keeps a\nmessage for later.\n\nNote:\nIf live contact fails, send mail explicitly: chat does not silently turn\nit into mail."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "The chat bell",
+   "text": "Chat rings your terminal's bell when it needs you, so you notice from another\nwindow. Choose when in Profile ▸ Chat bell, or with /bell in chat:\n\n- Private (the default): a /msg or /private message, a message from\n  someone on a linked BBS or on MRC, and a /dm invitation.\n- Mentions: those, and a line in a channel that names you, by your\n  username or your alias, with or without @. Your own lines and bots' lines\n  never ring.\n- Off: never.\n\nBeing away doesn't silence it: the bell is for when you are away from the\nscreen. It rings at most a few times in a row, and once every 30 seconds for\nany one person, and never while you are scrolled back with [PgUp].\nIt rings on the chat screens and in a direct chat; a message that waits for\nyou elsewhere on the board does not ring.\n\nYour terminal decides whether a bell beeps, flashes or stays quiet. In the\nweb client it plays a short tone once you have pressed a key or clicked in\nthe page, and while the tab is in the background its title starts with (!)\nuntil you come back."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Getting help from the SysOp",
+   "text": "To ask the SysOp for help, type /sysop and what you need in any chat\nchannel:\n\n/sysop my upload to Retro stops at 90% every time\n\n1. Your reason goes to the SysOp and staff, and nowhere else: nothing is said\n   in the channel, its history, linked BBSes or MRC.\n2. A block that only you see says who was told. Staff in chat are told at\n   once; staff elsewhere on the BBS see it on their next screen, or when they\n   leave a door.\n3. If nobody is online, the page waits for them. When they are all away, the\n   block says who is expected back first.\n\nNote:\nYou can have one page open at a time, and page at most once every 10\nminutes. Paging again after that replaces the reason of your open page. As\na guest you can page only while someone is online, because a guest's page\ncan't be answered later.\n\nThe SysOp answers by opening a chat on your screen, or by mail. Use /sysop,\nnot !sysop: a ! line goes to the whole channel before a bot sees it, and\nBaud can only point you to /sysop."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Mail",
+   "text": "E-mail is NetBBS mail, not an Internet email account."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Who has mail",
+   "text": "Signed in as the board's guest, you have no mail: every guest shares that\naccount, so its mailbox would be everyone's. Register an account of your own\nto send and receive mail.\n\nMail is refused to:\n\n- the guest account;\n- an account that is disabled or still waiting for the SysOp's approval.\n\nThe To prompt tells you, and mail from another node bounces with \"that\naccount is not taking mail at the moment\". A SysOp can also open mail only\nfrom a certain access level; below it, the main menu offers no E-mail."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Your Inbox and its limit",
+   "text": "E-mail opens on your Inbox, with how many messages are unread at the top\nand how full it is.\n\nInbox: What happens\nUp to 500 messages: The header counts them, for example 120 of 500\nFrom 450: The Inbox warns you\nAt 500: Each new message removes your oldest message you have already read; unread mail is never removed\nFull of unread mail: New mail is turned away until you read or delete some, or move some to Kept, which does not count toward the 500\n\nIf old mail was removed to make room, the main menu tells you how many\nmessages went, once."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Knowing when mail arrives",
+   "text": "- The first main menu after you log in says how many messages arrived since\n  your last call and how many are unread in all, for example \"3 new since\n  your last call, 7 unread in all\". On your first call it gives just the\n  unread count, and with nothing unread it says nothing.\n- New scan shows the same counts above its list.\n- Mail news is shown in green, the colour of good news, not the warning\n  colour.\n- A message that arrives while you are online is announced with its sender\n  and subject: at once in chat, straight away on an idle main menu or Inbox,\n  and otherwise above the prompt of the next screen you reach.\n- Nothing is written into a door game or an editor while you are in it; the\n  notice waits until you leave."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Read and manage your mail",
+   "text": "Each row shows who a message is from, its subject and its date, with new\nbeside mail you have not opened yet. Move with [Up]/[Down]\nand press [Enter], or press a row's number, to read a message. On a\nlong list, [<] and [>] (or [PgUp] and\n[PgDn]) turn the page. The other keys:\n\nKey: What it does\n[S] Sent: Lists the mail you have sent. [B] Back there returns to the Inbox.\n[V] View Kept: Lists the letters you keep (see Keep letters).\n[C] Compose: Writes a new message.\n[M] Mark (or [Space]): Marks the highlighted message with * and moves to the next, so you can mark a run of them; press it again on a marked one to unmark it.\n[E] Erase: Deletes the marked messages, after one question that says how many; with nothing marked it deletes the highlighted one.\n[P] Purge read: In the Inbox, deletes every message you have read, after one question that says how many. Unread and kept mail stays.\n[O] Order: Switches between newest first, unread first, and by conversation. In Sent it switches between newest first and by conversation. Your choice is remembered.\n[/] (Find): Shows only mail with a word in the name or the subject. An empty line shows everything again.\n[U] Unread: Marks the highlighted message unread, or read without opening it. While you read a message, its own [U] Unread: no marks it unread again.\n\nBy conversation groups the letters with one person under one subject (Re:\nand Fwd: aside), the conversation with the newest letter first and its\nearlier letters indented under it.\n\nA ! before a sender's name means their node's identity has changed. The\nmessage explains it when you open it."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Keep letters",
+   "text": "[K] Kept: no in the Inbox (on the list or in a letter) moves a\nletter to Kept, and [K] Kept: yes in Kept moves it back. In the\nInbox, Kept moves the marked messages to Kept the same way.\n\n- The mailbox never removes a kept letter to make room, and kept letters do\n  not count toward the Inbox's 500.\n- Kept has its own limit instead: it holds 100 letters, and its header counts\n  them, for example 40 of 100.\n- When it is full, keeping another letter is refused with \"Kept is full (100\n  letters) -- move some back to the Inbox or delete them first.\"\n- Keeping marked letters is all or none: if they do not all fit, none move,\n  your marks stay, and you are told how many more Kept has room for.\n- The Inbox header says how many are in Kept."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Write to someone from where you found them",
+   "text": "You can write to someone without typing their address. The compose screen\nopens with To filled in:\n\nFrom: Press\nThe Directory: open a member's card: [M] Mail\nWho's online: pick a caller: [E] E-mail ([M] Message there is a live message). It works for a caller on a linked node, and for a caller who has turned off live messages.\nRecent callers: [M] Mail a caller, then type the caller's number. A caller whose name is hidden there can't be written to from the list.\nReading a post: [M] Mail author answers its author privately, with the post's Re: subject and a quote, as a reply on the board would have. You don't need to be allowed to post on that board, and it works for a post carried from a linked node too.\n\nAfter you send the letter, keep it or cancel it, you are back on the screen\nyou came from, with the result above the prompt.\n\n- None of these is offered for yourself, or while mail is closed to you.\n- None of these offers mail to someone on this board who has blocked you.\n  The member card and Who's online say that they do not accept messages or\n  mail from you, Recent callers says so when you type their number, and a\n  post of theirs has no Mail author.\n- For someone on a linked node you are still offered mail, since this board\n  can't see who they block; their board answers.\n- If the person can't be written to, for example the guest account or\n  someone on a node that has only just linked with this one, you are told why\n  when you press the key."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Forward a letter",
+   "text": "1. Open it, in the Inbox or in Sent.\n2. Press [F] Forward.\n3. Type whom it is for at the To prompt, a name here or an address on a\n   linked node.\n\nThe subject gets Fwd: in front, and the letter goes whole under a short\nheader saying whom it was from and to, when, and under what subject. What you\ntype goes above it, as a note, and your signature goes under the note; in the\nline editor, /end writes at the end instead.\n\nA letter already at the size limit is too long to forward as it is: the\nreview screen says by how much, and [E] Edit body lets you\nshorten it. Mail from System can be forwarded too."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Mail from System",
+   "text": "Mail from System was sent by the BBS itself, not by a person -- for\nexample, when a moderator turns down a post you wrote, with their reason and\nyour text. There is no one to reply to, so it has no Reply; to question\nthe decision, write to the moderator or the SysOp."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Mail to other nodes",
+   "text": "On a linked node, addresses can use a known, unambiguous name such as\nalice@OtherNode.\n\n- Use the address offered by the directory or Who screen, or the one on the\n  From line of their mail. Type it exactly as shown, capitals included.\n- A node name that itself contains @ is shown in quotes, like\n  bob@\"Cats @ Night\"; type the quotes too.\n- Mail checks the address as you type it and asks again if it can't be used.\n  If more than one linked node goes by the name you typed, it lists the exact\n  address to type for each.\n- A node that has only just linked with this one cannot be written to yet:\n  the To prompt says so, and mail opens once your SysOp establishes that\n  node.\n\nCheck an unexpected node-identity warning with your SysOp.\n\nNote:\nOrdinary NetBBS Link mail is protected between nodes but does not hide its\ncontents from the home-node operators.\n\n[R] Reply works on mail from another node too: the reply goes\nback to the address on its From line, with the same Re: subject and quote a\nlocal reply gets. If that node can't be written to any more, Reply says why\ninstead of opening the message.\n\nSent shows each message's recipient, with the full address for mail that\nwent to another node. Your copy stays in Sent even if the recipient's account\nis later deleted; it then reads, for example, bob (deleted account)."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Where a letter to another node stands",
+   "text": "Mail to another node also shows where it stands, in Sent's list and on its\nDelivery line when you open it:\n\nState: Meaning\nPending: On its way; the other node has not confirmed it yet.\nWith relay: The other node can't be reached directly, so your BBS left the letter at a relay for it to collect, and no answer has come back yet. If none comes within 14 days, it expires.\nDelivered: It is in the recipient's mailbox.\nBounced: The other node sent it back, and the Delivery line says why, for example that there is no user by that name there, that their mailbox is full of unread mail, or that the node does not trust yours yet.\nExpired: No route to that node worked before delivery gave up, so it was not delivered. Mail left at a relay expires when no answer came back in 14 days; it may still have arrived, and if an answer turns up later, Sent shows it as delivered or bounced after all.\nResent: It bounced or expired, and you sent it again with Send again. The new copy is a letter of its own in Sent, with its own state."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Send a letter again",
+   "text": "When mail bounces or expires you are told at the main menu, once, even if it\nhappened while you were away. Opening the message in Sent counts as being\ntold.\n\n1. Open it in Sent and press [S] (Send again).\n2. The compose screen opens with the same recipient, subject and text, ready\n   to send as a new letter.\n3. Once it is sent you are back on the Sent list, and the old letter reads\n   resent there. Opening it shows when, on a Resent: line under its\n   Delivery line, and the key reads Send another copy.\n\n- If you sent the resend to someone else instead, the old letter stays as it\n  was.\n- If the reason it failed still applies on this side -- for example your\n  SysOp has since stopped mail to that node -- you are told so when you press\n  the key or at Send.\n- Resend is only offered for mail that bounced or expired: a letter that\n  arrived, or may still arrive, would reach its reader twice.\n\n[R] Reply and [F] Forward on a letter in Sent also\nbring you back to the Sent list once the new letter is sent."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Follow up on a letter you sent",
+   "text": "Open it in Sent and press [R] Reply. It writes to the letter's\nrecipient, with Re: in front of the subject and your letter quoted, as a\nreply to mail you received would. You can't reply to a letter whose\nrecipient's account has been deleted.\n\nWhichever key on a letter in Sent sends a new letter, you are back on the\nSent list, with the new letter at the top and the result above the\nprompt (or on Find's results, if you opened the letter from there)."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Letters to several people",
+   "text": "A letter to several people is one row in Sent, with everyone's names under\nTo. Opening it shows a Delivery line for each person on another node, and the\nlist shows the one that needs you most -- a bounce before a letter still on\nits way.\n\n- Send again there sends the letter again only to those whose copy\n  bounced or expired and was not resent yet. The list reads resent once\n  every one of them was, and the key then reads Send another copy.\n- [R] Reply writes to them all again.\n- [E] Erase removes it from Sent for everyone it went to (their\n  copies stay theirs).\n\nWhen you receive such a letter, its To line shows everyone it went to, and\n[A] Answer all writes to its sender and everyone else on it,\nwhere [R] Reply writes to the sender alone. Anyone who can't be\nwritten to any more is left out, and you are told who."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "How a letter looks",
+   "text": "A letter shows the way its writer typed it: each line stays a line, and only\na line too wide for your screen wraps. Mail can be in color, written with pipe\ncodes like |12 or pasted in, as on a board that allows color. Profile's\nColors in posts and mail switch covers mail too; with it off, colored mail\nreads as plain text."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Files in a letter",
+   "text": "A letter that points at files lists them under its Date line: each file's\nname, size and file area. Press [G] Get file to download one --\nwith several, you choose which -- the same way the file area downloads it: by\nZmodem, or with a browser link where your terminal has no Zmodem or the Zmodem\ntransfer fails.\n\n- A file deleted or expired since the letter was sent, or taken out of its\n  file area, shows as no longer available.\n- A file in a file area you can't open, for example because its access level\n  was raised after the letter was sent, shows only as a file in a file area\n  you can't open."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Mail to everyone",
+   "text": "Mail your SysOp sends to all callers shows Everyone on this BBS as its To.\nIf it comes from System it has no Reply; if it comes from the SysOp's own\naccount, [R] Reply answers the SysOp."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Read receipts",
+   "text": "When you send mail to someone on this board, Sent shows whether they have\nread it:\n\n- The list says read or not read, and the opened letter has a Read:\n  line with the time they first opened it (marking it unread again does not\n  take that back).\n- A letter to several people lists who has read it and who hasn't yet.\n- A letter deleted without being opened simply reads as not read: nobody\n  learns that you deleted it.\n\nThe same goes the other way: whoever writes to you sees when you first open\ntheir letter.\n\nThis is on for everyone unless they turn it off, and it works both ways. In\nProfile ▸ Let senders see when I've read their mail you can turn it\noff: then no one sees when you read their mail, and you no longer see when\nanyone reads yours. Turning it off also hides the receipts you already gave;\nturning it on again shows them again.\n\nNote:\nA letter opened while either of you had receipts off never shows as read,\neven once you both turn them back on -- so nobody can switch receipts on\nfor a moment to see what you read while they were off, and what you read\nwhile yours were off stays unreported.\n\nA sender is told that you don't share read receipts (no receipt in their\nSent list), so an unread-looking letter isn't taken for one you haven't read\n-- they learn your setting, never whether you read it.\n\n- Mail to or from another BBS, and mail from System, never has read\n  receipts.\n- For mail your SysOp sends to all callers, they see only how many of those\n  who share receipts have read it."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Block someone",
+   "text": "To stop someone's mail and live messages:\n\n- open a letter from them and press [S] (Sender blocked: no), or\n- pick them on Who's online and press the same key there.\n\nIt then reads Sender blocked: yes, and pressing it again takes the block\nback. It works for someone on this board and for someone on a linked node,\nwho is blocked by their address there, so a node changing its name does not\nundo it.\n\nProfile ▸ Blocked people lists everyone you block, blocks someone by\nname (alice, or alice@OtherNode) before they have written, and unblocks\nwith [U] Unblock or by picking a row. Mail already in your Inbox\nstays there."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "What a block stops",
+   "text": "One block stops both their mail and their live messages:\n\n- /msg, /private and /dm invitations;\n- messages and chat invitations from Who's online;\n- inviting you into a chat channel with /invite.\n\nIf they are in a private conversation with you when you block them, it ends."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "A blocked person is told",
+   "text": "- On this board the To prompt and Send say that you do not accept mail from\n  them, and /msg, /private, /dm and /invite say you do not accept\n  messages from them.\n- Who's online and your Directory card say you do not accept messages or\n  mail from them, and offer neither; Recent callers says it when they type\n  your number, and your posts offer them no Mail author.\n- Mail from another node bounces with that reason. It is never taken and\n  quietly thrown away.\n- The one exception is a live message from someone on another node: it is\n  dropped without an answer, because live messages between nodes have no way\n  to send one back.\n\nThe same works the other way: if you are told someone does not accept mail or\nmessages from you, they have blocked you.\n\nTwo senders cannot be blocked: System, and this board's SysOp, who has to\nbe able to reach every account on the board.\n\nTip:\nA block does not hide what someone says in a chat channel everyone shares;\nask a channel operator or the SysOp if someone is disrupting a channel. To\nstop live messages from everyone at once, turn off Direct messages in\nProfile; it applies to /msg and /private as well as /dm and Who's\nonline, and does not stop mail or channel invitations."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Bots in chat",
+   "text": "Bot messages are marked [BOT], including when replayed from chat history.\n/bots shows your node's policy for the current channel. Its moderators can\nchoose all bots, only this node's bots, or none; the choice also applies to\nFind and remote bot entries in /who and /names. /who and /names show\nwhich bots are running here, and which bots read the whole channel."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Talk to Baud",
+   "text": "If your SysOp has enabled Baud in a local channel, type Baud.bot: help.\nWhen it is the channel's default bot, the short ! forms work too; without a\ndefault, prefix the commands with Baud.bot: instead of !.\n\nCommand; Baud is the channel's default bot; No default bot\nHelp; !help; Baud.bot: help\nSet a reminder; !remind 10m check the oven; Baud.bot: remind 10m check the oven\nSet a reminder for a time; !remind fri 20:00 net meeting; Baud.bot: remind fri 20:00 net meeting\nList reminders; !reminders; Baud.bot: reminders\nCancel a reminder; !cancel 1; Baud.bot: cancel 1\nLeave someone a note; !tell Nib check the Retro board; Baud.bot: tell Nib check the Retro board\nList your notes; !tells; Baud.bot: tells\nCancel a note; !cancel tell 4; Baud.bot: cancel tell 4\n\nTo reach the SysOp, use /sysop <reason> rather than Baud: see\nGetting help from the SysOp.\n\n- Reminders and replies are public in that channel.\n- Reminders survive restarts, though mutes or limits can delay them.\n- A reminder takes a duration (10m, 2h, up to 30d) or a time on this\n  board's clock: 20:00, tomorrow 09:00, mon to sun with a time, or a\n  date as 2026-11-01 20:00. Times are 24-hour. A time already past today\n  means tomorrow. Baud's answer names the moment, for example\n  Saved reminder #3 for Fri 20:00 CET.\n- If you are not in the channel when a reminder falls due, Baud keeps it for\n  a week and says it when you next join that channel, marked\n  held until you came back. !reminders shows it as waiting since 18:00\n  until then; after a week it is dropped without a word.\n- !tell leaves a note of up to 160 characters for an account on this board.\n  Baud says it publicly in the same channel the next time they join it, within\n  14 days, as Nib: Quill asked me to tell you (3h ago): .... If they are in\n  the channel already, Baud says so and keeps nothing. You can have three\n  notes waiting, and one person five.\n\nNote:\nTurning off Direct messages in Profile, or blocking someone, also stops\ntheir notes through Baud: a new one is refused, and one already waiting is\nquietly dropped instead of being said.\n- Ordinary conversation is not sent to an addressed-only bot.\n- Depending on what your SysOp allows, Baud may also answer stats and\n  seen <account>, greet people who join, or announce new posts and files;\n  its help lists what it offers here.\n- In a Linked channel, Baud.bot@Node: help asks a bot on another node.\n\nNote:\nIf your SysOp has enabled model conversation, other text addressed to Baud\ngoes to a language model: your first such message only shows a notice\nnaming the service, the replies are public, and reset clears your\nconversation.\n\nAs a help desk, which is how most nodes set it up, Baud answers questions\nabout using the BBS, such as Baud.bot: how do I upload a file?. It answers\nfrom parts of this handbook and from facts about the node, and names the\nsection it used: (Handbook: Exchange files. May be wrong; ? for help).\nAsked privately, with /msg Baud.bot or in /private Baud.bot, it can also\nname the boards and file areas you can see; in the channel it names only the\nones everyone can read. A model can be wrong, so check what it says against\nHelp ([?]) on the main menu or ask the SysOp."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Ask a bot privately",
+   "text": "A question typed into the channel is seen by everyone there. To ask a bot\nwhere only you see the question and its answer:\n\nTo: Type\nAsk one question: /msg Baud.bot reminders\nKeep asking: /private Baud.bot, then type your questions; /close ends it\nAsk a bot on a linked BBS: /msg Baud.bot@Node help or /private Baud.bot@Node\n\n- What you asked shows as (privately to Baud.bot: ...), and the answer as a\n  bot line marked (to you):\n  [20:14] [BOT] <Baud.bot> (to you) Saved reminder #4.\n- Nobody else sees either, and neither is kept in the channel's history or\n  search. Like /msg, the answer stays among your own lines, so\n  [PgUp] shows it, and it never rings your bell.\n- A bot may also answer a question you asked in the channel this way.\n- The bot has to be allowed in the channel you are in. If it is muted there,\n  or the channel's /bots setting hides it, you are told why.\n- A bot answers each caller at most 30 times an hour privately; when that\n  runs out, you are told so.\n- A bot on another node can answer privately only if that BBS, and yours,\n  support it; otherwise you are told to ask in the channel instead.\n- If you leave the channel before the answer arrives, it is not shown."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "MRC: chat across BBSes",
+   "text": "Channels marked MRC connect to a separate public chat network.\n\nNote:\nYour handle and messages are visible on that network. MRC private messages\nare optional in your profile; they are not confidential from that network.\n\n- Use /mrc for its help and commands.\n- In the Multi Relay Chat section of Chat, start with lobby to\n  discover network rooms.\n- /rooms refreshes the list; return to the picker to choose a room with its\n  user count and topic, or use /join room.\n- [Tab] completes MRC subcommands, room names and recipients for\n  /mrc msg.\n- If opening a room is refused, the reason stays visible in the picker while\n  you choose another room or go back.\n\nA line from MRC starts with [MRC], and its sender reads nick@theirBBS,\nwith their BBS in a color of its own.\n\nThe network's answer to an /mrc question, such as /rooms or /mrc bbses,\nappears a moment after it finishes arriving, as one block headed\nMRC hub · /mrc bbses. A long answer comes a page at a time: press\n[PgDn] (or [Enter] on an empty line) for the next page and\n[Esc] to skip the rest. Long command replies, like /list on a board\nwith many channels, page the same way."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "Stylized MRC names",
+   "text": "Some MRC users' software puts a styled name in front of their lines, such as\n+Nick+[CASTLE BBS]. Profile's Stylized MRC names chooses how you see it:\n\nSetting: Shows\ncombined (the default): <+Nick+@Castle_BBS (CASTLE BBS)>, the styled name in place of the plain one and the rest in brackets\nboth: <Nick@Castle_BBS> +Nick+[CASTLE BBS], the styled name as sent\nlabel only: <Nick@Castle_BBS>\n\nThe BBS name always comes from the network, never from the styled name. Lines\nthat arrived before v7.18.0 look the same in all three."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "The MRC status bar and colors",
+   "text": "The status bar separates people here (including their away count) from\npeople on MRC. Remote away counts are unavailable; ? means the roster\nhas not arrived, and stale readings are labeled. Profile's\nInter-BBS chat (MRC) colors switch controls incoming body and nickname\ncolors, including scrollback."
+  },
+  {
+   "chapter": "Chat and mail",
+   "title": "What the SysOp can see",
+   "text": "As on most BBSes, the SysOp of the node you are connected to can watch your\nsession live:\n\n- They see your screen as you see it, including chat and private messages,\n  and what you type where it shows on screen.\n- Passwords are not shown as you type them, so they are never visible this\n  way.\n- You are not told while it happens, but the node keeps a log of every time a\n  SysOp watches a session. The last line of chat's /help says the same.\n\nThe SysOp can also break into your session for a live chat. Your screen turns\ninto a two-part chat window: the SysOp types in the top half and you type in\nthe bottom half.\n\n- When the SysOp ends the chat, your screen comes back exactly as you left\n  it, with any half-typed line still there.\n- If you were in a game, the game kept running during the chat.\n- A break-in can't start while you are typing a password, and anything typed\n  at a password prompt shows as * in the chat."
+  },
+  {
+   "chapter": "Exchange files",
+   "title": "Exchange files",
+   "text": "At a glance\nWhere: [F] Files on the main menu, then a file area\nTry first: [D] Download on a file that interests you\nYou need: A Zmodem terminal such as SyncTERM, or the browser\n\nOpen a file area and select an upload or download action:\n[D] Download for the highlighted file, [U] Upload to\nsend one. There are three ways to move the file:\n\n- Browser transfer controls, in the browser terminal.\n- A browser link offered by the node. Browser links require the SysOp to\n  configure the web listener.\n- Zmodem, with a Zmodem-capable terminal client. PuTTY and ordinary SSH\n  clients do not provide Zmodem by themselves."
+  },
+  {
+   "chapter": "Exchange files",
+   "title": "Zmodem",
+   "text": "A Zmodem terminal such as SyncTERM starts its side of the transfer by itself:\nit saves a download, or asks which file to upload. If yours doesn't, start its\nZmodem receive or send by hand.\n\n- Press [Ctrl]+[X] five times to cancel a transfer.\n- If a Zmodem transfer fails, you stay on the file list: press\n  [W] Web transfer there for a browser link instead.\n- After a Zmodem upload you are back on the file list too, with the cursor on\n  the new file, so [E] Edit description describes it straight\n  away."
+  },
+  {
+   "chapter": "Exchange files",
+   "title": "Browser links",
+   "text": "When you upload through a browser link, the terminal tells you once the file\nhas arrived, and whether it waits for approval before others can see it. The\nmessage names the file area the file went to in its own color. In the browser\nterminal the list updates by itself; elsewhere the list shows the new file the\nnext time it is drawn, for example when you press [Ctrl]+[L].\n\nNote:\nTreat a transfer link like a password: it grants access to that transfer.\nLinks expire; request a fresh one if needed.\n\nA remote file may first need to be fetched from its originating node. If that\nnode is unavailable, try later or tell your SysOp."
+  },
+  {
+   "chapter": "Play a door game",
+   "title": "Play a door game",
+   "text": "At a glance\nWhere: [G] Games on the main menu, or [G] Games in a Community under [T] Topics\nTry first: Retro Trivia, if your SysOp offers it: one short round\nLeave: Through the game's own menu\n\nAvailability depends on what your SysOp has registered. The bundled games:\n\nGame: What you do\nRetro Trivia: Answer a short round of multiple-choice questions.\nVoidrunner: Build a persistent space-trading and exploration career.\nWar Dialer: Develop a crew in a shared world of fictional BBS networks.\n\nEach game opens with a short animated title screen. Any key skips it; once it\nhas finished, it stays up until you press a key. Voidrunner and War Dialer\nleave it out when their display settings turn motion off.\n\nThe games also play short animated scenes during play: Voidrunner at jumps,\ndocking, fights and milestones, War Dialer after raids, jobs and busts, and\nRetro Trivia at the end of a round. A scene shows a result that has already been\nsaved. Any key ends it, and that key is used up, so it can't choose anything on\nthe next screen. Voidrunner also keeps achievements for your account, across\nevery career: open Pilot Record in the game and press [A].\n\n- Each game has its own controls and help.\n- Quit through the game's own menu to return to NetBBS.\n- A busy game may have a session limit; try again later.\n\nTip:\nYour SysOp controls the time allowed and can help with a missing or locked\nsave."
+  },
+  {
+   "chapter": "Preferences and help",
+   "title": "Preferences and help",
+   "text": "At a glance\nWhere: [P] Profile on the main menu\nTry first: Profile ▸ Character set, if lines or arrows look wrong\nFinish: [L] Logoff on the main menu\n\nUse [P] Profile for display, editor, and chat preferences, your\nSSH keys, and your password."
+  },
+  {
+   "chapter": "Preferences and help",
+   "title": "Your terminal",
+   "text": "Profile ▸ Character set sets the characters NetBBS sends your terminal:\n\nSetting: Suits\nAuto: The default. Follows what your terminal reports when you connect.\nUnicode: Modern terminals and the browser.\nCP437: Classic BBS terminals such as SyncTERM. Shows ANSI art as it was drawn.\nASCII: Plain text that any terminal shows.\n\nIf your terminal did not say which it is, NetBBS asks once after you log in\nwhich of two sample lines looks right.\n\nProfile ▸ Color depth sets how many colors NetBBS sends:\n\nSetting: Suits\nauto: The default. Follows what your terminal reports when you connect. A classic BBS terminal, or one that reports nothing, gets 16 colors.\ntruecolor: Terminals that show full color, such as SyncTERM and most modern terminals.\n256: Terminals that show the 256-color palette.\n16: Classic terminals that show only the sixteen ANSI colors.\n\n- If lines and arrows look wrong later, change Character set.\n- If text blinks, shows reversed or looks garbled where colors should be,\n  set Color depth to 16.\n- If you see only a few plain colors on a modern terminal, set Color\n  depth to 256 or truecolor.\n- [Ctrl]+[L] redraws ordinary NetBBS screens after a display\n  problem. Games may use different controls.\n\nSyncTERM's keys\n\nSyncTERM's Home, End, Page Up, Page Down, Insert and Delete keys\nwork as they do in other terminals. SyncTERM's Backspace key sends the same\ncode as [Ctrl]+[H], so in SyncTERM it stays Backspace, and\n[F1] opens a screen's help instead. NetBBS names F1 where other\nterminals see Ctrl-H."
+  },
+  {
+   "chapter": "Preferences and help",
+   "title": "Banners",
+   "text": "Some nodes draw their welcome art or main-menu art slowly, at the speed of an\nold modem. Press any key to draw the rest at once; that key is used up, so it\ndoesn't also act at the next prompt.\n\nProfile ▸ Banner animations set to quick draws every banner after you sign\nin at once. The welcome banner comes before you sign in, so it plays at the\nnode's speed whatever you chose; any key still draws the rest."
+  },
+  {
+   "chapter": "Preferences and help",
+   "title": "Calling as a guest",
+   "text": "Signed in as the board's guest, you share one account with every other guest.\n\nWhat stays the same for everyone. Profile won't change anything other\ncallers see of the guest account:\n\n- the bio, signature, name and details;\n- who it blocks;\n- whether it takes messages;\n- its MRC settings.\n\nEach of those says so when you press it, and so do /nick and\n/mrc register, identify or send in chat, and Sender blocked\n([S]) in [W] Who's online.\n\nWhat changes for this call only. Display settings still change: character\nset, color depth, redraw style, banners, editor, colors and sort orders. They\ngo back to the account's own the next time anyone signs in as the guest.\n\nWhat you leave behind.\n\n- Your unfinished posts and file descriptions are kept only until you hang up.\n- You can edit, withdraw or describe only what you wrote during this call;\n  posts other guests wrote under the account can't be changed.\n- The bundled games play normally, but your progress lasts for the call only,\n  and your scores and callsign don't reach the Hall of Fame or the War Dialer\n  world.\n\nTip:\nRegister an account of your own to keep your settings."
+  },
+  {
+   "chapter": "Preferences and help",
+   "title": "Access requirements",
+   "text": "Some resources require an account level, verified age, or verified name. When\nyou open one, a Requires: line under its title says what it asks, for\nexample Requires: age 18+ verified · level 20+ to post. A requirement you\ndon't meet is shown in red, or followed by (not met) if you use plain ASCII,\nso the same line tells you why you can read a board but not post.\n\nA name requirement may also disclose the verified name beside contributions in\nthat resource. Ask the SysOp what is required before sharing identity\ninformation. You cannot grant yourself access by editing your profile."
+  },
+  {
+   "chapter": "Preferences and help",
+   "title": "Verified age and name",
+   "text": "An entry marked needs verification asks for a verified name, or for a\nverified age when the birthdate in your profile is old enough but nobody has\nverified it. Opening it tells you which. The SysOp, or someone your SysOp\nallows to verify identity, can verify it for you.\n\nYour birthdate goes in Your profile ▸ Name & details. That screen shows\nwhat this BBS verified (\"Verified by this node: born …\") apart from what you\nentered yourself.\n\n- Your display name, location and birthdate open for editing with the current\n  value in the line: [Enter] saves, an empty line clears it, and\n  [Esc] leaves it as it was.\n- A verified value stays until whoever verified it revokes it.\n\nSharing over Link. A SysOp-verified age or name stays on this BBS unless\nyou switch on sharing over Link for it under Profile (Share verified age\nover Link, Share verified name over Link).\n\n- Shared, it goes only to the other BBSes your SysOp has chosen, and the number\n  shown beside \"on\" is how many that is now.\n- Switching it off makes this BBS stop giving it out and tells those BBSes to\n  forget it. One that already copied it cannot be forced to."
+  },
+  {
+   "chapter": "Preferences and help",
+   "title": "Logging off and reporting problems",
+   "text": "To finish, return to the main menu and choose [L] Logoff. When\nreporting a problem, tell the SysOp which screen, connection method, and\naction caused it."
+  }
+ ]
+}

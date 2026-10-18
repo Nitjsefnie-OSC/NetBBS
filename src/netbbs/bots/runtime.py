@@ -762,8 +762,13 @@ class _Worker:
 
     async def _model_reply(self, request, pending, *, reset, private=False):
         try:
-            text, accept = await self.owner.model.respond(self.bot.id, pending[0], pending[4], pending[5], reset=reset,
-                                                          private=private)
+            presence = self.owner.presence
+            # Help desk's node facts include `stats` when granted, through
+            # the same run_query and caller check as the query action.
+            text, accept = await self.owner.model.respond(
+                self.bot.id, pending[0], pending[4], pending[5], reset=reset, private=private,
+                online=presence.online_usernames() if presence is not None else None,
+                uptime_seconds=int(time.monotonic() - self.owner.started_at))
             if self.pending.get(request) is not pending or pending[2] <= time.monotonic():
                 return
             await self._action({"action": "reply", "request": request, "text": text, "private": private})
