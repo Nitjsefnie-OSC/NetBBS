@@ -2582,6 +2582,13 @@ Reminders survive process and node restarts in `<db>.bots/<original-name>/`.
   reminder refused eight times is dropped so it cannot hold up the others.
 - A crash just after delivery may repeat a reminder; delivery is not an
   exactly-once guarantee.
+- Absolute times (`remind fri 20:00`) are read on the node's display clock.
+  Changing the display timezone restarts running bots; saved reminders keep
+  their moment.
+- A reminder whose owner is away when it falls due, and a caller's `!tell`
+  note, wait in the node database (not in the bot's state) until that caller
+  next joins the channel: a week for reminders, 14 days for notes. Both are
+  in node backups with the database.
 
 ### Model conversation
 
