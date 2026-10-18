@@ -598,6 +598,13 @@ async def _channel_screen(
                 await mrc_bridge.refresh_channel_mappings()
             return deleted
 
+        async def _announcements(channel: Channel) -> bool:
+            # Issue #1380: this channel's scheduled announcements.
+            from netbbs.net.admin_announcements import announcements_screen
+
+            await announcements_screen(session, lane, actor, channel)
+            return False
+
         async def _restrictions(channel: Channel) -> bool:
             await _channel_restrictions_screen(session, lane, actor, channel)
             return False
@@ -682,6 +689,8 @@ async def _channel_screen(
                 DetailAction("d", menu_key("D", "elete"), _act(_delete), brief="Permanently remove this channel"),
                 DetailAction("r", menu_key("R", "estrictions"), _act(_restrictions), brief="Active mutes and bans"),
                 DetailAction("h", menu_key("H", "istory"), _act(_history), brief="Its moderators and what they did"),
+                DetailAction("n", menu_key("N", "otices"), _act(_announcements),
+                             brief="Scheduled announcements here"),
             ]
             if link_context is not None and not linked and not open_room:
                 actions.append(DetailAction("l", menu_key("L", "ink this chat channel"), _act(_link), brief="Share it via NetBBS Link"))

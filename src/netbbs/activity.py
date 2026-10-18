@@ -617,6 +617,7 @@ def unread_channel_count(db: Database, user: User, channel: Channel) -> int | No
         SELECT e.envelope_json FROM channel_messages m
         LEFT JOIN link_events e ON e.content_id = m.link_content_id
         WHERE m.channel_id = ? AND m.id > ? AND m.kind IN ({placeholders})
+          AND m.announcement IS NULL
         """,
         (channel.id, last_message_id, *_CHANNEL_CONTENT_KINDS),
     )

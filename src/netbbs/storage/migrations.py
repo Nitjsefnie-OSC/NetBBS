@@ -4782,4 +4782,41 @@ MIGRATIONS = [
         CREATE INDEX idx_bot_private_rate ON bot_private_history(bot_id, caller, created_at);
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1380 (design doc §16, scheduled SysOp announcements in chat): "
+            "`chat_announcements`, the rules a SysOp schedules into a channel -- once on a date, "
+            "daily, weekly on a set of weekdays (`weekdays`, a bit mask, Monday = 1), or monthly on "
+            "the first to fourth of a weekday. `time` is HH:MM in the node's display timezone, "
+            "`handled_until` the moment up to which every slot is said or skipped, and `saved_by` "
+            "the SysOp who saved the rule, by whose account it is carried on Link. "
+            "`chat_announcement_approvals`, the Linked channels a SysOp approved for "
+            "announcements. `channel_messages.announcement`, set on a line that is one -- this "
+            "node's own in an approved Linked channel, or one received with the signed event's "
+            "`announcement` marker. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE chat_announcements (
+            id                INTEGER PRIMARY KEY,
+            channel_id        INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            body              TEXT NOT NULL,
+            repeat            TEXT NOT NULL CHECK (repeat IN ('once', 'daily', 'weekly', 'monthly')),
+            time              TEXT NOT NULL,
+            once_date         TEXT,
+            weekdays          INTEGER NOT NULL DEFAULT 0,
+            month_week        INTEGER CHECK (month_week IS NULL OR month_week BETWEEN 1 AND 4),
+            month_weekday     INTEGER CHECK (month_weekday IS NULL OR month_weekday BETWEEN 0 AND 6),
+            saved_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            handled_until     TEXT NOT NULL,
+            created_at        TEXT NOT NULL
+        );
+        CREATE INDEX idx_chat_announcements_channel ON chat_announcements(channel_id);
+        CREATE TABLE chat_announcement_approvals (
+            channel_id   INTEGER PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+            approved_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            approved_at  TEXT NOT NULL
+        );
+        ALTER TABLE channel_messages ADD COLUMN announcement INTEGER;
+        """,
+    ),
 ]
