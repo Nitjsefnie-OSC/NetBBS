@@ -64,6 +64,9 @@ from netbbs.config import (
     get_mail_min_level,
     MAIL_MIN_LEVEL_CONFIG_KEY,
     MAX_MAIL_MIN_LEVEL,
+    get_oneliner_min_level,
+    ONELINER_MIN_LEVEL_CONFIG_KEY,
+    MAX_ONELINER_MIN_LEVEL,
     CROSSPOST_BOARD_LIMIT_CONFIG_KEY,
     MAX_CROSSPOST_BOARD_LIMIT,
     get_crosspost_board_limit,
@@ -180,6 +183,7 @@ from netbbs.guest import (
     set_guest_user_without_commit,
     set_pre_login_notice_without_commit,
 )
+from netbbs.oneliners import oneliners_enabled, set_oneliners_enabled
 from netbbs.session_history import (
     previous_callers_enabled,
     previous_callers_plain,
@@ -266,6 +270,7 @@ async def _system_menu(
             ),
             "previous_callers_enabled": previous_callers_enabled(db),
             "previous_callers_plain": previous_callers_plain(db),
+            "oneliners_enabled": oneliners_enabled(db),
             "guest_username": (lambda u: u.username if u is not None else None)(guest_user(db)),
             "trust_exceptions": len(list_sole_authorities(db)),
             "description_level": menu_description_level(db, actor),
@@ -351,6 +356,19 @@ async def _system_menu(
             await lane.run(_toggle_previous_callers)
             stats = await lane.run(_load_settings_stats)
             await _draw_system_menu(session, node_controls, link_context, stats=stats)
+        elif choice == "w":
+            def _toggle_oneliners(db: Database) -> None:
+                # Issue #1391: the wall after login, shown or hidden. It is
+                # drawn in the Recent callers panel's style.
+                enabled = not oneliners_enabled(db)
+                set_oneliners_enabled(db, enabled)
+                record_action(
+                    db, actor=actor, action="set_oneliners_enabled", detail=f"enabled={str(enabled).lower()}",
+                )
+
+            await lane.run(_toggle_oneliners)
+            stats = await lane.run(_load_settings_stats)
+            await _draw_system_menu(session, node_controls, link_context, stats=stats)
         elif choice == "i":
             await session.write_line("")
             await _mrc_settings_screen(session, lane, actor, node_controls=node_controls)
@@ -370,7 +388,8 @@ async def _system_menu(
             await show_menu_help(
                 session, "Settings help", _system_menu_entries(stats),
                 about="The node's lasting configuration: how it looks, what callers may do, and how it "
-                      "joins other networks. Recent callers changes at once, without a screen of its own.",
+                      "joins other networks. Recent callers and the Wall change at once, without a screen of "
+                      "their own.",
                 header_color=stats["header_color"], unicode_style=stats["unicode_style"],
             )
             await _draw_system_menu(session, node_controls, link_context, stats=stats)
@@ -541,6 +560,16 @@ def _system_menu_entries(stats: dict[str, Any]) -> list[MenuEntry]:
                 else "Plain; press to hide"
                 if stats["previous_callers_plain"]
                 else "Neon; press for plain"
+            ),
+        ),
+        # Issue #1391: "Oneliners" would take Operating limits' key, so the
+        # wall is named by its other word.
+        MenuEntry(
+            label=menu_key("W", "all of oneliners") + ": " + ("shown" if stats["oneliners_enabled"] else "hidden"),
+            brief=(
+                "Shown under Recent callers; press to hide"
+                if stats["oneliners_enabled"]
+                else "Hidden after login; press to show"
             ),
         ),
         MenuEntry(label=menu_key("I", "nter-BBS chat (MRC)"), brief="Bridge channels to the MRC network"),
@@ -1666,6 +1695,7 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
             "scrollback": get_scrollback_limit(db),
             "map_level": get_node_map_min_level(db),
             "mail_level": get_mail_min_level(db),
+            "oneliner_level": get_oneliner_min_level(db),
             "crosspost_boards": get_crosspost_board_limit(db),
         }
 
@@ -1783,6 +1813,18 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
                 "cross-posting off). Each board gets its own copy, so this bounds what one post writes."
             ),
         ),
+        FieldSpec(
+            key="oneliner_level",
+            label="Oneliner level",
+            render=lambda d: _setting_level_label(levels, d["oneliner_level"]),
+            prompt=_int_field("oneliner_level", "Lowest level"),
+            brief="Who may add to the oneliner wall", section="Oneliners",
+            help=(
+                f"The lowest level that may add a line to the oneliner wall under Recent callers "
+                f"(0-{MAX_ONELINER_MIN_LEVEL}; 0 is everyone). Every caller can read it. A guest is an "
+                "ordinary account: set this above the guest account's level to keep guests read-only."
+            ),
+        ),
     ]
 
     async def save(draft: dict) -> list[str]:
@@ -1794,6 +1836,7 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
             "scrollback": draft["scrollback"],
             "map_level": draft["map_level"],
             "mail_level": draft["mail_level"],
+            "oneliner_level": draft["oneliner_level"],
             "crosspost_boards": draft["crosspost_boards"],
         }
         # Checked here, before anything is written, so one bad value
@@ -1810,6 +1853,8 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
             raise _LimitsError(f"Node map level must be 0-{MAX_NODE_MAP_MIN_LEVEL}.")
         if not 0 <= values["mail_level"] <= MAX_MAIL_MIN_LEVEL:
             raise _LimitsError(f"Mail level must be 0-{MAX_MAIL_MIN_LEVEL}.")
+        if not 0 <= values["oneliner_level"] <= MAX_ONELINER_MIN_LEVEL:
+            raise _LimitsError(f"Oneliner level must be 0-{MAX_ONELINER_MIN_LEVEL}.")
         if not 1 <= values["crosspost_boards"] <= MAX_CROSSPOST_BOARD_LIMIT:
             raise _LimitsError(f"Cross-post boards must be 1-{MAX_CROSSPOST_BOARD_LIMIT}.")
         changed = [key for key in values if values[key] != current[key]]
@@ -1821,6 +1866,7 @@ async def _limits_settings_screen(session: Session, lane: DatabaseLane, actor: U
             "scrollback": SCROLLBACK_LIMIT_CONFIG_KEY,
             "map_level": NODE_MAP_MIN_LEVEL_CONFIG_KEY,
             "mail_level": MAIL_MIN_LEVEL_CONFIG_KEY,
+            "oneliner_level": ONELINER_MIN_LEVEL_CONFIG_KEY,
             "crosspost_boards": CROSSPOST_BOARD_LIMIT_CONFIG_KEY,
         }
 

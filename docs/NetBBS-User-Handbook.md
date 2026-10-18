@@ -130,6 +130,7 @@ things in different places. A few keys mean the same on every screen:
 | **Find** (<kbd>/</kbd>) | Search your own mail and the posts, files and retained chat on this node (below) |
 | <kbd>E</kbd> **E-mail** | Read and send persistent NetBBS mail, from the level the SysOp chose; not offered to the guest account |
 | <kbd>W</kbd> **Who's online** | See callers and available ways to contact them |
+| <kbd>R</kbd> **Recent callers** | Who called lately, and the newest lines on the oneliner wall (below) |
 | <kbd>P</kbd> **Profile** | Change your public profile and personal preferences |
 | **Approvals** (<kbd>A</kbd>) | Posts and uploads waiting for your decision, if the SysOp made you a moderator |
 | <kbd>S</kbd> **Staff** | Your staff console, if the SysOp gave you staff permissions |
@@ -156,6 +157,37 @@ and the posts, files and retained chat on this node.
 > [!NOTE]
 > Search covers content held by this node, including carried NetBBS Link
 > content; it is not a search of the entire network.
+
+#### The oneliner wall
+
+The oneliner wall is a list of short lines callers leave for the callers
+after them. After you sign in, its newest lines are shown under
+**Recent callers**, on the same screen and with one pause.
+
+To add a line:
+
+1. Press <kbd>A</kbd> **Add a line**, at that pause or on
+   ▸ **Recent callers**.
+2. Type your line, up to 60 columns, and press <kbd>Enter</kbd>.
+   <kbd>Esc</kbd> or an empty line cancels.
+
+Any other key at the pause goes on to the main menu, where the result is
+shown.
+
+- You can add one line per call, and three a day.
+- A line is plain text: colour codes are not drawn.
+- The SysOp may set a level for adding lines. Below it, **Add a line** is
+  not offered, but you can still read the wall.
+
+▸ **Recent callers** ▸ <kbd>O</kbd> **Oneliners** shows the whole wall,
+newest first. Page it with <kbd>&lt;</kbd> and <kbd>&gt;</kbd>, and press
+<kbd>/</kbd> to find a name or a word. To remove one of your own lines,
+press <kbd>D</kbd> **Delete**, type its number and answer <kbd>Y</kbd>.
+
+> [!NOTE]
+> Your line shows your account name, even if you hide your name from
+> Recent callers. The SysOp and staff who moderate everything can delete
+> any line.
 
 #### Lists of boards and areas
 

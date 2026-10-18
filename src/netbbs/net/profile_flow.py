@@ -15,7 +15,7 @@ from __future__ import annotations
 import dataclasses
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Sequence
 
 from netbbs.rendering.layout import MenuEntry
 from netbbs.rendering.menu import continue_prompt, highlight_hotkeys
@@ -74,6 +74,8 @@ from netbbs.link.attestation_delivery import attestation_delivery_counts
 from netbbs.link.remote_attestation import count_attestation_recipients
 from netbbs.mail import list_mail_blocks, set_shares_read_receipts, shares_read_receipts
 from netbbs.messaging_preferences import accepts_direct_messages, set_accepts_direct_messages
+from netbbs.net.oneliner_flow import add_oneliner_prompt, oneliner_wall_screen
+from netbbs.oneliners import Oneliner, list_oneliners, may_write_oneliners, oneliners_enabled
 from netbbs.net.char_input import HELP_KEY, InputCancelled, reject_unhandled_key
 from netbbs.net.help_overlay import show_menu_help
 from netbbs.net.breadcrumb_preference import breadcrumb_collapsed_enabled, set_breadcrumb_collapsed_enabled
@@ -275,12 +277,18 @@ def _render_previous_callers_panel(
     entries: list[SessionHistoryEntry],
     *,
     frame_width: int,
+    oneliners: Sequence[Oneliner] = (),
 ) -> list[str]:
     """The framed caller roll, as rendered rows, drawn identically for
     both places it appears (issue #592): the post-login splash and the
     main menu's own `[R]ecent callers` entry. One renderer, so the
     name-visibility policy and the column measurement below can never
     drift between the two.
+
+    Issue #1391: `oneliners`, the newest lines on the wall, are a lower
+    section of the same frame under a "Oneliners" divider, so the call
+    has one pause. With no caller rows the frame is headed by the wall
+    alone. Each line is one row, cut to the frame; the full wall wraps.
     """
     plain = previous_callers_plain(db)
     # The plain style (issue #841) keeps to the node's header colour, so
@@ -345,7 +353,14 @@ def _render_previous_callers_panel(
             + colored(f" {right}", fg_color=right_bar_color, bold=True)
         )
 
-    if plain:
+    if not entries:
+        if plain:
+            title = "Oneliners"
+            subtitle = "What callers left on the wall"
+        else:
+            title = f"{marker}  O N E L I N E R S  {marker}"
+            subtitle = "WHAT THE LAST CALLERS LEFT BEHIND"
+    elif plain:
         title = "Recent callers"
         subtitle = "Who has called in lately"
     else:
@@ -484,8 +499,69 @@ def _render_previous_callers_panel(
             _framed(colored_truncate(segments, body_width))
         )
 
+    if oneliners:
+        if entries:
+            # The divider names the section inside the rule itself, so the
+            # wall costs one row of chrome rather than a heading block.
+            label = " Oneliners " if plain else " O N E L I N E R S "
+            inner = frame_width - 2
+            if display_width(label) + 2 <= inner:
+                spare = inner - display_width(label)
+                divider = (
+                    middle_left + horizontal * (spare // 2) + label
+                    + horizontal * (spare - spare // 2) + middle_right
+                )
+                rendered.append(
+                    _gradient(divider, bold=True) if use_truecolor
+                    else colored(divider, fg_color=header_color, bold=True)
+                )
+            else:
+                rendered.append(_rule(middle_left, middle_right))
+        # The author column is as wide as the widest name shown, up to
+        # twelve columns, so the lines start under one another.
+        author_width = min(
+            12, max(display_width(sanitize_text(line.author_label)) for line in oneliners)
+        )
+        for line in oneliners:
+            author_text, author_padding = _fit(sanitize_text(line.author_label), author_width)
+            rendered.append(_framed(colored_truncate(
+                [
+                    (author_text, (lambda text: _gradient(text, bold=True)) if use_truecolor else accent_color),
+                    (author_padding, None),
+                    ("  ", None),
+                    (sanitize_text(line.text), VALUE_COLOR),
+                ],
+                body_width,
+            )))
+
     rendered.append(_rule(bottom_left, bottom_right))
     return rendered
+
+
+def _split_panel_rows(available: int, callers: int, lines: int) -> tuple[int, int]:
+    """How many caller rows and wall lines fit `available` content rows
+    of the combined panel (issue #1391).
+
+    Each section shows at most `_PREVIOUS_CALLERS_DISPLAY_LIMIT` rows.
+    With both present the divider takes a row, and each keeps at least
+    one; where even that does not fit, the roll keeps its place and the
+    wall is left to its own screen. Otherwise the larger section gives
+    way first, the wall on a tie.
+    """
+    callers = min(callers, _PREVIOUS_CALLERS_DISPLAY_LIMIT)
+    lines = min(lines, _PREVIOUS_CALLERS_DISPLAY_LIMIT)
+    available = max(0, available)
+    if callers and lines:
+        room = available - 1
+        if room >= 2:
+            while callers + lines > room:
+                if lines >= callers:
+                    lines -= 1
+                else:
+                    callers -= 1
+            return callers, lines
+        lines = 0
+    return min(callers, available), min(lines, available)
 
 
 async def _show_previous_callers_screen(
@@ -508,34 +584,48 @@ async def _show_previous_callers_screen(
     login").  The same roll stays reachable on demand from the main
     menu, as the node-wide listing has always been -- before issue #592
     it was what `[H]istory` showed.
+
+    Issue #1391: the oneliner wall is the same frame's lower section, so
+    the call still has one pause, and each section follows its own
+    toggle and is left out when empty. Where the wall is on and the
+    caller meets its level, the pause offers `[A]dd a line` beside
+    `[Enter] Continue` -- a hotkey, never a question (design doc §3.5);
+    any other key goes on, and the outcome is carried to the main menu.
     """
-    if not previous_callers_enabled(db):
+    show_callers = previous_callers_enabled(db)
+    show_wall = oneliners_enabled(db)
+    if not (show_callers or show_wall):
         return False
 
-    entry_limit = min(
-        _PREVIOUS_CALLERS_DISPLAY_LIMIT,
-        max(0, session.terminal_height - _PREVIOUS_CALLERS_FIXED_ROWS),
-    )
+    available = session.terminal_height - _PREVIOUS_CALLERS_FIXED_ROWS
     frame_width = min(session.terminal_width, 78)
-    if entry_limit == 0 or frame_width < 4:
+    if available <= 0 or frame_width < 4:
         return False
 
     entries = _previous_caller_entries(
         db,
         limit=_PREVIOUS_CALLERS_DISPLAY_LIMIT,
         exclude_history_id=current_history_id,
-    )[:entry_limit]
-    if not entries:
+    ) if show_callers else []
+    lines = list_oneliners(db, limit=_PREVIOUS_CALLERS_DISPLAY_LIMIT) if show_wall else []
+    caller_rows, line_rows = _split_panel_rows(available, len(entries), len(lines))
+    if not (caller_rows or line_rows):
         return False
 
     rendered = _render_previous_callers_panel(
-        session, db, user, entries, frame_width=frame_width
+        session, db, user, entries[:caller_rows], frame_width=frame_width,
+        oneliners=lines[:line_rows],
     )
     await session.write_line("\r\n" + "\r\n".join(rendered))
+    offer_add = show_wall and may_write_oneliners(db, user)
     await session.write_line(
-        "\r\n" + continue_prompt()
+        "\r\n" + (
+            menu_key("A", "dd a line") + "   " + continue_prompt() if offer_add else continue_prompt()
+        )
     )
-    await session.read_any_key()
+    key = await session.read_any_key()
+    if offer_add and key.lower() == "a":
+        await add_oneliner_prompt(session, db, user)
     return True
 
 
@@ -604,10 +694,17 @@ async def _previous_callers_screen(
     messages or mail from you.") are refused with the reason. The key is
     not hidden for a caller who blocked you, as Who's online's `[E]-mail`
     is: it is the roll's, not one caller's.
+
+    Issue #1391: the oneliner wall is the frame's lower section here as
+    at logon, whatever the after-login toggle says, and the bar adds
+    `[A]dd a line` (for a caller who meets the wall's level) and
+    `[O]neliners`, the whole wall. So the bar is always drawn, and the
+    screen is left with `[B]ack`.
     """
     viewer_is_sysop = meets_level(user, SYSOP_LEVEL)
     while True:
         offer_mail = lane is not None and await mail_open_to(session, lane, user)
+        offer_add = may_write_oneliners(db, user)
         frame_width = min(session.terminal_width, 78)
 
         await session.write_line(
@@ -622,30 +719,32 @@ async def _previous_callers_screen(
                 node_name_gradient=session.node_name_gradient,
             )
         )
-        # One packed row, whatever the description level: the roll is what
-        # this screen is for, and on a short terminal every row the bar
-        # took would be a caller fewer (the 40x12 floor has two to spare).
-        bar = (
-            action_bar([menu_key("M", "ail a caller"), menu_key("B", "ack")], width=session.terminal_width, height=session.terminal_height)
-            if offer_mail else None
-        )
-        # The budget counts the bar's rows beyond the one line "Press any
-        # key" took, and the outcome carried above the prompt.
-        extra_rows = pending_notice_rows(session)
-        if bar is not None:
-            extra_rows += wrap_terminal_text(bar, max(1, session.terminal_width)).count("\r\n")
-        entry_limit = max(
-            1,
-            min(
-                _PREVIOUS_CALLERS_DISPLAY_LIMIT,
-                session.terminal_height - _PREVIOUS_CALLERS_MENU_FIXED_ROWS - extra_rows,
-            ),
-        )
-        entries = _previous_caller_entries(
+        all_entries = _previous_caller_entries(
             db,
             limit=_PREVIOUS_CALLERS_DISPLAY_LIMIT,
             exclude_history_id=current_history_id,
-        )[:entry_limit]
+        )
+        offer_mail = offer_mail and bool(all_entries)
+        # One packed bar, whatever the description level: the roll is what
+        # this screen is for, and on a short terminal every row the bar
+        # took would be a caller fewer.
+        bar = action_bar(
+            [
+                *([menu_key("M", "ail a caller")] if offer_mail else []),
+                *([menu_key("A", "dd a line")] if offer_add else []),
+                menu_key("O", "neliners"),
+                menu_key("B", "ack"),
+            ],
+            width=session.terminal_width, height=session.terminal_height,
+        )
+        # The budget counts the bar's rows beyond its first, and the
+        # outcome carried above the prompt.
+        extra_rows = pending_notice_rows(session)
+        extra_rows += wrap_terminal_text(bar, max(1, session.terminal_width)).count("\r\n")
+        available = max(1, session.terminal_height - _PREVIOUS_CALLERS_MENU_FIXED_ROWS - extra_rows)
+        lines = list_oneliners(db, limit=_PREVIOUS_CALLERS_DISPLAY_LIMIT)
+        caller_rows, line_rows = _split_panel_rows(available, len(all_entries), len(lines))
+        entries = all_entries[:caller_rows]
         if frame_width < 4:
             # The splash simply skips itself here; this screen was asked
             # for, so it says why nothing is drawn rather than looking
@@ -653,24 +752,22 @@ async def _previous_callers_screen(
             await session.write_line(
                 colored("Your terminal is too narrow for this list.", fg_color=MUTED_COLOR)
             )
-            bar = None
-        elif not entries:
-            await session.write_line(
-                colored("Nobody else has called this node yet.", fg_color=MUTED_COLOR)
-            )
-            bar = None
-        else:
-            rendered = _render_previous_callers_panel(
-                session, db, user, entries, frame_width=frame_width
-            )
-            await session.write_line("\r\n".join(rendered))
-        if bar is None:
             await write_notices(session)
             await session.write_line(
                 "\r\n" + continue_prompt()
             )
             await session.read_any_key()
             return
+        if not entries and not line_rows:
+            await session.write_line(
+                colored("Nobody else has called this node yet.", fg_color=MUTED_COLOR)
+            )
+        else:
+            rendered = _render_previous_callers_panel(
+                session, db, user, entries, frame_width=frame_width,
+                oneliners=lines[:line_rows],
+            )
+            await session.write_line("\r\n".join(rendered))
 
         await session.write_line("\r\n" + bar)
         await write_notices(session)
@@ -678,18 +775,32 @@ async def _previous_callers_screen(
         while True:
             action = (await session.read_key()).lower()
             if action == HELP_KEY:
-                await show_menu_help(
-                    session, "Recent callers help",
-                    [MenuEntry(
+                help_entries = []
+                if offer_mail:
+                    help_entries.append(MenuEntry(
                         label=menu_key("M", "ail a caller"),
                         brief="Write to someone on the list; asks for their number",
-                    )],
-                    about="The most recent calls to this BBS, newest first.",
+                    ))
+                if offer_add:
+                    help_entries.append(MenuEntry(
+                        label=menu_key("A", "dd a line"),
+                        brief="Leave one line on the oneliner wall",
+                    ))
+                help_entries.append(MenuEntry(
+                    label=menu_key("O", "neliners"),
+                    brief="The whole wall, to page, find or delete",
+                ))
+                await show_menu_help(
+                    session, "Recent callers help", help_entries,
+                    about=(
+                        "The most recent calls to this BBS, newest first, and the newest lines "
+                        "callers left on the oneliner wall."
+                    ),
                     header_color=effective_header_color(session, db),
                     unicode_style=unicode_style_enabled(db, user),
                 )
                 break  # drawn again
-            if action in ("m", "b"):
+            if action == "b" or (action == "m" and offer_mail) or (action == "a" and offer_add) or action == "o":
                 await session.write_line("")
                 break
             await session.write(reject_unhandled_key(action))
@@ -697,6 +808,12 @@ async def _previous_callers_screen(
             continue
         if action == "b":
             return
+        if action == "a":
+            await add_oneliner_prompt(session, db, user, lane=lane)
+            continue
+        if action == "o":
+            await oneliner_wall_screen(session, db, user, lane=lane)
+            continue
 
         # A hotkey followed by a line prompt: an Enter typed right behind
         # the "m" is not an answer (same guard as mail's compose).

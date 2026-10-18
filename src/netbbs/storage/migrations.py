@@ -4698,4 +4698,22 @@ MIGRATIONS = [
         ALTER TABLE channels ADD COLUMN link_lifecycle_json TEXT;
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1391 (design doc §3.3, the oneliner wall): `oneliners`, the short lines callers "
+            "leave under Recent callers, newest first. The author is kept by label beside "
+            "`author_user_id ON DELETE SET NULL`, so a line outlives its account as a post does. "
+            "The index serves the per-account daily limit. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE oneliners (
+            id              INTEGER PRIMARY KEY,
+            author_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            author_label    TEXT NOT NULL,
+            text            TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        );
+        CREATE INDEX idx_oneliners_author_created ON oneliners(author_user_id, created_at);
+        """,
+    ),
 ]
