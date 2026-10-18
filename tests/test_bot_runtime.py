@@ -197,7 +197,7 @@ def test_baud_fallback_lists_granted_queries():
     baud = Baud({"queries": ["seen", "stats"]}, sent.append)
     baud.handle({"type": "message", "request": "a", "caller": {"id": 7, "name": "alice"},
                  "channel": "general", "text": "dance"})
-    assert sent[-1]["text"] == "alice: I know help, remind, reminders, cancel, seen and stats. Conversation is not enabled."
+    assert sent[-1]["text"] == "alice: I know help, remind, reminders, cancel, seen, stats, roll and coin. Conversation is not enabled."
 
 
 def test_state_bound_and_old_value_survives_refused_write(db):

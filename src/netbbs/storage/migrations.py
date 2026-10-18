@@ -4782,4 +4782,16 @@ MIGRATIONS = [
         CREATE INDEX idx_bot_private_rate ON bot_private_history(bot_id, caller, created_at);
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1379 (design doc §16, Baud social commands, Decision 4): `chat_bots.quotes` and "
+            "`chat_bots.polls`, the per-instance switches for Baud's per-channel quotes and quick "
+            "polls. Off by default and on upgrade; dice and the coin have no switch. The quotes and "
+            "polls themselves live in the bot's own state, not in the database."
+        ),
+        sql="""
+        ALTER TABLE chat_bots ADD COLUMN quotes INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE chat_bots ADD COLUMN polls INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 ]

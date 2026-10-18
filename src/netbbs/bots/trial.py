@@ -56,6 +56,8 @@ class TrialSpec:
     announce_posts: bool = False
     announce_files: bool = False
     model_conversation: bool = False
+    quotes: bool = False
+    polls: bool = False
 
     @classmethod
     def of_bot(cls, bot) -> "TrialSpec":
@@ -67,6 +69,7 @@ class TrialSpec:
             greetings=bot.greetings, board_sources=list(bot.board_sources), file_sources=list(bot.file_sources),
             announcement_channel=bot.announcement_channel, announce_posts=bot.announce_posts,
             announce_files=bot.announce_files, model_conversation=bot.model_conversation,
+            quotes=bot.quotes, polls=bot.polls,
         )
 
     def grants(self) -> list[str]:
@@ -212,7 +215,7 @@ class Trial:
             greetings=spec.greetings, board_sources=spec.board_sources, file_sources=spec.file_sources,
             announcement_channel=spec.announcement_channel, announce_posts=spec.announce_posts,
             announce_files=spec.announce_files, model_conversation=spec.model_conversation,
-            phrases=spec.phrases,
+            phrases=spec.phrases, quotes=spec.quotes, polls=spec.polls,
         )
         # Callers type where the bot answers "!" lines, if it does anywhere.
         from netbbs.chat.channels import get_channel_by_name

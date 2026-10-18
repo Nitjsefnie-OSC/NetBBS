@@ -611,8 +611,8 @@ protocol is `docs/NetBBS-bot-api.md`. What a caller sees of one:
   the block list checked at creation and again at delivery, §6.4) (§16,
   issues #1375 and #1376).
 - **What a bot is told.** Its `hello` carries the node's display timezone,
-  so times are read in the node clock, and lists which of its channels are
-  Linked. A message event says whether the caller is a moderator of the
+  so times are read in the node clock, lists which of its channels are
+  Linked, and names the node as other BBSes address it. A message event says whether the caller is a moderator of the
   channel or the guest, and whether a private answer can reach them (§16,
   issues #1372, #1375 and #1379).
 - **Writing and trying bots.** NetBBS ships a stdlib helper,
