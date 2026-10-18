@@ -157,6 +157,7 @@ from netbbs.rendering import (
     screen_title,
     visible_width,
 )
+from netbbs.doors.events import game_results_announced, set_game_results_announced
 from netbbs.session_history import (
     SessionHistoryEntry,
     list_recent_sessions,
@@ -1382,6 +1383,7 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
         "mrc_private": await lane.run(mrc_private_messages_enabled, user),
         "mrc_lastseen": await lane.run(mrc_lastseen_recorded, user),
         "history_name_visible": await lane.run(session_history_name_visible, user),
+        "game_results": await lane.run(game_results_announced, user),
         "color_depth": await lane.run(color_depth_override, user) or "auto",
         "description_level": await lane.run(menu_description_level, user),
         "redraw_in_place": await lane.run(redraw_in_place_enabled, user),
@@ -1792,6 +1794,23 @@ async def _edit_profile(session: Session, lane: DatabaseLane, user: User, *, act
                 "list shown after login and from the main menu. Your own [H]istory screen is "
                 "unaffected; it only ever shows you your own calls. Hiding it only affects "
                 "what ordinary callers see -- a SysOp can always see the real name."
+            ),
+            section="Communication",
+        ),
+        FieldSpec(
+            key="game_results",
+            label="Game results announced in chat",
+            render=lambda d: "yes" if d["game_results"] else "no",
+            prompt=_unless_signed_in_without_credential("whether game results are announced", live_choice_field(
+                "game_results", [False, True],
+                persist=_member_persist(user, actor, "game_results", set_game_results_announced, describe=describe),
+            )),
+            brief="Whether Baud may announce your door game results",
+            help=(
+                "Whether Baud may announce your ranks, achievements and high scores from door games, "
+                "and list you in !top. On by default. Off means none of your game results is announced "
+                "and !top leaves you out; the games themselves, and their own Halls of Fame, are "
+                "unaffected."
             ),
             section="Communication",
         ),

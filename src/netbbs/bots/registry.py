@@ -29,6 +29,9 @@ MAX_BODY = 500
 # they have their own fixed limit per caller per bot instead of the channel's.
 PRIVATE_PER_HOUR = 30
 TEMPERAMENTS = ("friendly", "terse", "retro")
+# Node queries a SysOp may grant, each on its own (issue #1210; `top`, door
+# standings, issue #1408).
+QUERIES = ("stats", "seen", "top")
 # Issue #1381: a phrase override is checked as the longest local caller name
 # would expand it, so "<name>: <phrase>" still fits one 500-character line.
 # The help opening shares its line with Baud's fixed command list (up to 256
@@ -73,6 +76,9 @@ class Bot:
     # Issue #1379: Baud's quotes and quick polls, each off by default.
     quotes: bool = False
     polls: bool = False
+    # Issue #1408: door events, a third source kind (§16, #1378).
+    door_sources: tuple[str, ...] = ()
+    announce_doors: bool = False
 
     @property
     def phrase_overrides(self) -> dict[str, str]:
@@ -96,6 +102,8 @@ def list_bots(db: Database) -> list[Bot]:
             "SELECT b.name FROM bot_board_sources s JOIN boards b ON b.id=s.board_id WHERE s.bot_id=? ORDER BY b.name", (row["id"],)))
         areas = tuple(r[0] for r in db.connection.execute(
             "SELECT a.name FROM bot_file_sources s JOIN file_areas a ON a.id=s.area_id WHERE s.bot_id=? ORDER BY a.name", (row["id"],)))
+        doors = tuple(r[0] for r in db.connection.execute(
+            "SELECT d.name FROM bot_door_sources s JOIN doors d ON d.id=s.door_id WHERE s.bot_id=? ORDER BY d.name", (row["id"],)))
         destination = db.connection.execute("SELECT name FROM channels WHERE id=?", (row["announcement_channel_id"],)).fetchone()
         grants = db.connection.execute(
             "SELECT c.name, bc.is_default, bc.linked_approved, bc.channel_read, bc.presence_events FROM bot_channels bc JOIN channels c ON c.id = bc.channel_id "
@@ -110,7 +118,8 @@ def list_bots(db: Database) -> list[Bot]:
                           tuple(g["name"] for g in grants if g["presence_events"]), bool(row["greetings"]),
                           boards, areas, destination[0] if destination else None,
                           bool(row["announce_posts"]), bool(row["announce_files"]), bool(row["model_conversation"]),
-                          _stored_phrases(row["phrases_json"]), bool(row["quotes"]), bool(row["polls"])))
+                          _stored_phrases(row["phrases_json"]), bool(row["quotes"]), bool(row["polls"]),
+                          door_sources=doors, announce_doors=bool(row["announce_doors"])))
     return result
 
 
@@ -214,7 +223,8 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
              board_sources: list[str] | None = None, file_sources: list[str] | None = None,
              announcement_channel: str | None = None, announce_posts: bool = False, announce_files: bool = False,
              model_conversation: bool = False, phrases: dict[str, str] | None = None,
-             quotes: bool = False, polls: bool = False) -> Bot:
+             quotes: bool = False, polls: bool = False,
+             door_sources: list[str] | None = None, announce_doors: bool = False) -> Bot:
     require_sysop(db, actor)
     name = name.strip()
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,23}", name):
@@ -225,8 +235,8 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
         raise BotError("Choose friendly, terse or retro.")
     phrases = validate_phrases(phrases)
     queries = [] if queries is None else queries
-    if not isinstance(queries, list) or any(q not in ("stats", "seen") for q in queries):
-        raise BotError("Query grants may contain only stats and seen.")
+    if not isinstance(queries, list) or any(q not in QUERIES for q in queries):
+        raise BotError("Query grants may contain only stats, seen and top.")
     queries = sorted(set(queries))
     if type(lines_per_hour) is not int or not 1 <= lines_per_hour <= 120:
         raise BotError("Choose 1-120 lines per hour per channel.")
@@ -256,9 +266,10 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
     if bot_id is not None:
         get_bot(db, bot_id)
     from netbbs.bots.sources import validate_sources
-    boards, areas, destination = validate_sources(
+    boards, areas, doors, destination = validate_sources(
         db, board_sources or [], file_sources or [], announcement_channel, allowed, approved,
         announce_posts=announce_posts, announce_files=announce_files,
+        door_names=door_sources or [], announce_doors=announce_doors,
     )
     try:
         with db.connection:
@@ -283,6 +294,9 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
                 "UPDATE chat_bots SET announcement_channel_id=?, announce_posts=?, announce_files=? WHERE id=?",
                 (destination.id if destination else None, int(announce_posts), int(announce_files), bot_id),
             )
+            db.connection.execute("UPDATE chat_bots SET announce_doors=? WHERE id=?", (int(announce_doors), bot_id))
+            db.connection.execute("DELETE FROM bot_door_sources WHERE bot_id=?", (bot_id,))
+            db.connection.executemany("INSERT INTO bot_door_sources(bot_id, door_id) VALUES (?, ?)", [(bot_id, d.id) for d in doors])
             db.connection.execute("DELETE FROM bot_board_sources WHERE bot_id=?", (bot_id,))
             db.connection.execute("DELETE FROM bot_file_sources WHERE bot_id=?", (bot_id,))
             db.connection.executemany("INSERT INTO bot_board_sources(bot_id, board_id) VALUES (?, ?)", [(bot_id, b.id) for b in boards])
@@ -312,7 +326,7 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
                 if row[0] not in keep:
                     db.connection.execute("DELETE FROM bot_channels WHERE bot_id=? AND channel_id=?", (bot_id, row[0]))
             record_action(db, actor=actor, action="bot_configure", object_type="bot", object_id=bot_id,
-                          detail=f"{name}.bot enabled={enabled}; addressed channels={allowed}; defaults={sorted(default_names)}; Linked approvals={sorted(approved)}; queries={queries}; channel reads={sorted(reading)}; presence events={sorted(events)}; greetings={greetings}; post sources={[b.name for b in boards]}; file sources={[a.name for a in areas]}; announcement channel={announcement_channel}; post/file announcements={announce_posts}/{announce_files}; quotes/polls={quotes}/{polls}; custom phrases={sorted(phrases)}")
+                          detail=f"{name}.bot enabled={enabled}; addressed channels={allowed}; defaults={sorted(default_names)}; Linked approvals={sorted(approved)}; queries={queries}; channel reads={sorted(reading)}; presence events={sorted(events)}; greetings={greetings}; post sources={[b.name for b in boards]}; file sources={[a.name for a in areas]}; door sources={[d.name for d in doors]}; announcement channel={announcement_channel}; post/file/door announcements={announce_posts}/{announce_files}/{announce_doors}; quotes/polls={quotes}/{polls}; custom phrases={sorted(phrases)}")
     except sqlite3.IntegrityError as exc:
         raise BotError("A bot with that name or state directory already exists.") from exc
     return get_bot(db, bot_id)

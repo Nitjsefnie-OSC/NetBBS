@@ -17,8 +17,20 @@ def _public(db, resource):
     return resource
 
 
+def _public_door(db, door):
+    """A door's version of `_public`: every caller may play it (#1378)."""
+    from netbbs.doors.outbound import door_not_public
+
+    if door is None or door_not_public(db, door):
+        raise BotError("Door event sources must be playable by every caller (minimum play level 0).")
+    return door
+
+
 def public_sources(db, *, kind):
     """Visible resources whose inherited audience gates permit announcements."""
+    if kind == "doors":
+        from netbbs.doors.events import public_doors
+        return public_doors(db)
     resources = list_boards(db) if kind == "boards" else list_file_areas(db)
     result = []
     for resource in resources:
@@ -29,24 +41,27 @@ def public_sources(db, *, kind):
     return result
 
 
-def validate_sources(db, board_names, area_names, destination_name, allowed, approved, *, announce_posts, announce_files):
-    if len(set(board_names)) + len(set(area_names)) > 32:
-        raise BotError("Allow at most 32 board and file sources per bot.")
+def validate_sources(db, board_names, area_names, destination_name, allowed, approved, *, announce_posts, announce_files,
+                     door_names=(), announce_doors=False):
+    if len(set(board_names)) + len(set(area_names)) + len(set(door_names)) > 32:
+        raise BotError("Allow at most 32 board, file and door sources per bot.")
+    from netbbs.doors.registry import DoorError, get_door_by_name
     try:
         boards = [_public(db, get_board_by_name(db, n)) for n in sorted(set(board_names))]
         areas = [_public(db, get_file_area_by_name(db, n)) for n in sorted(set(area_names))]
-    except (BoardError, FileAreaError) as exc:
-        raise BotError("Choose existing, visible boards and file areas as sources.") from exc
-    if (announce_posts and not boards) or (announce_files and not areas):
+        doors = [_public_door(db, get_door_by_name(db, n)) for n in sorted(set(door_names))]
+    except (BoardError, FileAreaError, DoorError) as exc:
+        raise BotError("Choose existing, visible boards, file areas and doors as sources.") from exc
+    if (announce_posts and not boards) or (announce_files and not areas) or (announce_doors and not doors):
         raise BotError("Each announcement ability requires its own explicit source grants.")
     destination = None
     if destination_name:
         destination = local_channel(db, destination_name, allow_linked=destination_name.lstrip("#") in approved)
         if destination.name not in allowed:
             raise BotError("The announcement destination must be an allowed channel.")
-    if (boards or areas) and destination is None:
+    if (boards or areas or doors) and destination is None:
         raise BotError("Choose an allowed destination channel for these source events.")
-    return boards, areas, destination
+    return boards, areas, doors, destination
 
 
 def source_head(db):
@@ -75,6 +90,45 @@ def source_batch(db, bot_id, cursor):
     return rows, rows[-1]["id"] if len(rows) == BATCH_LIMIT else max(cursor, head), advanced
 
 
+def door_head(db):
+    return db.connection.execute("SELECT COALESCE(MAX(id), 0) FROM door_events").fetchone()[0]
+
+
+def door_batch(db, bot_id, cursor):
+    """`source_batch` for door events (#1378), which have a journal and a
+    cursor of their own rather than a kind in `bot_source_events`."""
+    head = door_head(db)
+    rows = [dict(r) for r in db.connection.execute(
+        "SELECT e.id, 'door' AS kind, e.door_id AS source_id, e.id AS item_id FROM door_events e "
+        "WHERE e.id > ? AND e.id <= ? AND EXISTS "
+        "(SELECT 1 FROM bot_door_sources s WHERE s.bot_id=? AND s.door_id=e.door_id) "
+        "ORDER BY e.id LIMIT ?", (cursor, head, bot_id, BATCH_LIMIT),
+    )]
+    first = db.connection.execute("SELECT MIN(id) FROM door_events").fetchone()[0]
+    advanced = first is not None and cursor < first - 1
+    return rows, rows[-1]["id"] if len(rows) == BATCH_LIMIT else max(cursor, head), advanced
+
+
+def _door_event(db, bot_id, channel, source_id, item_id):
+    from netbbs.doors.events import announced_event, door_events_refusal
+    from netbbs.doors.registry import get_door
+
+    granted = db.connection.execute("SELECT 1 FROM bot_door_sources WHERE bot_id=? AND door_id=?",
+                                    (bot_id, source_id)).fetchone()
+    door = get_door(db, source_id)
+    if granted is None or door is None:
+        raise BotError("This door source is no longer granted.")
+    if door_events_refusal(db, door):
+        raise BotError("This door's events are no longer announced: its game events are off, "
+                       "or not every caller may play it.")
+    event = announced_event(db, door, int(item_id))
+    if event is None:
+        raise BotError("This door event names no caller who may still be announced.")
+    name = " ".join(sanitize_text(door.name).split())
+    return {"type": "door", "channel": channel.name, "source": name, "item_id": str(item_id),
+            "kind": event.kind, "title": event.title[:300], "subjects": list(event.names), "text": event.text}
+
+
 def source_event(db, bot_id, reference):
     """Fresh grant, audience and content visibility, also used before publishing."""
     bot = get_bot(db, bot_id)
@@ -84,6 +138,8 @@ def source_event(db, bot_id, reference):
     if reference.get("destination", channel.name) != channel.name:
         raise BotError("The announcement destination changed; this old event was discarded.")
     kind, item_id, source_id = reference["kind"], reference["item_id"], reference["source_id"]
+    if kind == "door":
+        return _door_event(db, bot_id, channel, source_id, item_id)
     if kind == "post":
         row = db.connection.execute(
             "SELECT b.name FROM bot_board_sources s JOIN boards b ON b.id=s.board_id "

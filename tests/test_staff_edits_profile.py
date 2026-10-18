@@ -36,12 +36,12 @@ from netbbs.storage.execution import DatabaseLane
 from tests.test_directory_ui import FakeSession, squeezed
 
 # Profile's fields are numbered straight through its four sections.
-_DESCRIPTIONS = ["1", "5"]
-_ANIMATIONS = ["1", "7"]
-_CHARSET = ["1", "8"]
+_DESCRIPTIONS = ["1", "6"]
+_ANIMATIONS = ["1", "8"]
+_CHARSET = ["1", "9"]
 _BIO = ["0", "1"]
 _BLOCKED = ["0", "7"]
-_SSH_KEYS = ["2", "4"]
+_SSH_KEYS = ["2", "5"]
 
 
 @pytest.fixture
@@ -210,7 +210,7 @@ def test_a_members_character_set_never_reaches_the_sysops_session(db, lane, syso
 
 # On the guest defaults, Name & details and read receipts are left out, so
 # Menu descriptions is the thirteenth field.
-_GUEST_DESCRIPTIONS = ["1", "3"]
+_GUEST_DESCRIPTIONS = ["1", "4"]
 
 
 def test_the_guest_defaults_leave_out_what_a_shared_account_has_no_use_for(db, lane, sysop, alice):
@@ -329,3 +329,15 @@ def test_link_sharing_stays_the_members_choice(db, lane, sysop, alice):
     session = FakeSession(keys=["0", "8", "b"])
     asyncio.run(_identity_details_screen(session, lane, alice, actor=sysop))
     assert "only alice can choose to share a verification over Link" in session.visible_output
+
+
+def test_game_results_announced_is_on_by_default_and_a_toggle(db, lane, alice):
+    """Issue #1408: "Game results announced in chat", beside "Name shown to
+    other callers", is opt-out and toggles in one keystroke."""
+    from netbbs.doors.events import game_results_announced
+
+    assert game_results_announced(db, alice)
+    session = FakeSession(keys=["1", "3", "b"])
+    asyncio.run(_edit_profile(session, lane, alice))
+    assert not game_results_announced(db, get_user_by_id(db, alice.id))
+    assert "Game results announced in chat" in squeezed(session.visible_output)

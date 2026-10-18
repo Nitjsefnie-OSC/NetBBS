@@ -1237,8 +1237,8 @@ def test_user_detail_edit_profile_opens_the_members_profile(db, lane, sysop):
 
     alice = create_user(db, "alice", password="hunter2", user_level=10)
     before = menu_description_level(db, alice)
-    # 15 is Profile's "Menu descriptions"; Back from Profile, then out.
-    session = FakeSession(["u", "u", "/", "alice", "e", "1", "5", "b", "b", "b", "b", "b"])
+    # 16 is Profile's "Menu descriptions"; Back from Profile, then out.
+    session = FakeSession(["u", "u", "/", "alice", "e", "1", "6", "b", "b", "b", "b", "b"])
     _run(session, lane, sysop)
     assert "[E]dit profile" in _visible(_written_text(session))
     assert "alice's profile. Every change is logged." in _visible(_written_text(session))
@@ -10046,6 +10046,31 @@ def test_the_chat_ceiling_is_set_on_its_own(db, lane, sysop):
     config = outbound_config(db, door.id)
     assert (config.chat_lines_per_hour, config.posts_per_hour) == (12, 6)
     assert "Chat ceiling is now 12 lines per hour." in _written_text(session)
+
+
+def test_game_events_are_a_switch_of_their_own_with_their_own_ceiling(db, lane, sysop):
+    """Issue #1408: [E] toggles game events, off by default, without touching
+    posting; [G] sets their own hourly ceiling."""
+    from netbbs.doors import create_door
+    from netbbs.doors.outbound import enable_outbound, outbound_config
+
+    door = create_door(db, "Blacksite", "/usr/bin/python3", creator=sysop)
+    enable_outbound(db, door, enabled_by=sysop)
+    assert not outbound_config(db, door.id).events_enabled
+
+    session = FakeSession(_door_outbound_keys("e", "g", "20"))
+    _run(session, lane, sysop)
+
+    config = outbound_config(db, door.id)
+    assert config.events_enabled and config.events_per_hour == 20
+    assert (config.posts_per_hour, config.chat_lines_per_hour) == (6, 30)
+    text = _normalized_visible(_written_text(session))
+    assert "Game events on." in text and "Events ceiling is now 20 events per hour." in text
+    assert "[E]vents off" in text
+
+    session = FakeSession(_door_outbound_keys("e"))
+    _run(session, lane, sysop)
+    assert not outbound_config(db, door.id).events_enabled
 
 
 def _war_dialer_world_keys(*keys):

@@ -448,7 +448,7 @@ def test_a_line_is_a_block_or_an_announcement_never_both(db, sysop, channel):
 def test_baud_help_block_stays_in_bounds_with_every_grant_and_the_longest_opening(model):
     sent = []
     longest = "x" * 168 + "{name}"  # the longest help opening the editor saves
-    Baud({"blocks": True, "queries": ["stats", "seen"], "model_conversation": model, "quotes": True, "polls": True,
+    Baud({"blocks": True, "queries": ["stats", "seen", "top"], "model_conversation": model, "quotes": True, "polls": True,
           "phrases": {"help": longest}}, sent.append).handle(
         {"type": "message", "request": "r", "caller": {"id": 7, "name": "n" * 32}, "channel": "c", "text": "help"})
     block = check_block(sent[-1]["block"])
@@ -456,7 +456,7 @@ def test_baud_help_block_stays_in_bounds_with_every_grant_and_the_longest_openin
     assert block.rows[-1][1].endswith("Replies are public.") and "private" not in sent[-1]
     # Issue #1372: answered privately, its last row says how to ask
     # privately; with the longest bot name and a Link caller it still fits.
-    Baud({"blocks": True, "name": "B" * 24 + ".bot", "queries": ["stats", "seen"], "model_conversation": model, "quotes": True, "polls": True,
+    Baud({"blocks": True, "name": "B" * 24 + ".bot", "queries": ["stats", "seen", "top"], "model_conversation": model, "quotes": True, "polls": True,
           "phrases": {"help": longest}}, sent.append).handle(
         {"type": "message", "request": "r", "caller": {"id": "link:abc:bob", "name": "n" * 32}, "channel": "c",
          "text": "help", "private": True})
@@ -464,3 +464,23 @@ def test_baud_help_block_stays_in_bounds_with_every_grant_and_the_longest_openin
     assert sent[-1]["private"] is True and len(block.rows) == 12 and len(block.fallback()) <= MAX_FALLBACK
     assert block.rows[-1][1].endswith(f"Ask privately: /msg {'B' * 24}.bot@Node <text>.")
     assert ("reminders, cancel <id>", "your reminders in every channel; cancel one") in block.rows
+    assert ("stats, seen, top", "who is on, uptime; seen <name>: when someone was last on; "
+            "top <door>: a door game's top ten") in block.rows
+
+
+@pytest.mark.parametrize("private", [False, True])
+def test_baud_help_line_with_top_fits_whole_in_the_worst_case(private):
+    """Issue #1408: the one-line help for a host without blocks, with
+    `top <door>; ` added, is never cut: longest opening, 24-character bot
+    name, 32-character Link caller, model conversation, every grant and
+    switch."""
+    from netbbs.bots import botkit
+    sent = []
+    Baud({"name": "B" * 24 + ".bot", "queries": ["stats", "seen", "top"], "model_conversation": True,
+          "quotes": True, "polls": True, "phrases": {"help": "x" * 168 + "{name}"}}, sent.append).handle(
+        {"type": "message", "request": "r", "caller": {"id": "link:" + "a" * 64 + ":nib", "name": "n" * 26 + "@Node1"},
+         "channel": "c", "text": "help", "private": private})
+    text = sent[-1]["text"]
+    assert len(text) <= botkit.LINE_LIMIT and "seen <name>; top <door>; roll|coin; " in text
+    assert text.endswith(f"Conversation is on; reset clears your context. Ask privately: /msg {'B' * 24}.bot@Node <text>."
+                         if private else "Conversation is on; reset clears your context. Replies are public.")

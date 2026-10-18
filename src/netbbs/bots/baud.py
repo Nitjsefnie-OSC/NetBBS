@@ -225,6 +225,10 @@ class Baud(botkit.Bot):
         if self.announce_files:
             self.announce(event)
 
+    def on_door(self, event):
+        if self.announce_doors:
+            self.announce(event)
+
     def on_presence(self, event):
         if self.greetings and event.kind == "join":
             self.say(event.channel, self.phrase("greeting", event.caller["name"]))
@@ -317,9 +321,10 @@ class Baud(botkit.Bot):
                       "tell <name> <text>; tells; cancel <id>; "
                       + ("stats; " if "stats" in self.queries else "")
                       + ("seen <name>; " if "seen" in self.queries else "")
+                      + ("top <door>; " if "top" in self.queries else "")
                       # Issue #1379: compact, so the line fits whole with every
-                      # grant and switch after the longest opening, with room
-                      # left for another command.
+                      # grant and switch after the longest opening; with `top`
+                      # (issue #1408) the worst case is 500 or less, no room left.
                       + "roll|coin; " + ("quote; " if self.quotes_on else "")
                       + ("poll; " if self.polls_on else "") +
                       "help remind|tell: more. /sysop <reason>: page staff. " +
@@ -346,6 +351,11 @@ class Baud(botkit.Bot):
             else:
                 msg.query(command, rest.strip(), then=lambda result: msg.reply(
                     result.value["text"] if result.ok else result.get("error", "Query unavailable.")))
+        elif command == "top":
+            if command not in self.queries:
+                msg.reply("The SysOp has not enabled this query ability.")
+            else:
+                msg.query("top", rest.strip(), then=lambda result: self._top(msg, result))
         elif command in {"reminders", "cancel", "remind"}:
             # These read the reminders: each waits for any save in flight.
             handler = getattr(self, "_" + command)
@@ -368,7 +378,7 @@ class Baud(botkit.Bot):
         elif self.model_conversation:
             msg.model()
         else:
-            known = ["help", "remind", "reminders", "cancel", "tell", "tells", *sorted(self.queries & {"seen", "stats"}),
+            known = ["help", "remind", "reminders", "cancel", "tell", "tells", *sorted(self.queries & {"seen", "stats", "top"}),
                      "roll", "coin", *(["quote"] if self.quotes_on else []), *(["poll", "vote"] if self.polls_on else [])]
             msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
 
@@ -386,7 +396,7 @@ class Baud(botkit.Bot):
         # Issue #1373: the command list as a titled block; the opening
         # phrase heads it, and the line form above is for an older host.
         # At most 12 rows: the opening, five command rows (listing and
-        # cancelling share one, issue #1379), the queries, the social
+        # cancelling share one, issue #1379), the queries (one row), the social
         # commands, /sysop and the model line, which ends with what is
         # private (issue #1372).
         rows = [opening] if opening else []
@@ -397,10 +407,19 @@ class Baud(botkit.Bot):
                  ("tell <name> <text>", "a note for someone's next join here"),
                  ("tells, cancel tell <id>", "your waiting tells; withdraw one")]
         queries = [(name, text) for name, text in (("stats", "who is on, uptime"),
-                                                   ("seen <name>", "when someone was last on"))
+                                                   ("seen <name>", "when someone was last on"),
+                                                   ("top <door>", "a door game's top ten"))
                    if name.split(" ")[0] in self.queries]
         if queries:
-            rows.append((", ".join(name for name, _ in queries), "; ".join(text for _, text in queries)))
+            # One row for the queries. With all three the label would pass
+            # 24 characters, so it names them bare and the text carries
+            # each one's argument (issue #1408).
+            label = ", ".join(name for name, _ in queries)
+            text = "; ".join(text for _, text in queries)
+            if len(label) > 24:
+                label = ", ".join(name.split(" ")[0] for name, _ in queries)
+                text = "; ".join(f"{name}: {text}" if " " in name else text for name, text in queries)
+            rows.append((label, text))
         rows.append(("roll [NdS+M], coin", "dice and a coin, said to everyone here"))
         if self.quotes_on:
             rows.append(("quote [<n>|add|del]", "this channel's quotes: one at random, number n, add or delete"))
@@ -410,6 +429,19 @@ class Baud(botkit.Bot):
         rows.append(("Conversation is enabled; reset clears your temporary context here. " if self.model_conversation
                      else "No language model is enabled. ") + self._privacy_note(msg))
         msg.reply_block("Commands", rows, private=msg.private or None)
+
+    def _top(self, msg, result):
+        # Issue #1408: a door's standings, as the host filtered them. A
+        # titled block where the host takes blocks (#1373), else one line.
+        value = result.value if result.ok and isinstance(result.value, dict) else None
+        if value is None:
+            msg.reply(result.get("error", "Query unavailable."))
+        elif value.get("rows") and getattr(self, "blocks", False):
+            msg.reply_block(f"{value['door']} · {value['title']}", [
+                (f"{row['rank']} {row['name']}", row["value"] + (f" · {row['label']}" if row.get("label") else ""))
+                for row in value["rows"]])
+        else:
+            msg.reply(value["text"])
 
     def _own(self, msg):
         return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]
