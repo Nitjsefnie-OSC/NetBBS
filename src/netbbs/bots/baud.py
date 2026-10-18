@@ -14,12 +14,33 @@ VERSION = 1
 # A refused reminder is retried with backoff, then dropped; it never blocks
 # the reminders behind it (a deleted channel or removed grant never heals).
 MAX_DELIVERY_ATTEMPTS = 8
+LINE_LIMIT = 500
+
+# Issue #1381: the temperament presets are only defaults. The SysOp may
+# override each phrase per instance; the host passes the overrides in the
+# hello's "phrases" object, and an empty or missing one falls back to the
+# preset. "{name}" is the caller's name; "{{" and "}}" are literal braces.
+PHRASE_KEYS = ("greeting", "help", "busy", "limit")
+PRESETS = {
+    "greeting": {"friendly": "Welcome, {name}!", "terse": "Welcome, {name}.",
+                 "retro": "Carrier detected: welcome, {name}!"},
+    "help": {"friendly": "Happy to help!", "terse": "", "retro": "Carrier detected."},
+    "busy": dict.fromkeys(("friendly", "terse", "retro"), "Busy saving reminders; try again shortly."),
+    "limit": dict.fromkeys(("friendly", "terse", "retro"),
+                           "Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first."),
+}
+
+
+def preset(key, temperament):
+    return PRESETS[key].get(temperament, PRESETS[key]["friendly"])
 
 
 class Baud:
     def __init__(self, hello, emit):
         self.emit = emit
         self.temperament = hello.get("temperament", "friendly")
+        phrases = hello.get("phrases")
+        self.phrases = phrases if isinstance(phrases, dict) else {}
         self.queries = frozenset(hello.get("queries", []))
         self.greetings = hello.get("greetings", False)
         self.announce_posts = hello.get("announce_posts", False)
@@ -41,8 +62,19 @@ class Baud:
         self.emit({"id": identity, "action": action, **fields})
         return identity
 
+    def phrase(self, key, name):
+        # The host validates every phrase on Save; a hand-edited or older
+        # host's phrase that does not format still never takes Baud down.
+        custom = self.phrases.get(key)
+        if isinstance(custom, str) and custom.strip():
+            try:
+                return custom.format(name=name)
+            except Exception:  # noqa: BLE001 - any formatting failure means the preset
+                pass
+        return preset(key, self.temperament).format(name=name)
+
     def reply(self, event, text):
-        self.action("reply", request=event["request"], text=f"{event['caller']['name']}: {text}"[:500])
+        self.action("reply", request=event["request"], text=f"{event['caller']['name']}: {text}"[:LINE_LIMIT])
 
     def store(self, state, event=None, text=None):
         identity = self.action("state.set", value=state)
@@ -66,9 +98,7 @@ class Baud:
             return
         if event.get("type") == "presence":
             if self.greetings and event.get("kind") == "join":
-                name = event["caller"]["name"]
-                greeting = {"friendly": f"Welcome, {name}!", "terse": f"Welcome, {name}.",
-                            "retro": f"Carrier detected: welcome, {name}!"}[self.temperament]
+                greeting = self.phrase("greeting", event["caller"]["name"])[:LINE_LIMIT]
                 self.action("say", channel=event["channel"], text=greeting)
             return
         if event["type"] == "result":
@@ -90,7 +120,7 @@ class Baud:
         if self.waiting:
             if event["type"] == "message":
                 if len(self.backlog) == self.backlog.maxlen:
-                    self.reply(event, "Busy saving reminders; try again shortly.")
+                    self.reply(event, self.phrase("busy", event["caller"]["name"]))
                 else:
                     self.backlog.append(event)
             return
@@ -108,11 +138,12 @@ class Baud:
         command = command.lower()
         own = [r for r in self.state["reminders"] if r["user"] == event["caller"]["id"]]
         if command in {"", "help"}:
-            greeting = {"friendly": "Happy to help! ", "terse": "", "retro": "Carrier detected. "}[self.temperament]
-            self.reply(event, greeting + "help; remind <1s-30d> <text>; reminders; cancel <id>. "
+            opening = self.phrase("help", event["caller"]["name"]).strip()
+            self.reply(event, (opening + " " if opening else "") + "help; remind <1s-30d> <text>; reminders; cancel <id>. "
                        + ("stats; " if "stats" in self.queries else "")
                        + ("seen <local-account>; " if "seen" in self.queries else "") +
-                       "Reminders appear publicly here, including after restart. " +
+                       "Reminders appear publicly here, including after restart. "
+                       "/sysop <reason>: page staff. " +
                        ("Conversation is enabled; reset clears your temporary context here. Replies are public." if self.model_conversation
                         else "No language model is enabled."))
         elif command in {"stats", "seen"}:
@@ -139,13 +170,18 @@ class Baud:
             if not 1 <= seconds <= 30 * 86400 or not 1 <= len(text.strip()) <= 160:
                 self.reply(event, "Use remind <1s-30d> <text of 1-160 characters>.")
             elif len(own) >= 8 or len(self.state["reminders"]) >= 48:
-                self.reply(event, "Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first.")
+                self.reply(event, self.phrase("limit", event["caller"]["name"]))
             else:
                 ordinal = self.state["next"]
                 reminder = {"id": ordinal, "user": event["caller"]["id"], "name": event["caller"]["name"],
                             "channel": event["channel"], "due": time.time() + seconds, "text": text.strip()}
                 self.store({"next": ordinal + 1, "reminders": [*self.state["reminders"], reminder]},
                            event, f"Saved reminder #{ordinal}; it will appear publicly here.")
+        elif command == "sysop":
+            # Paging is the host's /sysop (decision 1377): a ! line has
+            # already gone out publicly, so this only points the way.
+            self.reply(event, "I can't page anyone, and this line was public. "
+                       "Type /sysop <reason>: only the SysOp and staff see it.")
         elif command == "reset" and self.model_conversation:
             self.action("model.reset", request=event["request"])
         elif self.model_conversation:

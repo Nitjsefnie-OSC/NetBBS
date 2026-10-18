@@ -1096,6 +1096,7 @@ offers only what their permissions reach:
 | <kbd>A</kbd> **Accounts waiting** | Approve accounts |
 | <kbd>U</kbd> **Users** | Manage accounts |
 | <kbd>M</kbd> **Moderation** | Global moderation or any moderator grant |
+| <kbd>P</kbd> **Pages** | Any staff permission |
 
 These are your own screens with fewer actions: a staff member can open your
 account or another staff member's, but only to look.
@@ -1132,6 +1133,41 @@ don't know.
   stays until you end it, reads "away since" the day you set it, and your
   landing screen reminds you of it each time.
 - Being away changes nobody's permissions.
+
+#### Pages: callers asking for you
+
+A caller asks for help with `/sysop <reason>` in chat. The page reaches every
+SysOp and every account with a staff permission, and waits in one shared
+queue: <kbd>P</kbd> **Pages** on your console's landing screen, and on the
+Staff console. The reason never appears in the channel, its history, Link or
+MRC, and the Monitor and the node log name only the caller and where they
+were.
+
+- **In chat or the Monitor** the page shows at once, and chat rings the bell
+  as for a private message.
+- **Elsewhere** it shows above the prompt of your next screen, and the main
+  menu says "1 page waiting: SysOp → Pages". In a door you see it once you
+  leave.
+- The dashboard counts open pages under **ATTENTION**, and the Staff console
+  under **Pages waiting**.
+
+Pick a page to see who sent it, when, from where, their reason and whether
+they are still online. Then choose one:
+
+| Key | Does |
+| --- | --- |
+| <kbd>C</kbd> **Chat** | Opens a break-in chat on their screen, as the Monitor's <kbd>C</kbd> **Chat** does. Shown while they are connected. |
+| <kbd>M</kbd> **Mail reply** | Writes to them with their reason quoted. Members only: a guest has no mailbox. |
+| <kbd>D</kbd> **Done** | Closes the page. |
+
+Any of the three closes the page for everyone; whoever opens it afterwards is
+told who handled it.
+
+> [!NOTE]
+> The limits are fixed. A caller has one open page at a time, and pages at
+> most once every 10 minutes; paging again replaces the reason. A guest can
+> page only while one of you is online. Handled pages are kept for 30 days.
+> You and your staff can't page your own node.
 
 ### Verified age and names
 
@@ -2384,6 +2420,23 @@ Baud reads only messages addressed to it. Its replies and reminders are
 public in the channel. Friendly, terse and retro temperaments change its
 fixed phrases.
 
+#### Baud's phrases
+
+Each instance can say its own words, in any language. Under **Phrases** in
+the instance's editor:
+
+1. Pick **Greeting**, **Help opening**, **Busy message** or
+   **Reminder-limit message**. A blank one shows the temperament's text as
+   `(preset)`.
+2. Type the phrase. `{name}` is replaced by the caller's name; write `{{` or
+   `}}` for a literal brace.
+3. <kbd>S</kbd> **Save**. The running bot picks it up within about a second.
+
+> [!NOTE]
+> Save refuses any other placeholder, an unmatched brace, terminal controls,
+> or a phrase over 400 characters (200 for the help opening, which Baud's
+> command list follows; each `{name}` counts as 32), and keeps your draft. Clear a phrase to go back to the preset.
+
 Everything else is a separate grant in the editor, off until you set it:
 
 - reading whole channels;
@@ -2395,7 +2448,7 @@ Everything else is a separate grant in the editor, off until you set it:
 
 The [bot API guide](NetBBS-bot-api.md) describes each. The editor groups its
 fields under Bot, Channels, Greetings and announcements, Queries and
-conversation, and Behaviour and program.
+conversation, Behaviour and program, and Phrases.
 
 ### Manage running bots
 
