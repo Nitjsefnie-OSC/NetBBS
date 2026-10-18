@@ -103,6 +103,14 @@ def test_the_longest_help_opening_never_cuts_the_command_list():
     baud.handle(message("help", name="n" * 32))
     assert len(sent[-1]["text"]) <= 500
     assert sent[-1]["text"].endswith("reset clears your temporary context here. Replies are public.")
+    # The private help names how to ask privately; with the longest bot
+    # name and a Link caller's "@<node>", it still fits (issue #1372).
+    baud = Baud({"name": "B" * 24 + ".bot", "queries": ["stats", "seen"], "model_conversation": True,
+                 "phrases": {"help": longest}}, sent.append)
+    baud.handle({**message("help", name="n" * 32), "caller": {"id": "link:abc:bob", "name": "n" * 32},
+                 "private": True})
+    assert sent[-1]["private"] is True and len(sent[-1]["text"]) <= 500
+    assert sent[-1]["text"].endswith(f"Ask privately: /msg {'B' * 24}.bot@<node> <text>.")
 
 
 def test_baud_survives_a_phrase_that_raises_type_error():
@@ -174,7 +182,7 @@ def test_real_baud_receives_phrases_in_its_hello(db, lane, hub, sysop, alice, ch
             assert (await next_line(queue, "Carrier up")).body == "Carrier up, alice."
             sent = record_message(db, channel, kind="message", author_label=alice.username, body="!help")
             assert await runtime.addressed(channel, alice, sent, pid) is None
-            assert (await next_line(queue, "Befehle:")).body.startswith(f"{alice.username}: Befehle: help;")
+            assert (await next_line(queue, "Befehle:")).text.startswith("Befehle: help;")  # private
         finally:
             await runtime.close()
             hub.leave(channel.name, pid)

@@ -133,8 +133,9 @@ class Baud(botkit.Bot):
                       + ("seen <local-account>; " if "seen" in self.queries else "") +
                       "Reminders appear publicly here, including after restart. "
                       "/sysop <reason>: page staff. " +
-                      ("Conversation is enabled; reset clears your temporary context here. Replies are public." if self.model_conversation
-                       else "No language model is enabled."))
+                      ("Conversation is enabled; reset clears your temporary context here. " if self.model_conversation
+                       else "No language model is enabled. ") + self._privacy_note(msg),
+                      private=msg.private or None)
         elif command in {"stats", "seen"}:
             if command not in self.queries:
                 msg.reply("The SysOp has not enabled this query ability.")
@@ -149,8 +150,8 @@ class Baud(botkit.Bot):
         elif command == "sysop":
             # Paging is the host's /sysop (decision 1377): a ! line has
             # already gone out publicly, so this only points the way.
-            msg.reply("I can't page anyone, and this line was public. "
-                      "Type /sysop <reason>: only the SysOp and staff see it.")
+            msg.reply("I can't page anyone" + ("" if msg.asked_privately else ", and this line was public") +
+                      ". Type /sysop <reason>: only the SysOp and staff see it.")
         elif command == "reset" and self.model_conversation:
             msg.model_reset()
         elif self.model_conversation:
@@ -159,11 +160,27 @@ class Baud(botkit.Bot):
             known = ["help", "remind", "reminders", "cancel", *sorted(self.queries & {"seen", "stats"})]
             msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
 
+    def _privacy_note(self, msg):
+        # What is true for this caller (issue #1372). A caller a private
+        # answer can reach gets this help, and reminders, privately.
+        if not msg.private:
+            return "Replies are public."
+        name = self.name or "Baud.bot"
+        if str(msg.caller["id"]).startswith("link:"):
+            name += "@<node>"
+        return f"Ask privately: /msg {name} <text>."
+
     def _own(self, msg):
         return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]
 
     def _reminders(self, msg, rest):
-        # Do not reveal reminder text from a different, possibly private channel.
+        if msg.private:
+            # Answered to the caller alone, so every channel's reminders.
+            msg.reply("; ".join(f"#{r['id']} {r['channel']}: {r['text'][:35]}" for r in self._own(msg))
+                      or "You have no reminders.", private=True)
+            return
+        # A public answer must not reveal reminder text from a different,
+        # possibly private channel.
         here = [r for r in self._own(msg) if r["channel"] == msg.channel]
         msg.reply("; ".join(f"#{r['id']}: {r['text'][:35]}" for r in here) or "No reminders here.")
 

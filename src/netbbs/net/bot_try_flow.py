@@ -14,7 +14,7 @@ import json
 from netbbs.auth.users import AuthError
 from netbbs.bots.registry import BotError
 from netbbs.bots.trial import STDERR_LIMIT, Trial, TrialSpec
-from netbbs.chat.bots import BotNotice
+from netbbs.chat.bots import BotNotice, BotPrivateAnswer
 from netbbs.net.char_input import InputCancelled
 from netbbs.net.location import crumbs, entered
 from netbbs.net.notices import announce
@@ -108,6 +108,10 @@ async def _render(session, lane_db_render, trial, entry):
         return colored(("(to you) " if message.private else "") + sanitize_text(message), fg_color=MUTED_COLOR)
     if isinstance(message, str):
         return colored(sanitize_text(message), fg_color=MUTED_COLOR)
+    if isinstance(message, BotPrivateAnswer):
+        # Drawn as the caller sees it in a channel (issue #1372).
+        from netbbs.net.chat_flow import _render_bot_private_answer
+        return await trial.lane.run(_render_bot_private_answer, trial.user, message)
     return await lane_db_render(message)
 
 

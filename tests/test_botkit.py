@@ -16,6 +16,7 @@ from netbbs.bots.runtime import BotRuntime
 from netbbs.bots.state import read_state, state_root
 from netbbs.bots.tally import Tally
 from netbbs.bots.trial import STDERR_LIMIT, Trial, TrialSpec
+from netbbs.chat.bots import BotPrivateAnswer
 from netbbs.chat.hub import ParticipantId
 from netbbs.chat.scrollback import get_scrollback, record_message
 from netbbs.net import bot_flow
@@ -222,8 +223,9 @@ def test_trial_runs_the_real_runtime_on_a_scratch_node(db, sysop, channel):
             directory = Path(trial.directory.name)
             await trial.wait_ready()
             await trial.line("!help")
-            await eventually(lambda: any(e.kind == "chat" and "No language model" in getattr(e.value, "body", "")
-                                         for e in trial.log.entries))
+            # Help answers the trying SysOp privately (issue #1372).
+            await eventually(lambda: any(e.kind == "chat" and isinstance(e.value, BotPrivateAnswer)
+                                         and "No language model" in e.value.text for e in trial.log.entries))
             await trial.line("!remind 1h water the plants")
             await eventually(lambda: any(e.kind == "chat" and "Saved reminder #1" in getattr(e.value, "body", "")
                                          for e in trial.log.entries))
@@ -401,3 +403,114 @@ def test_trial_start_failure_leaves_nothing_behind(monkeypatch):
     assert trial.directory is None and trial.lane is None and trial._listen is None
     assert seen["lane"] is not None and seen["listen"].done()
     assert not seen["directory"].exists()
+
+
+# -- private answers (issue #1372)
+
+def private_message(text, request="r", private=True, asked=False, channel="general"):
+    return {**message(text, request=request, channel=channel), "private": private, "asked_privately": asked}
+
+
+def test_private_reply_answers_the_caller_alone_without_their_name():
+    sent = []
+
+    class Whisper(botkit.Bot):
+        def on_message(self, msg):
+            seen.append((msg.private, msg.asked_privately))
+            if msg.text == "whisper":
+                msg.reply("x" * 900, private=True)
+            elif msg.text == "talk":
+                msg.model(private=True)
+            else:
+                msg.reply("as asked")
+
+    seen = []
+    bot = Whisper({}, sent.append)
+    bot.handle(private_message("whisper"))
+    assert sent[-1]["private"] is True and sent[-1]["text"] == "x" * botkit.LINE_LIMIT
+    # Left out, the flag follows how the request was asked: a privately
+    # asked one is answered privately, so no name goes in front.
+    bot.handle(private_message("hi", asked=True))
+    assert sent[-1]["text"] == "as asked" and "private" not in sent[-1]
+    bot.handle(private_message("hi", asked=False))
+    assert sent[-1]["text"] == "alice: as asked" and "private" not in sent[-1]
+    bot.handle(private_message("talk"))
+    assert sent[-1] == {"id": sent[-1]["id"], "action": "model", "request": "r", "private": True}
+    # A host that sends neither flag reads as false.
+    bot.handle(message("hi"))
+    assert seen == [(True, False), (True, True), (True, False), (True, False), (False, False)]
+
+
+def test_baud_help_is_private_when_it_can_reach_the_caller():
+    sent = []
+    baud = Baud({"name": "Baud.bot"}, sent.append)
+    baud.handle(private_message("help"))
+    assert sent[-1]["private"] is True and not sent[-1]["text"].startswith("alice:")
+    assert sent[-1]["text"].endswith("Ask privately: /msg Baud.bot <text>.")
+    assert "Replies are public" not in sent[-1]["text"]
+    # A Link caller addresses the bot by its node.
+    baud.handle({**private_message("help"), "caller": {"id": "link:abc:bob", "name": "bob@Home"}})
+    assert sent[-1]["text"].endswith("/msg Baud.bot@<node> <text>.")
+    # A caller whose node cannot take a private answer is told the truth.
+    baud.handle(private_message("help", private=False))
+    assert "private" not in sent[-1] and sent[-1]["text"].startswith("alice: ")
+    assert sent[-1]["text"].endswith("Replies are public.")
+
+
+def test_baud_private_reminders_list_every_channel_public_ones_only_this_one():
+    sent = []
+    state = {"next": 3, "reminders": [
+        {"id": 1, "user": 7, "name": "alice", "channel": "general", "due": 9e9, "text": "check the oven"},
+        {"id": 2, "user": 7, "name": "alice", "channel": "staff", "due": 9e9, "text": "privateword"},
+        {"id": 9, "user": 8, "name": "bob", "channel": "general", "due": 9e9, "text": "bobs own"}]}
+    baud = Baud({"state": state}, sent.append)
+    baud.handle(private_message("reminders"))
+    assert sent[-1]["private"] is True
+    assert sent[-1]["text"] == "#1 general: check the oven; #2 staff: privateword"
+    baud.handle(private_message("reminders", private=False))
+    assert "private" not in sent[-1] and sent[-1]["text"] == "alice: #1: check the oven"
+    baud.handle(private_message("reminders", private=False, channel="lobby"))
+    assert sent[-1]["text"] == "alice: No reminders here."
+    baud = Baud({"state": {"next": 1, "reminders": []}}, sent.append)
+    baud.handle(private_message("reminders", asked=True))
+    assert sent[-1]["text"] == "You have no reminders." and sent[-1]["private"] is True
+
+
+def test_baud_sysop_hint_does_not_call_a_private_line_public():
+    sent = []
+    baud = Baud({}, sent.append)
+    baud.handle(private_message("sysop help", asked=True))
+    assert sent[-1]["text"] == "I can't page anyone. Type /sysop <reason>: only the SysOp and staff see it."
+    baud.handle(private_message("sysop help"))
+    assert sent[-1]["text"].startswith("alice: I can't page anyone, and this line was public.")
+
+
+def test_baud_answers_reminders_privately_through_the_real_runtime(db, lane, hub, sysop, alice, channel):
+    # A public "!reminders" gets the private, every-channel answer: it goes
+    # to the requesting session alone and never into the channel.
+    from netbbs.bots.state import write_state
+    bot = install(db, sysop, channel)
+    write_state(db, bot.storage_name, {"next": 3, "reminders": [
+        {"id": 1, "user": alice.id, "name": alice.username, "channel": channel.name, "due": 9e9, "text": "oven"},
+        {"id": 2, "user": alice.id, "name": alice.username, "channel": "staff", "due": 9e9, "text": "rota"}]})
+
+    async def run():
+        pid, other = ParticipantId(alice.username, 1), ParticipantId(sysop.username, 2)
+        queue, other_queue = hub.join(channel.name, pid), hub.join(channel.name, other)
+        runtime = BotRuntime(lane, hub, poll_seconds=.03)
+        runtime.start()
+        try:
+            await eventually(lambda: bot.id in runtime.running_ids)
+            message = record_message(db, channel, kind="message", author_label=alice.username, body="!reminders")
+            assert await runtime.addressed(channel, alice, message, pid) is None
+            answer = await next_line(queue, "rota")
+            assert isinstance(answer, BotPrivateAnswer)
+            assert answer.text == f"#1 {channel.name}: oven; #2 staff: rota"
+            assert [m.body for m in get_scrollback(db, channel)] == ["!reminders"]
+            assert other_queue.empty()
+        finally:
+            await runtime.close()
+            hub.leave(channel.name, pid)
+            hub.leave(channel.name, other)
+
+    asyncio.run(run())

@@ -342,7 +342,19 @@ sees a `!` line it has already gone to the channel, so Baud cannot page anyone
 and says so. `help` mentions `/sysop` too. No bot can page the SysOp: a page
 comes only from a caller's own `/sysop` (decision 1377).
 With the corresponding grants, Baud also offers `stats` and
-`seen <local-account>` and lists them in `help`. Both replies are public.
+`seen <local-account>` and lists them in `help`.
+
+Baud answers each request the way it was asked: a `!` line or `Baud.bot:`
+line publicly, with the caller's name in front, and `/msg Baud.bot <text>` or
+a `/private Baud.bot` line privately. Two commands are answered privately
+whenever the `message` event's `private` says a private answer can reach the
+caller, even when they were asked in the channel: `help`, which then ends
+"Ask privately: /msg Baud.bot <text>." (`Baud.bot@<node>` for a Link
+caller), and `reminders`, which then lists all of the caller's reminders
+across channels as `#1 lobby: check the oven`. Only a caller whose node
+cannot take a private answer gets them publicly; that `help` ends "Replies
+are public." and that `reminders` lists only the current channel's.
+
 With **Grant model conversation**, other addressed text requests the host's
 model service; `reset` clears this caller's temporary context here. Ordinary
 commands stay local and remain responsive during a provider request.
@@ -353,9 +365,11 @@ Post/file announcements likewise need only their explicit source grants and
 destination, with the corresponding Baud ability enabled. They require no
 channel reading or presence access.
 Reminder text is capped at 160 characters. Baud holds up to eight reminders
-per caller and 48 per instance, also subject to the state byte limit. Listing
-and cancelling work only for the caller's reminders in the current channel,
-so a public query cannot expose a reminder from a private channel.
+per caller and 48 per instance, also subject to the state byte limit. A
+public listing and cancelling work only for the caller's reminders in the
+current channel, so a public answer cannot expose a reminder from a private
+channel. A reminder is said publicly in its channel when due, however it was
+set.
 
 Due reminders wait through shutdowns. A refused reminder backs off on its own
 (one minute, doubling to an hour) while other due reminders are still
@@ -439,6 +453,23 @@ What it does for you:
   or the reason the action was refused.
 - **Replies.** `msg.reply(text)` puts the caller's name in front and cuts the
   line to 500 characters, as Baud does. `say` is cut the same way.
+- **Private answers.** `msg.reply(text, private=True)` answers the caller
+  alone (see [Private answers](#private-answers)), without their name in
+  front. `msg.private` is true when a private answer can reach this caller,
+  and `msg.asked_privately` when they asked with `/msg` or `/private`; both
+  read false from a host that does not send them. Left out, `private`
+  follows how the request was asked, so a privately asked request is
+  answered privately and a public one publicly. `msg.model(private=True)`
+  and `msg.model_reset(private=True)` take the same flag.
+
+  ```python
+  def on_message(self, msg):
+      if msg.text == "mine":
+          msg.reply("only you see this", private=msg.private)
+  ```
+
+  With `private=msg.private`, a caller whose node cannot take a private
+  answer gets a public one instead of a refusal.
 - **State.** `bot.state` starts as the hello's `state` and becomes a saved
   value once the host has stored it; a refused save leaves it unchanged.
   `bot.change(step)` runs `step()` once every save already sent has its

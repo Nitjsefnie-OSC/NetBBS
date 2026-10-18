@@ -2417,9 +2417,12 @@ First-run onboarding can also create Baud in one channel, with greetings
 there (see [First-run onboarding](#first-run-onboarding)); it then appears
 here like any other instance.
 
-Baud reads only messages addressed to it. Its replies and reminders are
-public in the channel. Friendly, terse and retro temperaments change its
-fixed phrases.
+Baud reads only messages addressed to it. It answers `help` and a caller's
+`reminders` list privately, to that caller alone; its other replies follow
+how the caller asked, publicly for a line typed in the channel and privately
+for `/msg Baud.bot` or `/private Baud.bot`. Reminders are said publicly in
+their channel. Friendly, terse and retro temperaments change its fixed
+phrases.
 
 #### Baud's phrases
 

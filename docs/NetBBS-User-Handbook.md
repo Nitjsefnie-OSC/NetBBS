@@ -991,7 +991,11 @@ default, prefix the commands with `Baud.bot:` instead of `!`.
 To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 [Getting help from the SysOp](#getting-help-from-the-sysop).
 
-- Reminders and replies are public in that channel.
+- Baud answers `help` and `reminders` privately, where only you see the
+  answer; `reminders` then lists your reminders in every channel. Its other
+  replies to a line typed in the channel are public there. To keep a question
+  and its answer to yourself, [ask privately](#ask-a-bot-privately).
+- A reminder is said publicly in its channel when it is due.
 - Reminders survive restarts, though mutes or limits can delay them.
 - Ordinary conversation is not sent to an addressed-only bot.
 - Depending on what your SysOp allows, Baud may also answer `stats` and
@@ -1002,7 +1006,8 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 > [!NOTE]
 > If your SysOp has enabled model conversation, other text addressed to Baud
 > goes to a language model: your first such message only shows a notice
-> naming the service, the replies are public, and `reset` clears your
+> naming the service, the replies are public unless you
+> [asked privately](#ask-a-bot-privately), and `reset` clears your
 > conversation.
 
 #### Ask a bot privately
