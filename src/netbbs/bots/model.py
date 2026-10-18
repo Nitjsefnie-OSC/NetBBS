@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
 import datetime as dt
 import json
 import math
@@ -29,13 +29,25 @@ MAX_RESPONSE_BYTES = 65536
 MAX_CONTEXTS = 256
 MAX_MONTH_CALLS = 20000
 
+# Two modes (§16, issue #1382): help desk, the default, grounds each answer in
+# handbook excerpts and node facts; companion is plain chat with the persona.
+HELPDESK, COMPANION = "helpdesk", "companion"
+MODES = (HELPDESK, COMPANION)
+MODE_LABELS = {HELPDESK: "Help desk (node handbook)", COMPANION: "Companion (open chat)"}
+DEFAULT_PERSONAS = {
+    HELPDESK: "You are this BBS's help desk. Answer callers' questions about using this node in one or two short "
+              "sentences of plain text, suitable for a public chat channel.",
+    COMPANION: "You are a friendly BBS chat companion. Keep replies brief and suitable for a public chat channel.",
+}
+
 
 @dataclass(frozen=True)
 class ModelSettings:
     enabled: bool = False
     endpoint: str = "http://127.0.0.1:11434/v1"
     model: str = ""
-    persona: str = "You are a friendly BBS chat companion. Keep replies brief and suitable for a public chat channel."
+    mode: str = HELPDESK
+    persona: str = DEFAULT_PERSONAS[HELPDESK]
     context_lines: int = 6
     log_prompts: bool = False
     min_level: int = 0
@@ -56,15 +68,38 @@ class ModelSettings:
     revision: str = ""
 
 
+def _with_mode_persona(value):
+    """A persona still at a shipped default follows the mode: switching
+    modes, or a node saved before modes existed, gets that mode's default.
+    A persona the SysOp wrote is kept."""
+    if value.persona in DEFAULT_PERSONAS.values():
+        return replace(value, persona=DEFAULT_PERSONAS[value.mode])
+    return value
+
+
+def load_settings(raw):
+    """Read stored settings tolerantly: unknown keys (from a newer wheel) are
+    ignored and missing ones take their defaults, so adding a field never
+    again breaks an older reader. An absent or unknown mode reads as help
+    desk, the default."""
+    stored = json.loads(raw) if raw else {}
+    if not isinstance(stored, dict):
+        stored = {}
+    known = {f.name for f in fields(ModelSettings)}
+    value = ModelSettings(**{k: v for k, v in stored.items() if k in known})
+    if value.mode not in MODES:
+        value = replace(value, mode=HELPDESK)
+    return _with_mode_persona(value)
+
+
 def settings(db):
-    raw = get_config(db, CONFIG_KEY)
-    return ModelSettings(**json.loads(raw)) if raw else ModelSettings()
+    return load_settings(get_config(db, CONFIG_KEY))
 
 
 # What the Model conversation screen calls each setting. A rejection names the
 # field the SysOp is looking at, never its storage key (issue #1241).
 FIELD_LABELS = {
-    "enabled": "Model service", "endpoint": "API base URL", "model": "Provider model name",
+    "enabled": "Model service", "endpoint": "API base URL", "model": "Provider model name", "mode": "Mode",
     "token_parameter": "Output-limit parameter", "persona": "System prompt",
     "context_lines": "Prior exchange lines", "log_prompts": "Log submitted prompts",
     "min_level": "Minimum caller level", "allow_guests": "Allow designated guests",
@@ -104,6 +139,8 @@ def validate_settings(value):
             # Prices and money budgets are stored in millionths; show units.
             scale = 1000000 if key in MONEY_KEYS else 1
             raise BotError(f"{FIELD_LABELS[key]} must be {low // scale:,}-{high // scale:,}.")
+    if value.mode not in MODES:
+        raise BotError("Choose help desk or companion mode.")
     if value.token_parameter not in {"max_tokens", "max_completion_tokens"}:
         raise BotError("Choose max_tokens or max_completion_tokens for this provider.")
     if (not isinstance(value.model, str) or len(value.model) > 80 or
@@ -114,7 +151,7 @@ def validate_settings(value):
         raise BotError(f"{FIELD_LABELS['persona']} must contain 1-2,000 printable characters.")
     if (value.day_money or value.month_money) and not (value.input_price or value.output_price):
         raise BotError("Money budgets require at least one operator-supplied token price.")
-    return replace(value, endpoint=value.endpoint.rstrip("/"), model=value.model.strip())
+    return _with_mode_persona(replace(value, endpoint=value.endpoint.rstrip("/"), model=value.model.strip()))
 
 
 def save_settings(db, value, *, actor, api_key):
@@ -276,8 +313,13 @@ def usage_summary(db, *, now=None):
 
 
 def disclosure(config, *, private=False):
+    # Help desk also sends handbook excerpts and node facts, and a private
+    # answer's facts name the boards and file areas the caller can see.
+    grounding = ""
+    if config.mode == HELPDESK:
+        grounding = ", handbook excerpts and node facts" + (" incl. boards and areas you can see" if private else "")
     return (f"Model provider: {config.endpoint}. Sends your addressed text + up to {config.context_lines} prior lines "
-            f"of only your {'private ' if private else ''}exchange here. Prompt logging "
+            f"of only your {'private ' if private else ''}exchange here{grounding}. Prompt logging "
             f"{'ON' if config.log_prompts else 'off'}. Replies are {'private to you' if private else 'public'}. "
             "This first request was not sent or kept as context. Submit again to proceed; reset clears context.")
 
@@ -295,6 +337,10 @@ class ModelService:
         self.contexts = OrderedDict()
         self.busy = set()
         self.next_cleanup = 0
+        # Whether this node offers browser links for file transfers, a fact
+        # of the running web listener rather than of the database; the node
+        # sets it at startup (§16, issue #1382).
+        self.browser_links = False
 
     async def upkeep(self):
         now = time.monotonic()
@@ -310,12 +356,18 @@ class ModelService:
             if key[0] == bot_id:
                 del self.contexts[key]
 
-    async def respond(self, bot_id, channel_name, caller, prompt, *, reset=False, private=False):
+    async def respond(self, bot_id, channel_name, caller, prompt, *, reset=False, private=False, online=None,
+                      uptime_seconds=None):
         """Return (text, acceptance callback); remember only a delivered reply.
 
         Private and public exchanges of one caller, bot and channel never
         share a context (issue #1372): a private answer may say what a public
-        one must not, and must not resurface through a later public answer."""
+        one must not, and must not resurface through a later public answer.
+
+        In help-desk mode the system message also carries handbook excerpts
+        and node facts, never part of the context lines; `online` and
+        `uptime_seconds` let the facts include `stats` when the bot holds
+        that grant (§16, issue #1382)."""
         config, channel, label = await self.lane.run(authorize, bot_id, channel_name, caller, private=private)
         key = (bot_id, str(caller["id"]), channel.id) + (("private",) if private else ())
         now = time.monotonic()
@@ -342,8 +394,15 @@ class ModelService:
         context.touched = now
         self.contexts.move_to_end(key)
         try:
-            messages = [{"role": "system", "content": config.persona +
-                         f"\nYour chat identity is {label}. Use this name when identifying yourself."}]
+            system = config.persona + f"\nYour chat identity is {label}. Use this name when identifying yourself."
+            source = None
+            if config.mode == HELPDESK:
+                from netbbs.bots.helpdesk import grounding
+                extra, source = await self.lane.run(
+                    grounding, bot_id, channel_name, caller, prompt, private=private, online=online,
+                    uptime_seconds=uptime_seconds, browser_links=self.browser_links)
+                system += "\n\n" + extra
+            messages = [{"role": "system", "content": system}]
             messages.extend(context.lines[-config.context_lines:] if config.context_lines else [])
             messages.append({"role": "user", "content": prompt})
             ticket = await self.lane.run(lambda db: reserve(db, bot_id, channel_name, caller, config, messages, prompt,
@@ -358,6 +417,13 @@ class ModelService:
                 text = " ".join(sanitize_text(raw).split())[:config.reply_chars]
                 if not text:
                     raise ValueError
+                shown = text
+                if config.mode == HELPDESK:
+                    # The host names its source and says it may be wrong,
+                    # within the reply cap (Decision 3); context keeps only
+                    # the model's own words.
+                    from netbbs.bots.helpdesk import with_source
+                    shown, text = with_source(text, source, config.reply_chars)
             except (KeyError, IndexError, TypeError, ValueError):
                 raise BotError("The model returned no usable text; try again or ask the SysOp.") from None
             current, _, current_label = await self.lane.run(authorize, bot_id, channel_name, caller, private=private)
@@ -369,7 +435,7 @@ class ModelService:
                                  if config.context_lines else [])
                 context.touched = time.monotonic()
                 self.contexts.move_to_end(key)
-            return text, accept_reply
+            return shown, accept_reply
         finally:
             self.busy.discard(key)
 
