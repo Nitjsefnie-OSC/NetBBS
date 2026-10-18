@@ -25,7 +25,9 @@ from netbbs.link.protocol import (
     LinkProtocolError, build_bot_frame, build_subscribe_frame, build_unsubscribe_frame,
     build_channel_message_frame,
 )
-from netbbs.link.realtime_channels import _decide_channel_subscribe_authorization, _live_author_allowed
+from netbbs.link.realtime_channels import (
+    _decide_channel_subscribe_authorization, _frame_with_block, _live_author_allowed,
+)
 from netbbs.link.transport import LinkTransportError
 from netbbs.rendering import sanitize_text
 from netbbs.timeutil import utc_now_iso
@@ -209,11 +211,10 @@ class BotLink:
             # A block (issue #1373) rides both copies to a node that takes
             # one, so whichever arrives first is drawn as the block.
             if message is not None:
-                await self._send(session, build_channel_message_frame(
-                    frame.payload["channel_id"], message.author_label, message.author_label,
-                    message.body, message.created_at,
-                    block=message.block.to_wire() if blocks and message.block is not None else None,
-                ))
+                args = (frame.payload["channel_id"], message.author_label, message.author_label,
+                        message.body, message.created_at)
+                copy = _frame_with_block(*args, block=message.block) if blocks and message.block else None
+                await self._send(session, copy or build_channel_message_frame(*args))
             # A private answer travels only inside the result (issue #1372),
             # never as a direct message or a channel event.
             answer = None
@@ -221,10 +222,16 @@ class BotLink:
                 answer = {"text": private.text}
                 if blocks and private.block is not None:
                     answer["block"] = private.block.to_wire()
-            await self._send(session, build_bot_frame("bot_result", {
-                "request_id": frame.message_id, "error": "" if answer is not None else error[:120],
-                **({"private": answer} if answer is not None else {}),
-            }))
+            def result(private_answer):
+                return build_bot_frame("bot_result", {
+                    "request_id": frame.message_id, "error": "" if private_answer is not None else error[:120],
+                    **({"private": private_answer} if private_answer is not None else {}),
+                })
+            try:
+                built = result(answer)
+            except LinkProtocolError:
+                built = result({"text": answer["text"]})  # a block too big for one frame: its fallback
+            await self._send(session, built)
 
         def authorize(db):
             p = frame.payload

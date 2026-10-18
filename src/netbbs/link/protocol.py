@@ -1229,6 +1229,11 @@ def build_channel_message_frame(
         payload=payload,
     )
     validate_realtime_frame_payload(frame)
+    if block is not None:
+        # A block plus its body's JSON escaping can outgrow the frame
+        # ceiling, which the per-field bounds do not see; refused here,
+        # before the transport's writer would close the session on it.
+        frame.to_json_bytes()
     return frame
 
 

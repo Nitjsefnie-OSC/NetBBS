@@ -407,3 +407,19 @@ def test_private_block_debits_one_private_answer(db, sysop, channel):
     deliver_private(db, bot.id, channel.name, block.fallback(), "7")
     assert db.connection.execute("SELECT COUNT(*) FROM bot_private_history").fetchone()[0] == 1
     assert get_scrollback(db, channel) == []
+
+
+def test_a_block_too_big_for_one_frame_falls_back_to_the_plain_line():
+    # Review of #1424: a peer's body full of escaped characters beside a
+    # near-maximal block fits each field's bound but not one frame; relaying
+    # it with a block must not enqueue a frame the writer would die on.
+    from netbbs.link.realtime_channels import _frame_with_block
+    block = parse_block({"title": "T", "rows": [{"label": "\U0001F4E1" * 24, "text": "\U0001F4E1" * 200}] * 12})
+    body = '"' * 3000
+    with pytest.raises(LinkProtocolError, match="16 KiB"):
+        build_channel_message_frame("c", "Peer.bot", "Peer.bot", body, utc_now_iso(), block=block.to_wire(),
+                                    author_node_fingerprint="n" * 32)
+    assert _frame_with_block("c", "Peer.bot", "Peer.bot", body, utc_now_iso(), block=block,
+                             author_node_fingerprint="n" * 32) is None
+    plain = build_channel_message_frame("c", "Peer.bot", "Peer.bot", body, utc_now_iso())
+    assert "block" not in plain.payload

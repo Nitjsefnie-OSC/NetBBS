@@ -121,6 +121,16 @@ def _received_block(user_id: object, value: object) -> BotBlock | None:
     return block_from_wire(value) if _is_bot_user_id(user_id) else None
 
 
+def _frame_with_block(*args, block: BotBlock, **kwargs) -> RealtimeFrame | None:
+    """A live `channel_message` frame carrying `block` (issue #1373), or
+    `None` when the block makes it too big for one frame: the peer then gets
+    the plain frame, the fallback line, as a peer without blocks does."""
+    try:
+        return build_channel_message_frame(*args, block=block.to_wire(), **kwargs)
+    except LinkProtocolError:
+        return None
+
+
 def _snapshot_entries(db: Database, channel: Channel, *, blocks: bool = False) -> list[dict]:
     """Build origin-attested entries with enough author identity for the
     subscriber to apply its own trust policy. Carried-message identities
@@ -772,11 +782,12 @@ class LiveChannelBridge:
                 continue
             outgoing = relayed
             if block is not None and self._blocks_capable(session.remote_fingerprint):
-                with_block = with_block or build_channel_message_frame(
-                    payload["channel_id"], payload["user_id"], payload["display_label"],
-                    payload["body"], payload["created_at"], author_node_fingerprint=author_node,
-                    block=block.to_wire(),
-                )
+                if with_block is None:
+                    with_block = _frame_with_block(
+                        payload["channel_id"], payload["user_id"], payload["display_label"],
+                        payload["body"], payload["created_at"], author_node_fingerprint=author_node,
+                        block=block,
+                    ) or relayed
                 outgoing = with_block
             try:
                 await session.send(outgoing)
@@ -1098,9 +1109,9 @@ class LiveChannelBridge:
         )
         # Issue #1373: a bot's block, to the peers that take one; everyone
         # else gets its fallback line, the same body.
-        with_block = None if message.block is None else build_channel_message_frame(
+        with_block = None if message.block is None else _frame_with_block(
             channel.channel_id, message.author_label, message.author_label,
-            message.body or "", message.created_at, block=message.block.to_wire(),
+            message.body or "", message.created_at, block=message.block,
         )
         for session in sessions:
             outgoing = frame
