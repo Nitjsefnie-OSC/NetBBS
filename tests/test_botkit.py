@@ -433,9 +433,15 @@ def test_try_quit_ends_although_the_bot_exit_is_seen_late(monkeypatch):
     # TimeoutError in place of the stop's CancelledError, and the worker
     # restarted the bot instead of stopping, so close() waited forever.
     late = _late_exits(monkeypatch, 5)
+    # Baud, deaf to SIGTERM: on POSIX it is still alive for the SIGKILL, as
+    # a bot that is slow to stop would be, so both of _reap's waits run out
+    # there too. (On Windows terminate() kills it outright either way.)
+    baud = str(BOTS / "baud.py")
+    deaf = ("import runpy, signal, sys; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            f"sys.path.insert(0, {str(BOTS)!r}); runpy.run_path({baud!r}, run_name='__main__')")
 
     async def run():
-        trial = Trial(TrialSpec(), caller="sysop")
+        trial = Trial(TrialSpec(command=[sys.executable, "-u", "-c", deaf]), caller="sysop")
         await trial.start()
         runtime = trial.runtime
         await trial.wait_ready()
@@ -450,7 +456,7 @@ def test_try_quit_ends_although_the_bot_exit_is_seen_late(monkeypatch):
     run_bounded(run(), timeout=60)
 
 
-def test_a_failing_session_cleanup_does_not_turn_a_stop_into_a_restart(monkeypatch):
+def test_a_failing_session_cleanup_does_not_turn_a_stop_into_a_restart(monkeypatch, caplog):
     # The class behind the hang above: whatever cleanup raises on the way
     # out of a cancelled session, the stop still ends the worker.
     import netbbs.bots.runtime as runtime_module
@@ -474,6 +480,8 @@ def test_a_failing_session_cleanup_does_not_turn_a_stop_into_a_restart(monkeypat
         assert workers and all(w.task.cancelled() for w in workers)
 
     run_bounded(run(), timeout=60)
+    # Stopped, and the failure is still told, not dropped.
+    assert "cleanup failed while stopping (RuntimeError)" in caplog.text
 
 
 # -- private answers (issue #1372)

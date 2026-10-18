@@ -377,6 +377,10 @@ class _Worker:
                         # CancelledError; restarting here would swallow the
                         # stop, and stop() (Try's /quit, Kill, node shutdown)
                         # would wait forever on a bot that keeps running.
+                        # The callers gather and drop the result, so the
+                        # failure is logged here.
+                        _logger.warning("%s: cleanup failed while stopping (%s); stopped anyway.",
+                                        self.bot.label, type(exc).__name__)
                         raise asyncio.CancelledError() from exc
                     # No raw process output or prompts in logs/status.
                     reason = str(exc) if isinstance(exc, BotError) else f"Bot process failed ({type(exc).__name__})."
