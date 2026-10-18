@@ -170,8 +170,17 @@ class Baud(botkit.Bot):
             msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
 
     def _top(self, msg, result):
-        # Issue #1408: a door's standings, as the host filtered them.
-        msg.reply(result.value["text"] if result.ok else result.get("error", "Query unavailable."))
+        # Issue #1408: a door's standings, as the host filtered them. A
+        # titled block where the host takes blocks (#1373), else one line.
+        value = result.value if result.ok and isinstance(result.value, dict) else None
+        if value is None:
+            msg.reply(result.get("error", "Query unavailable."))
+        elif value.get("rows") and getattr(self, "blocks", False):
+            msg.reply_block(f"{value['door']} · {value['title']}", [
+                (f"{row['rank']} {row['name']}", row["value"] + (f" · {row['label']}" if row.get("label") else ""))
+                for row in value["rows"]])
+        else:
+            msg.reply(value["text"])
 
     def _own(self, msg):
         return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]
