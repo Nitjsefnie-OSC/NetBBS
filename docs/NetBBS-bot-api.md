@@ -518,8 +518,9 @@ NetBBS accepts text from
 [official Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
 Provider retention policies still apply; `store: false` is not a promise that
 the provider retains nothing. Tools, images, attachments and automatic retries
-are not used. Redirects are refused, responses are capped at 64 KiB and requests
-time out after 40 seconds. At most two model requests run on a node at once.
+are not used: in help-desk mode the host supplies node facts itself.
+Redirects are refused, responses are capped at 64 KiB and requests time out
+after 40 seconds. At most two model requests run on a node at once.
 
 External programs use the same actions as Baud:
 
@@ -540,7 +541,10 @@ never enter the program's handshake, environment or result. Installed programs
 remain trusted OS-user code, as described above.
 
 The first conversational request only publishes a notice naming the provider,
-context allowance and prompt-logging policy. It is not forwarded or added to
+what is sent, the context allowance and prompt-logging policy. In help-desk
+mode it reads: "Sends your addressed text + up to N prior lines of only your
+exchange here, handbook excerpts and node facts", and for a private answer
+adds "incl. boards and areas you can see". It is not forwarded or added to
 context. Submit again to proceed. Disclosure repeats after settings changes,
 context expiry, reset or restart. Model input consists of the host's configured
 persona with the active bot's chat identity, this addressed message and at most
@@ -557,6 +561,30 @@ channel history, existing backups, optional prompt logs or provider records.
 Replies are sanitized and capped at the configured 80-500 characters.
 Disclosure and reset notices have their own fixed wording and the ordinary
 500-character chat limit.
+
+**Modes.** Model settings choose **Help desk** (the default; an absent
+setting reads as help desk) or **Companion**, each with its own shipped default
+persona. Companion sends only the input above. Help desk adds host-chosen
+grounding to the system message, never to the prior lines:
+
+- up to three sections of the caller handbook, which ships with NetBBS as
+  package data, picked per request by a standard-library keyword score under
+  a fixed 4,000-byte cap;
+- node facts, under 1,500 bytes: name, tagline, SysOps, which of MRC, browser
+  links, doors and FTN networks the node has, and its boards and file areas.
+  A public answer, and any answer to a Link caller, names only resources
+  readable by everyone without age or name requirements, Community defaults
+  included. A private answer to a local caller names the boards and areas that
+  caller can see. Hidden Communities are left out for non-SysOps;
+- the `stats` answer, when the bot holds that query grant, through the same
+  query path and caller check as the `query` action;
+- fixed rules: name only menus, keys and commands found in the grounding, and
+  otherwise say so and point to `[?] Help`.
+
+The host then appends the heading of the best excerpt and a hint to the reply,
+within the reply cap: `(Handbook: Exchange files. May be wrong; ? for help)`.
+Context keeps only the model's own words. Grounding bytes count toward each
+reservation like any other input.
 
 Guests are excluded by default using the designated guest account, regardless
 of its name. If explicitly admitted they share that account's quota and context.

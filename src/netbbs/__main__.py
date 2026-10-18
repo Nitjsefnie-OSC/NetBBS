@@ -1385,6 +1385,9 @@ async def run(
                     # no-op rather than a special case.
                     announce_identity=lambda: link_node.identity if link_node is not None else None,
                 )
+        # Help desk's node facts say whether browser links are offered
+        # (§16, issue #1382): only with grants that can print a reachable URL.
+        bot_runtime.model.browser_links = transfer_grants is not None and transfer_grants.base_url is not None
 
         servers = await _start_servers(
             config, db, session_handler, ssh_session_handler, throttle, link_node, background_lane,

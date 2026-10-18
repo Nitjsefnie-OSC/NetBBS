@@ -1005,6 +1005,15 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 > naming the service, the replies are public, and `reset` clears your
 > conversation.
 
+As a help desk, which is how most nodes set it up, Baud answers questions
+about using the BBS, such as `Baud.bot: how do I upload a file?`. It answers
+from parts of this handbook and from facts about the node, and names the
+section it used: `(Handbook: Exchange files. May be wrong; ? for help)`.
+Asked privately, with `/msg Baud.bot` or in `/private Baud.bot`, it can also
+name the boards and file areas you can see; in the channel it names only the
+ones everyone can read. A model can be wrong, so check what it says against
+**Help** (<kbd>?</kbd>) on the main menu or ask the SysOp.
+
 #### Ask a bot privately
 
 A question typed into the channel is seen by everyone there. To ask a bot
