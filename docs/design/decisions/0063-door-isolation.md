@@ -10,7 +10,8 @@ the SysOp-enabled outbound board-posting and chat hook are implemented.
 
 The [developer handbook](../../NetBBS-Developer-Handbook.md#developing-a-native-door)
 is the integration entry point. The outbound hook posts as a distinct door label,
-with an explicit per-door board allowlist and rate ceiling. A linked destination
+with an explicit per-door board allowlist and rate ceiling, and only while
+every caller may play the door (issue #1401). A linked destination
 can federate the post through the live node's identity. There is no generic
 session-capability API for chat, mail, real-time game moves, or federated scores;
 those extensions need their own protocol and authority decisions.

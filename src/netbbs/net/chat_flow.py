@@ -1843,6 +1843,18 @@ def _channel_block_title(
                             message.created_at, width, page=page)
 
 
+def _announcement_text(message: ChannelMessage, link_speaker: tuple[str, str] | None) -> str:
+    """`Announcement: <text>`, or `Announcement from <node>: <text>` for one
+    carried from another node (issue #1380), sanitized."""
+    from netbbs.chat.announcements import PREFIX
+
+    body = message.body or ""
+    text = body[len(PREFIX):] if body.startswith(PREFIX) else body
+    if link_speaker is None:
+        return sanitize_text(PREFIX + text)
+    return sanitize_text(f"Announcement from {link_speaker[1]}: {text}")
+
+
 def _render_channel_message(
     db: Database, channel: Channel, viewer: User, message: ChannelMessage, *, self_message: bool = False,
     width: int = 80,
@@ -1916,6 +1928,11 @@ def _render_channel_message(
                 + colored(">", fg_color=MUTED_COLOR)
             )
             line = f"{label} {_mrc_body(db, viewer, body)}"
+        elif message.announcement:
+            # Issue #1380: a SysOp's scheduled announcement reads as the
+            # system notice it is here, naming the node it came from; its
+            # signed author is only how Link carries it.
+            line = colored(_announcement_text(message, link_speaker), fg_color=MUTED_COLOR)
         elif _is_door_line(db, message):
             # Issue #520: a door's line reads as the game talking, not as a
             # caller -- muted throughout, and marked, so nobody answers it

@@ -38,7 +38,9 @@ from netbbs.chat.hub import ChatHub
 from netbbs.chat.presence import PresenceRegistry
 from netbbs.chat.scrollback import ChannelMessage as LocalChannelMessage
 from netbbs.chat.scrollback import get_scrollback
-from netbbs.link.channels import channel_origin_fingerprint, get_channel_by_channel_id, is_channel_linked
+from netbbs.link.channels import (
+    announcement_claimed, channel_origin_fingerprint, get_channel_by_channel_id, is_channel_linked,
+)
 from netbbs.link.enforcement import (
     LinkPolicyAction,
     content_visible_for_subject,
@@ -148,8 +150,13 @@ def _snapshot_entries(db: Database, channel: Channel, *, blocks: bool = False) -
     # the origin's fingerprint would apply the subscriber's trust policy
     # to the wrong identity. Filtered *before* the cap, so a chatty MRC
     # room cannot consume the whole snapshot budget with nothing to show.
+    # Issue #1380: a `daybreak` line -- the midnight message, or a scheduled
+    # announcement without a Linked approval -- is this node's own local
+    # notice and never crosses Link, so it is not exported either. Older
+    # origins did export the midnight line; subscribers still accept it.
     eligible = [
-        message for message in get_scrollback(db, channel) if message.external_source is None
+        message for message in get_scrollback(db, channel)
+        if message.external_source is None and message.kind != "daybreak"
     ]
     for message in eligible[-_MAX_SCROLLBACK_SNAPSHOT_ENTRIES:]:
         author_node_fingerprint: str | None = None
@@ -197,6 +204,9 @@ def _snapshot_entries(db: Database, channel: Channel, *, blocks: bool = False) -
         }
         if blocks and message.block is not None and message.kind == "message":
             entry["block"] = message.block.to_wire()
+        if message.announcement and message.kind == "message":
+            # Issue #1380: stripped again for a peer without the capability.
+            entry["announcement"] = True
         entries.append(entry)
     return entries
 
@@ -231,6 +241,7 @@ def _accept_scrollback_snapshot(
             body=entry["body"], created_at=entry["created_at"],
             link_content_id=entry["content_id"], body_truncated=entry["body_truncated"],
             block=_received_block(entry["author_user_id"], entry.get("block")) if authored else None,
+            announcement=authored and announcement_claimed(entry.get("announcement"), entry["author_user_id"]),
         ))
     return channel, messages
 
@@ -315,6 +326,7 @@ class LiveChannelBridge:
         peer_capable: Callable[[str], bool] | None = None,
         presence_capable: Callable[[str], bool] | None = None,
         blocks_capable: Callable[[str], bool] | None = None,
+        announcement_capable: Callable[[str], bool] | None = None,
     ) -> None:
         self._hub = hub
         self._lane = lane
@@ -331,6 +343,9 @@ class LiveChannelBridge:
         # Issue #1373: whether a peer advertises `CHAT_BOT_BLOCKS_CAPABILITY`,
         # the only peers sent a bot's block beside its fallback line.
         self._blocks_capable = blocks_capable or (lambda fingerprint: False)
+        # Issue #1380: whether a peer advertises `CHAT_ANNOUNCEMENTS_CAPABILITY`,
+        # the only peers sent the optional `announcement` key.
+        self._announcement_capable = announcement_capable or (lambda fingerprint: False)
         # Content IDs of channel lines already shown live here, oldest first,
         # so the signed event that follows is not shown again.
         self._shown_live: OrderedDict[ShownKey, None] = OrderedDict()
@@ -621,6 +636,11 @@ class LiveChannelBridge:
         )
         if not entries:
             return
+        if not self._announcement_capable(session.remote_fingerprint):
+            # The entry validator refuses unknown keys: an older peer gets the
+            # plain line, which still reads "Announcement: ...".
+            for entry in entries:
+                entry.pop("announcement", None)
         # JSON escaping can make valid per-field values exceed the frame
         # ceiling. Drop oldest catch-up entries until the fully serialized
         # frame fits; never enqueue a frame that will later kill the session.
@@ -753,6 +773,7 @@ class LiveChannelBridge:
             author_fingerprint=author_node,
             body=payload["body"], created_at=payload["created_at"],
             block=block,
+            announcement=announcement_claimed(payload.get("announcement"), payload["user_id"]),
         )
         await self._hub.broadcast(channel.name, message)
         if origin == own:
@@ -777,10 +798,14 @@ class LiveChannelBridge:
             payload["body"], payload["created_at"], author_node_fingerprint=author_node,
         )
         with_block = None
+        marked = build_channel_message_frame(
+            payload["channel_id"], payload["user_id"], payload["display_label"],
+            payload["body"], payload["created_at"], author_node_fingerprint=author_node, announcement=True,
+        ) if payload.get("announcement") is True else relayed
         for session in await self._live_subscribers(channel):
             if session.remote_fingerprint == author_node or not self._peer_capable(session.remote_fingerprint):
                 continue
-            outgoing = relayed
+            outgoing = marked if self._announcement_capable(session.remote_fingerprint) else relayed
             if block is not None and self._blocks_capable(session.remote_fingerprint):
                 if with_block is None:
                     with_block = _frame_with_block(
@@ -1113,8 +1138,13 @@ class LiveChannelBridge:
             channel.channel_id, message.author_label, message.author_label,
             message.body or "", message.created_at, block=message.block,
         )
+        # Issue #1380: the marker only for a peer that takes it.
+        marked = build_channel_message_frame(
+            channel.channel_id, message.author_label, message.author_label,
+            message.body or "", message.created_at, announcement=True,
+        ) if message.announcement else frame
         for session in sessions:
-            outgoing = frame
+            outgoing = marked if self._announcement_capable(session.remote_fingerprint) else frame
             if with_block is not None and self._blocks_capable(session.remote_fingerprint):
                 outgoing = with_block
             try:

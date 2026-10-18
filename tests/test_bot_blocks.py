@@ -423,3 +423,21 @@ def test_a_block_too_big_for_one_frame_falls_back_to_the_plain_line():
                              author_node_fingerprint="n" * 32) is None
     plain = build_channel_message_frame("c", "Peer.bot", "Peer.bot", body, utc_now_iso())
     assert "block" not in plain.payload
+
+
+def test_a_line_is_a_block_or_an_announcement_never_both(db, sysop, channel):
+    # Issue #1380's marker is a SysOp's line, a block a bot's.
+    block = check_block(STATS)
+    with pytest.raises(LinkProtocolError, match="not both"):
+        build_channel_message_frame("c", "Peer.bot", "Peer.bot", block.fallback(), utc_now_iso(),
+                                    block=block.to_wire(), announcement=True)
+    entry = {"kind": "message", "author_label": "Baud.bot@n", "author_node_fingerprint": "n",
+             "author_user_id": "Baud.bot", "content_id": None, "body": "fallback", "body_truncated": False,
+             "created_at": utc_now_iso(), "block": block.to_wire(), "announcement": True}
+    with pytest.raises(LinkProtocolError, match="not both"):
+        build_scrollback_snapshot_frame("c", "r", [entry])
+    from netbbs.chat.scrollback import record_message
+    with pytest.raises(ValueError, match="not both"):
+        record_message(db, channel, kind="message", author_label="Peer.bot", body="x", block=block,
+                       announcement=True)
+    assert get_scrollback(db, channel) == []

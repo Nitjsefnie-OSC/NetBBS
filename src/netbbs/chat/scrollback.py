@@ -101,6 +101,11 @@ class ChannelMessage:
     # then holds the host-built fallback line. `None` for every other line,
     # and for a malformed stored or received block (the fallback shows).
     block: BotBlock | None = None
+    # Issue #1380: a SysOp's scheduled announcement carried as a signed line
+    # -- this node's own in a channel approved for announcements, or one
+    # received with the event's `announcement` marker. Drawn as an
+    # announcement, never as the SysOp chatting, and not unread activity.
+    announcement: bool = False
 
 
 def get_scrollback_limit(db: Database) -> int:
@@ -150,6 +155,7 @@ def record_message(
     mrc_handle: str | None = None,
     author_user_id: int | None = None,
     block: BotBlock | None = None,
+    announcement: bool = False,
 ) -> ChannelMessage:
     """
     Append an event to `channel`'s scrollback and trim it back down to the
@@ -175,6 +181,8 @@ def record_message(
     """
     if kind in ("message", "daybreak") and body is None:
         raise ValueError(f"body is required for kind={kind!r}")
+    if block is not None and announcement:
+        raise ValueError("a line is a bot's block or a SysOp's announcement, not both")
 
     if mrc_nick_color is not None and (external_source != "mrc" or not 0 <= mrc_nick_color <= 15):
         raise ValueError("MRC nickname color must be 0-15 on an MRC message")
@@ -219,6 +227,8 @@ def record_message(
         # Issue #1373: `body` is the block's fallback line, so search and
         # older nodes see that; the block itself is what is drawn.
         db.connection.execute("UPDATE channel_messages SET block_json = ? WHERE id = ?", (block.to_json(), message_id))
+    if announcement:
+        db.connection.execute("UPDATE channel_messages SET announcement = 1 WHERE id = ?", (message_id,))
     # Capture *this* row now, inside the transaction and before the trim:
     # never "the channel's newest row" (a background writer -- issue
     # #275's MRC bridge on the background lane -- can land another row
@@ -311,4 +321,5 @@ def _row_to_message(row: sqlite3.Row) -> ChannelMessage:
         author_kind=row["author_kind"] if "author_kind" in columns else "user",
         author_user_id=row["author_user_id"] if "author_user_id" in columns else None,
         block=block_from_json(row["block_json"]) if "block_json" in columns else None,
+        announcement=bool(row["announcement"]) if "announcement" in columns else False,
     )

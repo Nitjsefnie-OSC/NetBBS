@@ -470,6 +470,14 @@ on it. Rosters are pushed to, declared to and served to such a peer only: an
 older one would keep a roster as an opaque event it cannot place, and be
 offered it again on every pass."""
 
+CHAT_ANNOUNCEMENTS_CAPABILITY = "chat_announcements_v1"
+"""Issue #1380: this node takes the optional `announcement` key on a live
+`channel_message` frame and a `scrollback_snapshot` entry, marking a SysOp's
+scheduled announcement. Both refuse unknown keys, so the key is only sent to
+a peer advertising this; others get the plain line. The signed event's
+`announcement` field needs no capability: an older node keeps a payload field
+it does not know and shows `body`."""
+
 DIRECT_CHAT_CAPABILITY = "direct_chat_v1"
 """Issue #1368: this node takes the `direct_chat_invite`, `_answer`, `_line`
 and `_end` real-time frames, a direct chat between callers of two nodes. An
@@ -481,6 +489,7 @@ LINK_CAPABILITIES: tuple[str, ...] = (
     SEALED_ATTESTATIONS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY,
     PRESENCE_RELAY_CAPABILITY, LINK_COMMUNITIES_CAPABILITY, LINK_MODERATION_CAPABILITY,
     DIRECT_CHAT_CAPABILITY, CHAT_BOT_PRIVATE_CAPABILITY, CHAT_BOT_BLOCKS_CAPABILITY,
+    CHAT_ANNOUNCEMENTS_CAPABILITY,
 )
 """Every optional behaviour this version advertises in its own descriptor."""
 
@@ -1406,6 +1415,7 @@ def build_channel_message(
     created_at: str,
     nonce: str | None = None,
     block: dict | None = None,
+    announcement: bool = False,
 ) -> ChannelMessage:
     """
     Build and sign one `channel_message` event, per design doc §9.6.
@@ -1416,6 +1426,10 @@ def build_channel_message(
     `block` (issue #1373) is a bot's titled block in its wire shape, beside
     `body`, the fallback line the host built from it; a node that predates
     it shows `body`.
+
+    `announcement` (issue #1380) adds the optional marker `"announcement":
+    true`: a SysOp's scheduled announcement, which a newer node draws as one
+    and an older node shows as an ordinary line from that SysOp.
     """
     payload = {
         "channel_id": channel_id,
@@ -1429,7 +1443,11 @@ def build_channel_message(
         "nonce": nonce if nonce is not None else secrets.token_hex(16),
     }
     if block is not None:
+        if announcement:
+            raise ValueError("a channel_message carries a bot's block or an announcement, not both")
         payload["block"] = block
+    if announcement:
+        payload["announcement"] = True
 
     envelope = build_envelope(CHANNEL_MESSAGE_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))
