@@ -276,6 +276,10 @@ from one to 60 seconds. Kill controls disable the instance persistently.
 ## Bundled Baud
 
 Commands: `help`, `remind <1s-30d> <text>`, `reminders`, `cancel <id>`.
+`sysop` only points to the host's `/sysop <reason>` command: by the time Baud
+sees a `!` line it has already gone to the channel, so Baud cannot page anyone
+and says so. `help` mentions `/sysop` too. No bot can page the SysOp: a page
+comes only from a caller's own `/sysop` (decision 1377).
 With the corresponding grants, Baud also offers `stats` and
 `seen <local-account>` and lists them in `help`. Both replies are public.
 With **Grant model conversation**, other addressed text requests the host's
