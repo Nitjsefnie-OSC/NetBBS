@@ -255,3 +255,145 @@ def test_a_sysop_login_picks_up_the_registration_bootstrap_could_not_make(tmp_pa
     _run(again, db.path)
     assert _written(again) == ""
     db.close()
+
+
+# Issue #1383: the third choice, the house bot Baud -- defaults to no.
+
+
+def _baud_node(tmp_path, *channels):
+    from netbbs.auth.users import create_user
+    from netbbs.chat.channels import create_channel
+
+    db = Database(tmp_path / "node.db")
+    set_participation(db, Participation.DECLINED)
+    set_opt_in(db, OptIn.DECLINED)
+    sysop = create_user(db, "sysop", password="hunter2", user_level=255)
+    for name in channels:
+        create_channel(db, name, creator=sysop)
+    return db, sysop
+
+
+def _run_as(session: FakeSession, db_path, actor) -> None:
+    async def scenario():
+        lane = DatabaseLane(db_path)
+        try:
+            await offer_onboarding(session, lane, actor)
+        finally:
+            lane.close()
+
+    asyncio.run(scenario())
+
+
+def test_baud_answers_no_on_enter_and_is_not_asked_again(tmp_path):
+    from netbbs.bots.registry import list_bots
+
+    db, sysop = _baud_node(tmp_path, "lobby")
+    session = FakeSession([""])
+    _run_as(session, db.path, sysop)
+    assert list_bots(db) == []
+    text = _written(session)
+    assert "y/" in text and "Content > Open chat bots" in text
+    _run_as(FakeSession([]), db.path, sysop)  # any read would raise
+
+
+def test_baud_yes_creates_the_instance_in_the_chosen_channel(tmp_path):
+    from netbbs.bots.registry import list_bots
+
+    db, sysop = _baud_node(tmp_path, "lobby", "trivia")
+    session = FakeSession(["y", "2"])
+    _run_as(session, db.path, sysop)
+    [bot] = list_bots(db)
+    assert (bot.name, bot.enabled, bot.command, bot.temperament) == ("Baud", True, (), "friendly")
+    assert bot.channels == ("trivia",) and bot.event_channels == ("trivia",) and bot.greetings
+    # Nothing else: no default, no reading, no queries, no Link, no sources.
+    assert bot.defaults == () and bot.reading_channels == () and bot.queries == ()
+    assert bot.linked_channels == () and bot.board_sources == () and not bot.model_conversation
+    text = _written(session)
+    assert "#lobby" in text and "Baud.bot answers in #trivia" in text
+    assert "Content > Open chat bots" in text
+    _run_as(FakeSession([]), db.path, sysop)
+
+
+def test_baud_channel_by_name_and_two_misses_leave_the_question_open(tmp_path):
+    from netbbs.bots.registry import house_bot_offer_pending, list_bots
+
+    db, sysop = _baud_node(tmp_path, "lobby")
+    _run_as(FakeSession(["y", "nope", "9"]), db.path, sysop)
+    assert list_bots(db) == [] and house_bot_offer_pending(db)
+    _run_as(FakeSession(["y", "#LOBBY"]), db.path, sysop)
+    assert [b.channels for b in list_bots(db)] == [("lobby",)]
+
+
+def test_baud_waits_for_a_channel_and_skips_a_node_with_bots(tmp_path):
+    from netbbs.bots.registry import house_bot_offer_pending, save_bot
+    from netbbs.chat.channels import create_channel
+
+    db, sysop = _baud_node(tmp_path)
+    _run_as(FakeSession([]), db.path, sysop)  # a fresh node has no channels
+    assert house_bot_offer_pending(db) is False
+    create_channel(db, "lobby", creator=sysop)
+    assert house_bot_offer_pending(db) is True
+    save_bot(db, actor=sysop, name="Other", channels=["lobby"], defaults=[])
+    _run_as(FakeSession([]), db.path, sysop)
+
+
+def test_baud_offers_only_local_channels_that_show_bots(tmp_path):
+    from netbbs.bots.registry import house_bot_channels
+    from netbbs.chat.bots import set_channel_bot_policy
+    from netbbs.chat.channels import get_channel_by_name
+
+    db, sysop = _baud_node(tmp_path, "lobby", "quiet")
+    set_channel_bot_policy(db, get_channel_by_name(db, "quiet"), "none", changed_by=sysop)
+    assert house_bot_channels(db) == ["lobby"]
+
+
+def test_baud_is_not_asked_without_an_acting_sysop(tmp_path):
+    db, _sysop = _baud_node(tmp_path, "lobby")
+    _run(FakeSession([]), db.path)
+
+
+def test_baud_is_asked_of_one_sysop_at_a_time(tmp_path):
+    """Review of #1398: the claim must be taken before the first await."""
+    from netbbs.net import onboarding_flow
+    from netbbs.bots.registry import list_bots
+
+    db, sysop = _baud_node(tmp_path, "lobby")
+    gate, prompted = asyncio.Event(), asyncio.Event()
+
+    class _BlockingSession(FakeSession):
+        async def read_editor_key(self, **kwargs):
+            prompted.set()
+            await gate.wait()
+            return await super().read_editor_key(**kwargs)
+
+    first, second = _BlockingSession(["y", ""]), FakeSession([])
+
+    async def scenario():
+        lane = DatabaseLane(db.path)
+        try:
+            # Started together, straight at the claim: both reach its await at once.
+            task = asyncio.create_task(onboarding_flow._offer_house_bot(first, lane, sysop))
+            other = asyncio.create_task(onboarding_flow._offer_house_bot(second, lane, sysop))
+            await asyncio.wait_for(prompted.wait(), 30)
+            await other  # returned without prompting (an exhausted read would raise)
+            gate.set()
+            await task
+        finally:
+            lane.close()
+
+    asyncio.run(scenario())
+    assert _written(second) == ""
+    assert [b.channels for b in list_bots(db)] == [("lobby",)]
+
+
+def test_baud_with_no_channel_left_after_the_yes_changes_nothing(tmp_path, monkeypatch):
+    """Review of #1398: the channel list is re-read after the yes and may be empty."""
+    from netbbs.bots.registry import house_bot_offer_pending, list_bots
+    from netbbs.net import onboarding_flow
+
+    db, sysop = _baud_node(tmp_path, "lobby")
+    monkeypatch.setattr(onboarding_flow, "house_bot_channels", lambda db: [])
+    session = FakeSession(["y"])
+    _run_as(session, db.path, sysop)
+    assert list_bots(db) == [] and house_bot_offer_pending(db)
+    assert "asked again next time" in _written(session)

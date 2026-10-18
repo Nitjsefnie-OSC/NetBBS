@@ -14,8 +14,14 @@ choices that get a brand-new node online with no configuration --
 2. **the managed netbbs.org subdomain** (issue #201) -- delegated
    verbatim to `netbbs.net.managed_dns_flow.offer_managed_dns_opt_in`,
    which owns that decision's own state and inline registration.
+3. **the house bot Baud** (issue #1383) -- unlike the two above, this one
+   defaults to *no* (Baud ships off, design decision 1208). A yes asks
+   for one channel and creates the same instance Content > Open chat bots
+   would (`netbbs.bots.registry.enable_house_bot`). Asked only while the
+   node has no bot instance and has a channel to offer -- a brand-new
+   node has no channels yet, so there it waits for a later SysOp login.
 
-Deliberately *not* one bundled "get online easily" yes/no: both declines
+Deliberately *not* one bundled "get online easily" yes/no: the first two declines
 have a real, coherent meaning a SysOp might actually want (relay/seed
 participation without a public name, or a public name without relay),
 and bundling them would silently reintroduce the consent problem that
@@ -42,6 +48,15 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from netbbs.auth.users import User
+from netbbs.bots.registry import (
+    BotError,
+    HOUSE_BOT_NAME,
+    decline_house_bot,
+    enable_house_bot,
+    house_bot_channels,
+    house_bot_offer_pending,
+)
 from netbbs.config import (
     MAX_NODE_DISPLAY_NAME_LENGTH,
     is_node_display_name_placeholder,
@@ -69,8 +84,8 @@ _INTRO_BLURB = (
     "directly, which is the default -- use them as relays so other nodes can "
     "still reach you. This is plumbing, not endorsement: it gives them no say "
     "over your content and your board no say over theirs. Each choice below is "
-    "independent, defaults to yes, and can be changed later from the SysOp "
-    "console."
+    "independent and can be changed later from the SysOp "
+    "console. The Link and subdomain choices default to yes."
 )
 
 _NAME_BLURB = (
@@ -91,15 +106,29 @@ _ANOTHER_SYSOP_NOTE = (
     "now -- you'll be asked next time if it's still open.)"
 )
 
+_BAUD_BLURB = (
+    f"NetBBS comes with a house bot, {HOUSE_BOT_NAME}. In the channel you choose "
+    f"it answers messages addressed to it (\"{HOUSE_BOT_NAME}.bot: help\") and "
+    "greets callers who join; for the greetings it is told about joins and "
+    "leaves there, never the conversation. Its replies are public. It is off "
+    "unless you switch it on."
+)
+
+_BAUD_CHANGE_LATER = "Content > Open chat bots"
+
 _participation_locks: dict[Path, asyncio.Lock] = {}
+# Nodes whose house-bot question a session is answering (same claim as
+# participation's; the bot's own unique name backs it up durably).
+_house_bot_in_progress: set[Path] = set()
 # Nodes (by database path) whose participation question a session is
 # currently answering -- see the module docstring.
 _participation_in_progress: set[Path] = set()
 
 
-async def offer_onboarding(session: Session, lane: DatabaseLane) -> None:
+async def offer_onboarding(session: Session, lane: DatabaseLane, actor: User | None = None) -> None:
     """The first-run screen (module docstring). Safe to call on every
-    SysOp login: returns immediately once both choices are decided."""
+    SysOp login: returns immediately once every choice is decided. The
+    house-bot choice needs the SysOp creating the instance (`actor`)."""
     participation_pending = await lane.run(get_participation) is Participation.UNDECIDED
     dns_pending = await lane.run(get_opt_in) is OptIn.UNDECIDED
 
@@ -115,6 +144,73 @@ async def offer_onboarding(session: Session, lane: DatabaseLane) -> None:
         # before the node had started and could register. A no-op unless
         # exactly that is on record and the node can register now.
         await offer_deferred_registration(session, lane)
+
+    if actor is not None:
+        await _offer_house_bot(session, lane, actor)
+
+
+async def _offer_house_bot(session: Session, lane: DatabaseLane, actor: User) -> None:
+    key = lane.path.resolve()
+    # Claimed with no await between the check and the add, so two SysOps
+    # logging in at once cannot both pass it (single-threaded event loop).
+    if key in _house_bot_in_progress:
+        return
+    _house_bot_in_progress.add(key)
+    try:
+        if not await lane.run(house_bot_offer_pending):
+            return
+        await _write_wrapped(session, _BAUD_BLURB)
+        if not await prompt_yes_no(
+            session, f"Switch on {HOUSE_BOT_NAME}, with help and greetings, in a channel you choose?", default=False
+        ):
+            await lane.run(decline_house_bot)
+            await _write_wrapped(
+                session, f"(Noted. {HOUSE_BOT_NAME} stays off; set it up any time under {_BAUD_CHANGE_LATER}.)"
+            )
+            return
+        # Re-read after the yes: another session may have changed channels.
+        channel = await _prompt_for_channel(session, await lane.run(house_bot_channels))
+        if channel is None:
+            await _write_wrapped(session, "(Nothing was changed -- you'll be asked again next time.)")
+            return
+        try:
+            bot = await lane.run(enable_house_bot, actor=actor, channel=channel)
+        except BotError as exc:
+            await _write_wrapped(
+                session, f"(Could not switch {HOUSE_BOT_NAME} on: {exc} You'll be asked again next time.)"
+            )
+            return
+    finally:
+        _house_bot_in_progress.discard(key)
+    await _write_wrapped(
+        session,
+        f"(Saved. {bot.label} answers in #{sanitize_text(channel)} and greets callers who join it whenever "
+        f"the node is running. Change its channels, temperament and other abilities under "
+        f"{_BAUD_CHANGE_LATER}.)",
+    )
+
+
+async def _prompt_for_channel(session: Session, names: list[str]) -> str | None:
+    """Pick one channel by number or name; Enter takes the first. Two
+    unrecognised answers, or no channel left, leave the question open."""
+    if not names:
+        return None
+    await session.write_line("")
+    for number, name in enumerate(names, start=1):
+        await session.write_line(f"  {number}. #{sanitize_text(name)}")
+    for attempt in range(2):
+        await write_prompt(session, f"Channel for {HOUSE_BOT_NAME} (number or name, Enter for 1): ")
+        raw = (await session.read_line()).strip()
+        if not raw:
+            return names[0]
+        if raw.isascii() and raw.isdigit() and 1 <= int(raw) <= len(names):
+            return names[int(raw) - 1]
+        match = next((n for n in names if n.casefold() == raw.lstrip("#").casefold()), None)
+        if match is not None:
+            return match
+        if attempt == 0:
+            await session.write_line(colored("Not one of the channels listed -- try once more.", fg_color=MUTED_COLOR))
+    return None
 
 
 async def _offer_participation(session: Session, lane: DatabaseLane) -> None:

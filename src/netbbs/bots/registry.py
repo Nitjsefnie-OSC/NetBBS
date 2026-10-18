@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from netbbs.auth.users import User, get_user_by_id, is_usable_sysop
 from netbbs.bots.baud import PHRASE_KEYS, preset
 from netbbs.chat.bots import channel_bot_policy
-from netbbs.chat.channels import Channel, ChannelError, get_channel_by_name as get_channel
+from netbbs.config import get_config, set_config
+from netbbs.chat.channels import Channel, ChannelError, get_channel_by_name as get_channel, list_channels
 from netbbs.chat.scrollback import record_message
 from netbbs.moderation import ChannelPermission, has_permission, record_action
 from netbbs.link.channels import is_channel_linked
@@ -293,6 +294,57 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
     except sqlite3.IntegrityError as exc:
         raise BotError("A bot with that name or state directory already exists.") from exc
     return get_bot(db, bot_id)
+
+
+# Issue #1383: what a new instance starts as, shared by Content > Open chat
+# bots' Create draft and first-run onboarding so the two cannot disagree.
+HOUSE_BOT_NAME = "Baud"
+HOUSE_BOT_COMMAND: tuple[str, ...] = ()  # [] runs the bundled Baud
+DEFAULT_TEMPERAMENT = "friendly"
+DEFAULT_LINES_PER_HOUR = 60
+
+# The first-run answer: absent while never asked, else "accepted"/"declined".
+HOUSE_BOT_ONBOARDING_CONFIG_KEY = "house_bot_onboarding"
+
+
+def house_bot_channels(db: Database) -> list[str]:
+    """Channels onboarding may offer: local, visible, non-MRC channels whose
+    policy shows bots. Linked channels need the editor's explicit approval."""
+    names = []
+    for channel in list_channels(db):
+        try:
+            local_channel(db, channel.name)
+        except BotError:
+            continue
+        if channel_bot_policy(db, channel) != "none":
+            names.append(channel.name)
+    return names
+
+
+def house_bot_offer_pending(db: Database) -> bool:
+    """Ask only once, only on a node with no bot instance yet, and only once
+    there is a channel to put Baud in (a fresh node has none)."""
+    if get_config(db, HOUSE_BOT_ONBOARDING_CONFIG_KEY) is not None:
+        return False
+    if db.connection.execute("SELECT 1 FROM chat_bots LIMIT 1").fetchone():
+        return False
+    return bool(house_bot_channels(db))
+
+
+def decline_house_bot(db: Database) -> None:
+    set_config(db, HOUSE_BOT_ONBOARDING_CONFIG_KEY, "declined")
+
+
+def enable_house_bot(db: Database, *, actor: User, channel: str) -> Bot:
+    """Onboarding's yes: Baud, enabled, addressed in one channel, greeting
+    joins there (its presence-event grant), friendly. Nothing else."""
+    bot = save_bot(
+        db, actor=actor, name=HOUSE_BOT_NAME, enabled=True, command=list(HOUSE_BOT_COMMAND),
+        temperament=DEFAULT_TEMPERAMENT, lines_per_hour=DEFAULT_LINES_PER_HOUR,
+        channels=[channel], defaults=[], event_channels=[channel], greetings=True,
+    )
+    set_config(db, HOUSE_BOT_ONBOARDING_CONFIG_KEY, "accepted")
+    return bot
 
 
 def stop_bots(db: Database, *, actor: User, bot_id: int | None = None) -> None:
