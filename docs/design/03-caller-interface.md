@@ -760,11 +760,15 @@ new and upgraded nodes default to showing it. The same setting also offers a
 plain style (issue #841): the node's header colour, no gradient, and the
 heading "Recent callers" / "Who has called in lately" instead of the neon
 "signals received" wording, for a node whose tone the neon clashes with. It
-applies to the splash and the menu screen alike.
+applies to the splash and the menu screen alike. The oneliner wall (§6.9)
+shares the splash's frame as its lower section, under a toggle of its own, so
+a call still has one pause; with both sections empty or off there is no
+splash.
 
-The same roll is a home-menu screen of its own, `P[r]evious callers`, rendered
+The same roll is a home-menu screen of its own, `[R]ecent callers`, rendered
 by the one renderer the splash uses so the two can never disagree about who is
-listed or under what name. The screen differs from the splash only where being
+listed or under what name. It draws the oneliner wall with it, and its bar
+offers `[A]dd a line` and `[O]neliners` (§6.9). The screen differs from the splash only where being
 asked for rather than offered demands it: the node setting governs the
 automatic splash alone, so the menu screen ignores it; an empty roll says so
 instead of drawing nothing; and at least one row is kept on a terminal too

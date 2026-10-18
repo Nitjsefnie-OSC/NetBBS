@@ -523,6 +523,21 @@ Compatibility extension (issues #296/#297):
   disposable node directories, exact CRLF classic drop files, native stdio,
   controlling PTYs, private inherited DOOR32 sockets, DOSBox-X COM1 sockets,
   and allowlisted outbound RLogin services. Never pass the caller's socket.
+- Door API 5 adds **door events** (issue #1378): through the same file drop,
+  a door whose SysOp switched events on (a per-door switch, off by default,
+  with its own hourly ceiling, advertised as `outbound.events`) reports an
+  event type, a subject `user_id` and a short title, and may write a
+  standings snapshot of at most 10 rows. NetBBS keeps the events in a bounded
+  journal and offers them to bots granted that door as a third announcement
+  source beside boards and file areas; the host composes the chat text and
+  serves the snapshot as the `top` node query. A door's events are announced
+  only while its `min_play_level` is 0, checked at the grant and again at
+  publication, and only for subjects whose profile switch "Game results
+  announced in chat" (on by default) allows it; off also hides them from
+  `!top`. Guests and rehearsals emit nothing, and a door emits only what was
+  earned live, never catch-up unlocks. Door API 4 chat lines stay as a door's
+  own narration. See §16, "Issue #1378 — door events as a bot announcement
+  source".
 - A door's stream is transcoded to and from the caller's character set (§3.2):
   a CP437 door reaches a CP437 terminal unchanged, and is transcoded for UTF-8
   and ASCII ones; a UTF-8 door is mapped for CP437 and ASCII. Browser door
