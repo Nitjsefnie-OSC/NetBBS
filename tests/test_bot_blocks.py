@@ -448,8 +448,23 @@ def test_a_line_is_a_block_or_an_announcement_never_both(db, sysop, channel):
 def test_baud_help_block_stays_in_bounds_with_every_grant_and_the_longest_opening(model):
     sent = []
     longest = "x" * 168 + "{name}"  # the longest help opening the editor saves
-    Baud({"blocks": True, "queries": ["stats", "seen"], "model_conversation": model,
+    Baud({"blocks": True, "queries": ["stats", "seen", "top"], "model_conversation": model,
           "phrases": {"help": longest}}, sent.append).handle(
         {"type": "message", "request": "r", "caller": {"id": 7, "name": "n" * 32}, "channel": "c", "text": "help"})
     block = check_block(sent[-1]["block"])
     assert len(block.rows) == 12 and len(block.fallback()) <= MAX_FALLBACK
+    assert "top <door>" in [label for label, _text in block.rows]
+
+
+@pytest.mark.parametrize("model", [False, True])
+def test_baud_help_line_fits_one_line_with_every_grant(model):
+    """The line form, for a host without blocks, with `top` granted too.
+    botkit cuts it to 500; only the longest opening, the longest name and
+    model conversation together lose its last few characters."""
+    sent = []
+    Baud({"queries": ["stats", "seen", "top"], "model_conversation": model,
+          "phrases": {"help": "x" * 168 + "{name}"}}, sent.append).handle(
+        {"type": "message", "request": "r", "caller": {"id": 7, "name": "n" * 32}, "channel": "c", "text": "help"})
+    text = sent[-1]["text"]
+    assert len(text) <= 500 and "top <door>" in text
+    assert model or text.endswith("No language model is enabled.")

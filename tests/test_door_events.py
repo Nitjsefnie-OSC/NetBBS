@@ -423,3 +423,47 @@ def test_a_rehearsal_of_the_real_door_announces_nothing(db, lane, sysop, alice, 
                 for p in results_dir(db, door.id).glob("*.result.json")}
     assert verdicts == dict.fromkeys(("rank", "achievement", "capture", "perfect", "medal", "standings"), "accepted")
     assert _journal(db) == [] and public_standings(db, door) is None
+
+
+_TOP = {"available": True, "door": "Voidrunner", "title": "Hall of Fame", "updated_at": "",
+        "rows": [{"rank": 1, "name": "Vex", "value": "182,400 cr", "label": "Legend of the Frontier"},
+                 {"rank": 2, "name": "Nib", "value": "96,150 cr", "label": ""}],
+        "text": "Voidrunner Hall of Fame: 1 Vex 182,400 cr; 2 Nib 96,150 cr."}
+
+
+@pytest.mark.parametrize("blocks", [True, False])
+def test_baud_answers_top_as_a_block_where_the_host_takes_blocks(blocks):
+    """§16 #1378 Decision 4: `!top` is a titled block; a host without
+    blocks (#1373) gets the one-line text."""
+    from netbbs.bots.baud import Baud
+    from netbbs.bots.registry import check_block
+
+    sent = []
+    baud = Baud({"blocks": blocks, "queries": ["top"]}, sent.append)
+    baud.handle({"type": "message", "request": "r", "caller": {"id": 7, "name": "alice"}, "channel": "c",
+                 "text": "top voidrunner"})
+    query = sent[-1]
+    assert query["action"] == "query" and query["query"] == "top" and query["target"] == "voidrunner"
+    baud.handle({"type": "result", "id": query["id"], "ok": True, "value": _TOP})
+    answer = sent[-1]
+    assert answer["action"] == "reply"
+    if blocks:
+        block = check_block(answer["block"])
+        assert block.title == "Voidrunner · Hall of Fame"
+        assert block.rows == (("1 Vex", "182,400 cr · Legend of the Frontier"), ("2 Nib", "96,150 cr"))
+        assert "text" not in answer
+    else:
+        assert "block" not in answer
+        assert answer["text"] == "alice: Voidrunner Hall of Fame: 1 Vex 182,400 cr; 2 Nib 96,150 cr."
+
+
+def test_baud_answers_top_with_no_rows_as_a_line_even_with_blocks():
+    from netbbs.bots.baud import Baud
+
+    sent = []
+    baud = Baud({"blocks": True, "queries": ["top"]}, sent.append)
+    baud.handle({"type": "message", "request": "r", "caller": {"id": 7, "name": "alice"}, "channel": "c",
+                 "text": "top"})
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True,
+                 "value": {"available": False, "doors": [], "text": "No door has published standings yet."}})
+    assert sent[-1]["text"] == "alice: No door has published standings yet."
