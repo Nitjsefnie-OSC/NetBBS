@@ -6,12 +6,13 @@ it reuses `chat_flow`'s `_TimestampedNotice` broadcast envelope.
 
 - **Local.** The line is recorded as kind `daybreak` (muted, no speaker) and
   broadcast to everyone in the channel, recorded even when no one is there.
-- **Linked, with approval.** The line is an ordinary message by the
-  approving SysOp's account, queued as a signed `channel_message` and
-  pushed live to subscribed peers, exactly as a line the SysOp typed. Every
-  node, old or new, shows it as that SysOp speaking; nothing new crosses
-  Link. Without approval, without Link running, or once that account is no
-  longer a usable SysOp, it falls back to the local line.
+- **Linked, in a channel approved for announcements.** The line is a
+  message by the SysOp who saved the rule, marked `announcement`, queued as
+  a signed `channel_message` with the marker and pushed live to subscribed
+  peers (the marker only to peers that take it). A newer node draws it as an
+  announcement naming this node; an older one shows that SysOp's ordinary
+  line. Without the approval, without Link running, or once that account is
+  no longer a usable SysOp, it is the local line.
 
 The rules are re-read on every wake, so a change from the SysOp console (or
 the standalone admin CLI, another process) is noticed within
@@ -26,8 +27,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from netbbs.auth.users import get_user_by_id, is_usable_sysop
-from netbbs.chat.announcements import Announcement, channel_is_linkable, earliest_next_slot, take_due
+from netbbs.chat.announcements import (
+    Announcement, carrying_author, channel_is_linkable, earliest_next_slot, take_due,
+)
 from netbbs.chat.channels import Channel, _row_to_channel
 from netbbs.chat.hub import ChatHub
 from netbbs.chat.scrollback import ChannelMessage, record_message
@@ -66,19 +68,17 @@ def _say(db: Database, announcement: Announcement, node_identity) -> _Said | Non
     if row is None:
         return None
     channel = _row_to_channel(row)
-    author = None
-    if announcement.linked and node_identity is not None and channel_is_linkable(db, channel):
-        candidate = get_user_by_id(db, announcement.linked_author_id)
-        if candidate is not None and is_usable_sysop(candidate):
-            author = candidate
-        else:
-            _logger.warning(
-                "announcement #%s in #%s stays on this node: its Linked approval's account is no "
-                "longer a usable SysOp", announcement.id, channel.name,
-            )
-    elif announcement.linked and node_identity is None:
-        _logger.info("announcement #%s in #%s stays on this node: Link is not running",
+    author = carrying_author(db, announcement, channel)
+    if author is not None and node_identity is None:
+        _logger.info("announcement #%s in #%s is said on this node only: Link is not running",
                      announcement.id, channel.name)
+        author = None
+    elif author is None and announcement.channel_approved and channel_is_linkable(db, channel):
+        _logger.warning(
+            "announcement #%s in #%s is said on this node only: %s, who saved it, is no longer a usable "
+            "SysOp. Another SysOp saving it carries it again.",
+            announcement.id, channel.name, announcement.saved_by_name or "the account",
+        )
     if author is None:
         message = record_message(db, channel, kind="daybreak", author_label="system", body=announcement.body)
         return _Said(channel, message, linked=False)
@@ -86,7 +86,7 @@ def _say(db: Database, announcement: Announcement, node_identity) -> _Said | Non
 
     message = record_message(
         db, channel, kind="message", author_label=author.username, author_fingerprint=author.fingerprint,
-        body=announcement.body, author_user_id=author.id,
+        body=announcement.body, author_user_id=author.id, announcement=True,
     )
     queue_channel_message_if_linked(db, message, channel, node_identity=node_identity)
     return _Said(channel, message, linked=True)

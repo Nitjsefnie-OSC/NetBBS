@@ -1,8 +1,9 @@
-"""SysOp console: scheduled chat announcements (issue #1380).
+"""SysOp console: a channel's scheduled announcements (issue #1380).
 
-Content ▸ Chat channels ▸ Announcements lists every rule on the node; a rule
-is a draft editor that writes nothing before Save (design doc §3.5). A Linked
-approval is the last keystroke before Save, as a bot's is.
+Content ▸ Chat channels ▸ a channel ▸ An[n]ouncements lists that channel's
+rules; a rule is a draft editor that writes nothing before Save (design doc
+§3.5). Approving a Linked channel for announcements is confirmed on Save, the
+last keystroke before it, as a bot's Linked approval is.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from netbbs.chat.announcements import (
     Announcement,
     AnnouncementError,
     Recurrence,
+    _require_sysop,
+    channel_approved,
     channel_is_linkable,
     delete_announcement,
     get_announcement,
@@ -31,9 +34,7 @@ from netbbs.chat.announcements import (
     parse_time,
     save_announcement,
 )
-from netbbs.chat.announcements import _require_sysop
-from netbbs.chat.channels import ChannelError, get_channel_by_name, list_channels
-from netbbs.link.channels import linked_channel_ids
+from netbbs.chat.channels import Channel
 from netbbs.net.admin_ui import _announce_line, _load_chrome, edit_resource_draft, pick_item
 from netbbs.net.confirm import prompt_yes_no
 from netbbs.net.location import entered, located
@@ -41,46 +42,52 @@ from netbbs.net.menu_description_preference import menu_description_level
 from netbbs.net.picker import ListColumn
 from netbbs.net.resource_editor import FieldSpec, bool_field, bool_step, choice_field, choice_step, text_field
 from netbbs.net.session import Session
-from netbbs.rendering import LINKED_COLOR, MUTED_COLOR, VALUE_COLOR, MenuEntry, menu_key, sanitize_text
+from netbbs.rendering import MUTED_COLOR, VALUE_COLOR, MenuEntry, menu_key, sanitize_text
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
 from netbbs.timeutil import format_for_display, get_node_timezone, resolve_display_preferences
 
 _COLUMNS = [
-    ListColumn("channel", 12, VALUE_COLOR),
-    ListColumn("when", 28, VALUE_COLOR),
+    ListColumn("when", 30, VALUE_COLOR),
     ListColumn("next", 17, MUTED_COLOR),
 ]
 
 
-def _load_list(db: Database) -> list[tuple[Announcement, str]]:
+def _load_list(db: Database, channel_id: int) -> list[tuple[Announcement, str]]:
     rows = []
-    for announcement in list_announcements(db):
+    for announcement in list_announcements(db, channel_id=channel_id):
         upcoming = next_run(db, announcement)
         rows.append((announcement, format_for_display(upcoming.isoformat(), db) if upcoming else "done"))
     return rows
 
 
+def _carriage_note(db: Database, channel: Channel) -> str:
+    if not channel_is_linkable(db, channel):
+        return "Said on this node only."
+    if channel_approved(db, channel.id):
+        return "Approved for other nodes: each is said there as a line by the SysOp who saved it."
+    return "Said on this node only until a rule approves this Linked channel for other nodes."
+
+
 @located("Announcements")
-async def announcements_screen(session: Session, lane: DatabaseLane, actor: User) -> None:
+async def announcements_screen(session: Session, lane: DatabaseLane, actor: User, channel: Channel) -> None:
     await lane.run(_require_sysop, actor)
     chrome = await _load_chrome(lane, actor)
     description_level = await lane.run(menu_description_level, actor)
     next_text: dict[int, str] = {}
 
     async def refresh():
-        rows = await lane.run(_load_list)
+        rows = await lane.run(_load_list, channel.id)
         next_text.clear()
         next_text.update({a.id: text for a, text in rows})
         return [a for a, _ in rows]
 
     async def create():
-        return await announcement_editor(session, lane, actor)
+        return await announcement_editor(session, lane, actor, channel)
 
     async def delete_one(announcement):
         if await prompt_yes_no(
-            session, f"Delete announcement #{announcement.id} in #{sanitize_text(announcement.channel_name)} "
-            f"({announcement.recurrence.describe()})?", default=False,
+            session, f"Delete announcement #{announcement.id} ({announcement.recurrence.describe()})?", default=False,
         ):
             try:
                 await lane.run(delete_announcement, announcement.id, actor=actor)
@@ -92,25 +99,22 @@ async def announcements_screen(session: Session, lane: DatabaseLane, actor: User
             _announce_line(session, "Cancelled. Nothing was deleted.")
         return await refresh()
 
-    def when_cell(announcement):
-        text = announcement.recurrence.describe()
-        return (text, LINKED_COLOR) if announcement.linked else text
-
     while True:
+        note = await lane.run(_carriage_note, channel)
         picked = await pick_item(
             session, await refresh(),
             name_of=lambda a: a.text,
             stable_id_of=lambda a: a.id,
             columns=_COLUMNS,
-            column_values_of=lambda a: ["#" + a.channel_name, when_cell(a), next_text.get(a.id, "")],
-            description_of=lambda a: f"#{a.channel_name}, {a.recurrence.describe()}"
-            + (", on other nodes too" if a.linked else ""),
-            title="Announcements", own=True,
-            empty_message="No announcements scheduled. Create one to say something in a channel on a schedule.",
+            column_values_of=lambda a: [a.recurrence.describe(), next_text.get(a.id, "")],
+            description_of=lambda a: f"{a.recurrence.describe()}, saved by {a.saved_by_name or 'a deleted account'}",
+            title=f"Announcements in #{sanitize_text(channel.name)}", own=True,
+            empty_message="No announcements here. Create one to say something in this channel on a schedule.",
             refresh=refresh, on_create=create, item_keys={"d": delete_one},
             live_nav=(MenuEntry(label=menu_key("D", "elete selected"), brief="Remove this announcement"),),
-            preamble="The node says these itself, in the node's clock. A slot missed while the node was "
-                     "down is skipped, never said late.",
+            preamble=f"The node says these itself, in its own clock, even into an empty channel; a slot "
+                     f"missed while it was down is skipped. At most {MAX_RULES_PER_CHANNEL}, an hour apart. "
+                     + note,
             redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
             collapsed=chrome.collapsed, header_color=chrome.header_color,
             accent_color=chrome.accent_color, description_level=description_level,
@@ -119,7 +123,7 @@ async def announcements_screen(session: Session, lane: DatabaseLane, actor: User
             return
         current = await lane.run(get_announcement, picked.id)
         if current is not None:
-            await announcement_editor(session, lane, actor, announcement=current)
+            await announcement_editor(session, lane, actor, channel, announcement=current)
 
 
 def _draft_recurrence(draft: dict) -> Recurrence:
@@ -136,31 +140,29 @@ def _draft_recurrence(draft: dict) -> Recurrence:
 
 
 async def announcement_editor(
-    session: Session, lane: DatabaseLane, actor: User, *, announcement: Announcement | None = None,
+    session: Session, lane: DatabaseLane, actor: User, channel: Channel, *,
+    announcement: Announcement | None = None,
 ) -> Announcement | None:
     with entered(session, "Edit announcement" if announcement else "Create announcement"):
         chrome = await _load_chrome(lane, actor)
         description_level = await lane.run(menu_description_level, actor)
 
         def _context(db: Database):
-            channels = [c.name for c in list_channels(db)]
-            linked_ids = linked_channel_ids(db)
-            linked = {c.name for c in list_channels(db) if c.id in linked_ids}
             fmt, tz_name = resolve_display_preferences(db)
-            return channels, linked, fmt, tz_name, get_node_timezone(db)
+            return (channel_is_linkable(db, channel), channel_approved(db, channel.id), fmt, tz_name,
+                    get_node_timezone(db))
 
-        channel_names, linked_names, fmt, tz_name, tz = await lane.run(_context)
+        linkable, approved, fmt, tz_name, tz = await lane.run(_context)
         recurrence = announcement.recurrence if announcement else Recurrence()
         draft = {
-            "channel": announcement.channel_name if announcement else "",
             "text": announcement.text if announcement else "",
             "repeat": recurrence.repeat,
             "date": recurrence.date.isoformat() if recurrence.date else "",
             "weekdays": sorted(recurrence.weekdays) or [4],
-            "month_week": recurrence.month_week if recurrence.month_week is not None else 1,
+            "month_week": recurrence.month_week if recurrence.month_week in MONTH_WEEKS else 1,
             "weekday": recurrence.weekday if recurrence.weekday is not None else 4,
             "time": recurrence.time_text,
-            "linked": announcement.linked if announcement else False,
+            "linked": approved and linkable,
         }
 
         def preamble(values: dict) -> str:
@@ -172,24 +174,8 @@ async def announcement_editor(
             when = (format_for_display(upcoming.isoformat(), override_format=fmt, override_timezone=tz_name)
                     if upcoming else "--")
             where = "here and on other nodes" if values["linked"] else "on this node only"
-            return (f"Next: {when} ({tz_name}). Said {where}, into the channel's scrollback even when no "
-                    f"one is there. At most {MAX_RULES_PER_CHANNEL} per channel, an hour apart.")
-
-        async def pick_channel(session, lane, values):
-            options = sorted(channel_names, key=str.casefold)
-            picked = await pick_item(
-                session, list(enumerate(options)), name_of=lambda row: row[1],
-                stable_id_of=lambda row: row[0], title="Channel",
-                linked_of=lambda row: row[1] in linked_names,
-                empty_message="No channels yet. Create one under Chat channels first.",
-                redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
-                collapsed=chrome.collapsed, header_color=chrome.header_color,
-                accent_color=chrome.accent_color, description_level=description_level,
-            )
-            if picked is not None:
-                values["channel"] = picked[1]
-                if picked[1] not in linked_names:
-                    values["linked"] = False
+            return (f"#{sanitize_text(channel.name)}. Next: {when} ({tz_name}). Said {where}, into the "
+                    f"scrollback even when no one is there.")
 
         async def pick_weekdays(session, lane, values):
             async def toggle(day):
@@ -214,74 +200,58 @@ async def announcement_editor(
         def only(repeat, render):
             return lambda d: render(d) if d["repeat"] == repeat else f"(only for {repeat})"
 
-        section_when = "When"
+        when = "When"
         fields = [
-            FieldSpec("channel", "Channel", lambda d: sanitize_text(d["channel"]) or "(choose one)", pick_channel,
-                      brief="Where it is said", section="Announcement",
-                      help="The channel the announcement goes into. Any channel, MRC-bridged ones too: "
-                           "the line is never relayed to MRC."),
             FieldSpec("text", "Text", lambda d: sanitize_text(d["text"]) or "(none)", text_field("text"),
                       brief=f"1-{MAX_TEXT_CHARS} characters", section="Announcement",
-                      help=f"One line of up to {MAX_TEXT_CHARS} characters. It is shown as "
+                      help=f"One line of up to {MAX_TEXT_CHARS} characters, shown muted as "
                            "\"Announcement: \" and your text."),
             FieldSpec("repeat", "Repeat", lambda d: d["repeat"], choice_field("repeat", list(REPEATS)),
                       step=choice_step("repeat", list(REPEATS)), brief="Once, daily, weekly or monthly",
-                      section=section_when,
+                      section=when,
                       help="Once on a date; daily; weekly on the weekdays you choose; or monthly on the "
-                           "first, second, third, fourth or last of one weekday."),
+                           "first, second, third or fourth of one weekday."),
             FieldSpec("date", "Date (once)", only("once", lambda d: d["date"] or "(none)"), text_field("date"),
-                      brief="YYYY-MM-DD", section=section_when,
+                      brief="YYYY-MM-DD", section=when,
                       help="The day a once announcement is said, as year-month-day, at most a year ahead."),
             FieldSpec("weekdays", "Weekdays (weekly)",
                       only("weekly", lambda d: ", ".join(WEEKDAY_SHORT[x] for x in d["weekdays"]) or "(none)"),
-                      pick_weekdays, brief="One or more days", section=section_when),
+                      pick_weekdays, brief="One or more days", section=when),
             FieldSpec("month_week", "Week of month (monthly)",
                       only("monthly", lambda d: MONTH_WEEK_NAMES[d["month_week"]]),
                       choice_field("month_week", list(MONTH_WEEKS)), step=choice_step("month_week", list(MONTH_WEEKS)),
-                      brief="First to fourth, or last", section=section_when,
-                      help="Which of the month's weekdays: first to fourth, or last. A fifth exists only in "
-                           "some months, so it is not offered; last is the final one, fourth or fifth."),
+                      brief="First to fourth", section=when,
+                      help="Which of the month's weekdays: first, second, third or fourth, which every month has."),
             FieldSpec("weekday", "Weekday (monthly)", only("monthly", lambda d: WEEKDAY_NAMES[d["weekday"]]),
                       choice_field("weekday", list(range(7))), step=choice_step("weekday", list(range(7))),
-                      brief="The day of the week", section=section_when),
+                      brief="The day of the week", section=when),
             FieldSpec("time", "Time", lambda d: d["time"], text_field("time"),
-                      brief="24-hour, node's timezone", section=section_when,
+                      brief="24-hour, node's timezone", section=when,
                       help="HH:MM on a 24-hour clock, in the node's display timezone (Settings, Timestamp "
-                           "format). A time the clocks skip is said at its reading after the change; a "
-                           "repeated time, the first time round. A node not running then skips it."),
-            FieldSpec("linked", "Linked approval",
-                      lambda d: ("yes" if d["linked"] else "no") if d["channel"] in linked_names
-                      else "(Linked channels only)",
-                      bool_field("linked"), step=bool_step("linked"), brief="Also say it on other nodes",
-                      section="Link",
-                      help="In a Linked channel, say it on other nodes too, as a line by your account, "
-                           "confirmed on Save. Without it the announcement stays on this node."),
+                           "format). A time the clocks skip (02:30 when they go forward) is said an hour "
+                           "later by the new clock; a repeated time, the first time round. A node not running then skips it. Two "
+                           "announcements in a channel must be at least an hour apart, whatever their days."),
+            FieldSpec("linked", "Other nodes (whole channel)",
+                      (lambda d: "yes" if d["linked"] else "no") if linkable else (lambda d: "no"),
+                      bool_field("linked"), step=bool_step("linked") if linkable else None,
+                      brief="Approve this channel on Link", section="Link",
+                      locked=None if linkable else "not a Linked channel",
+                      help="Approve this Linked channel for announcements, confirmed on Save: each of its "
+                           "announcements is then said on other nodes too, as a line by the SysOp who saved "
+                           "it. Off says them on this node only. This is one setting for the whole channel."),
         ]
 
         async def save(values):
-            if not values["channel"]:
-                raise AnnouncementError("Choose a channel.")
             candidate = _draft_recurrence(values)
-
-            def _needs_approval(db: Database) -> bool:
-                try:
-                    channel = get_channel_by_name(db, values["channel"])
-                except ChannelError:
-                    raise AnnouncementError(f"#{values['channel']} no longer exists. Choose a channel.") from None
-                return values["linked"] and channel_is_linkable(db, channel)
-
-            if await lane.run(_needs_approval) and not (
-                announcement is not None and announcement.linked_author_id == actor.id
-                and announcement.channel_name == values["channel"]
+            approve = values["linked"] if linkable else None
+            if approve and not approved and not await prompt_yes_no(
+                session, f"Say every announcement in #{sanitize_text(channel.name)} on other nodes too, each as "
+                f"a line by the SysOp who saved it? Grant this approval?", default=False,
             ):
-                if not await prompt_yes_no(
-                    session, f"Say this announcement on other nodes in #{sanitize_text(values['channel'])} too, "
-                    f"as a line by {sanitize_text(actor.username)}? Grant Linked approval?", default=False,
-                ):
-                    raise AnnouncementError("Linked approval was not granted. Your draft has been kept.")
+                raise AnnouncementError("The approval for other nodes was not granted. Your draft has been kept.")
             return await lane.run(
-                save_announcement, actor=actor, channel_name=values["channel"], text=values["text"],
-                recurrence=candidate, linked=values["linked"],
+                save_announcement, actor=actor, channel=channel, text=values["text"],
+                recurrence=candidate, approve_linked=approve,
                 announcement_id=announcement.id if announcement else None,
             )
 
@@ -294,6 +264,5 @@ async def announcement_editor(
             accent_color=chrome.accent_color, description_level=description_level,
         )
         if saved is not None:
-            _announce_line(session, f"Announcement #{saved.id} saved: #{saved.channel_name}, "
-                                    f"{saved.recurrence.describe()}.")
+            _announce_line(session, f"Announcement #{saved.id} saved: {saved.recurrence.describe()}.")
         return saved

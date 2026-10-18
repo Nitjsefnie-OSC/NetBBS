@@ -574,35 +574,6 @@ validated at the Link protocol boundary before the event is accepted, and an
 already-stored value that cannot be parsed costs its own line's stamp and
 nothing more: rendering must never be able to shut a caller out of a channel.
 
-The node says two kinds of notice into channels itself, with no bot, both
-recorded as kind `daybreak`: muted, with no speaker, and never counted as
-unread activity. At local midnight it greets every channel with someone in it
-(and marks the New Year and a change of the clocks, §16 issue #1354). And a
-SysOp can schedule announcements (§16 issue #1380), under Content ▸ Chat
-channels ▸ Announcements:
-
-- **A rule** is one channel, a line of 1-160 characters shown as
-  `Announcement: <text>`, and a time `HH:MM` in the node's display timezone,
-  said once on a date (at most a year ahead), daily, weekly on a set of
-  weekdays, or monthly on the first, second, third, fourth or last of one
-  weekday. A fifth weekday exists only in some months and is not offered; the
-  last one is the rule for "the final Friday".
-- **Always recorded**, into an empty channel too, since the channel was chosen
-  on purpose and a later arrival finds it in scrollback. At most 8 rules per
-  channel, never within an hour of each other by the node's clock, checked on
-  Save.
-- **Slots follow the backup scheduler's clock** (§13, issue #727): a wall time the clocks
-  skip is said at its reading after the change, a repeated one the first time
-  round. Unlike a backup, a slot missed while the node was down (or more than
-  five minutes late) is skipped, never caught up: "tonight at 20:00" said at
-  23:00 is wrong. Saving a rule counts from that moment.
-- **Linked channels.** Local to this node, like the midnight line, unless the
-  rule carries a Linked approval, confirmed by the SysOp on Save as a bot's
-  is. Then the line is an ordinary signed `channel_message` by that SysOp's
-  account, carried and shown live like a line they typed, on every node,
-  however old. Nothing new crosses Link. Without Link running, or once that
-  account is no longer a usable SysOp, it falls back to the local line.
-
 `/msg` and `/private` remain ephemeral and online-only. They never silently
 fall back to asynchronous mail.
 

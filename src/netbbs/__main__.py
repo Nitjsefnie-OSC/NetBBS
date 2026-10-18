@@ -1158,6 +1158,7 @@ async def run(
                 )
                 from netbbs.link.events import (
                     CHANNEL_RELAY_CAPABILITY,
+                    CHAT_ANNOUNCEMENTS_CAPABILITY,
                     PRESENCE_RELAY_CAPABILITY,
                     descriptor_has_capability,
                 )
@@ -1174,6 +1175,7 @@ async def run(
                     hub=hub, lane=background_lane, presence=presence, registry=link_realtime_registry,
                     peer_capable=_peer_advertises(CHANNEL_RELAY_CAPABILITY),
                     presence_capable=_peer_advertises(PRESENCE_RELAY_CAPABILITY),
+                    announcement_capable=_peer_advertises(CHAT_ANNOUNCEMENTS_CAPABILITY),
                 )
                 # Issue #860: a channel line that arrives by sync is shown to
                 # the callers already in its channel.

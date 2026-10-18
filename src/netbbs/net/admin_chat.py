@@ -185,18 +185,11 @@ async def _channel_menu(
             await session.write_line("")
             await _list_channels_screen(session, lane, actor, link_context=link_context, mrc_bridge=mrc_bridge, chat_hub=chat_hub)
             await _draw_channel_menu(session, description_level, redraw_in_place, unicode_style, collapsed, header_color)
-        elif choice == "a":
-            # Issue #1380: scheduled announcements, across every channel.
-            from netbbs.net.admin_announcements import announcements_screen
-
-            await session.write_line("")
-            await announcements_screen(session, lane, actor)
-            await _draw_channel_menu(session, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == HELP_KEY:
             await show_menu_help(
                 session, "Chat channels help", _CHANNEL_MENU,
                 about="Add chat channels and change or remove existing ones. Pick a channel from the "
-                      "list to edit it. Announcements are notices the node says in a channel on a schedule.",
+                      "list to edit it.",
                 header_color=header_color, unicode_style=unicode_style,
             )
             await _draw_channel_menu(session, description_level, redraw_in_place, unicode_style, collapsed, header_color)
@@ -207,7 +200,6 @@ async def _channel_menu(
 _CHANNEL_MENU = (
     MenuEntry(label=menu_key("C", "reate"), brief="Add a new chat channel"),
     MenuEntry(label=menu_key("L", "ist"), brief="Browse and edit channels"),
-    MenuEntry(label=menu_key("A", "nnouncements"), brief="Scheduled notices in channels"),
     MenuEntry(label=menu_key("B", "ack"), brief="Return to the Content menu"),
 )
 
@@ -606,6 +598,13 @@ async def _channel_screen(
                 await mrc_bridge.refresh_channel_mappings()
             return deleted
 
+        async def _announcements(channel: Channel) -> bool:
+            # Issue #1380: this channel's scheduled announcements.
+            from netbbs.net.admin_announcements import announcements_screen
+
+            await announcements_screen(session, lane, actor, channel)
+            return False
+
         async def _restrictions(channel: Channel) -> bool:
             await _channel_restrictions_screen(session, lane, actor, channel)
             return False
@@ -690,6 +689,8 @@ async def _channel_screen(
                 DetailAction("d", menu_key("D", "elete"), _act(_delete), brief="Permanently remove this channel"),
                 DetailAction("r", menu_key("R", "estrictions"), _act(_restrictions), brief="Active mutes and bans"),
                 DetailAction("h", menu_key("H", "istory"), _act(_history), brief="Its moderators and what they did"),
+                DetailAction("n", menu_key("n", "nouncements", prefix="An"), _act(_announcements),
+                             brief="Notices said here on a schedule"),
             ]
             if link_context is not None and not linked and not open_room:
                 actions.append(DetailAction("l", menu_key("L", "ink this chat channel"), _act(_link), brief="Share it via NetBBS Link"))

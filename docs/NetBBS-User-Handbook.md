@@ -489,8 +489,8 @@ Gray lines with no name in front are the BBS itself speaking: a good-morning
 line at midnight, and announcements the SysOp has scheduled, such as
 `Announcement: Net meeting tonight at 20:00 in #main.` They stay in the
 channel's scrollback, so you see them even if you arrive later. In a channel
-shared with linked BBSes, a SysOp's announcement for every BBS appears as an
-ordinary line by that SysOp instead.
+shared with linked BBSes, an announcement from another BBS names it:
+`Announcement from Vertigo: Tournament at 21:00.`
 
 #### Aliases and names from other BBSes
 

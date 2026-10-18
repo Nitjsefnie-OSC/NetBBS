@@ -1294,29 +1294,34 @@ The node can say a short notice in a channel on a schedule, with no bot:
 a net meeting every Friday, a tournament on the first Saturday of the month,
 a maintenance window once.
 
-1. Open **Content ▸ Chat channels ▸ Announcements** and press <kbd>C</kbd>
-   **Create**.
-2. Choose the **Channel** and type the **Text** (up to 160 characters). It is
-   shown muted as `Announcement: ` and your text.
+1. Open **Content ▸ Chat channels**, choose the channel, and press
+   <kbd>N</kbd> **An[n]ouncements**.
+2. Press <kbd>C</kbd> **Create** and type the **Text** (up to 160
+   characters). It is shown muted as `Announcement: ` and your text.
 3. Set **Repeat** to once, daily, weekly or monthly, and fill in the fields
    for it: a **Date** as `2026-10-23`, the **Weekdays**, or the **Week of
-   month** (first to fourth, or last) and **Weekday**.
+   month** (first to fourth) and **Weekday**.
 4. Set the **Time** as `19:00`, in the node's display timezone. The line
    above the fields shows when it is next said.
 5. Press <kbd>S</kbd> **Save**.
 
 - It is recorded in the channel even when no one is there, so a caller who
   arrives later finds it in the scrollback.
-- A channel holds at most 8 announcements, and Save refuses one that would
-  come within an hour of another in the same channel.
+- A channel holds at most 8 announcements, and Save refuses one whose time
+  of day is within an hour of another in the same channel, whatever their
+  days.
 - A slot the node misses (it was not running) is skipped, not said late.
 - <kbd>D</kbd> **Delete selected** removes one. A once announcement already
   said stays listed as `done` until you delete it.
 
 > [!NOTE]
-> In a Linked channel an announcement stays on this node unless you turn on
-> **Linked approval**. Save then asks you to confirm, and the line goes out
-> to other nodes as a line by your account, like one you typed there.
+> In a Linked channel announcements stay on this node until you approve the
+> channel for them: turn on **Other nodes (whole channel)** in any of its
+> announcements, and Save asks you to confirm. Each announcement then goes
+> to the other nodes as well, signed by the SysOp who saved it. Newer nodes
+> show it as an announcement from your BBS; older ones as an ordinary line
+> from that SysOp. If that account is deleted or is no longer a SysOp, its
+> announcements stay on this node until another SysOp saves them.
 
 #### Order boards, file areas and Communities
 

@@ -334,6 +334,7 @@ def _channel_message_from_row(row) -> LocalChannelMessage:
         author_fingerprint=row["author_fingerprint"], body=row["body"], created_at=row["created_at"],
         link_content_id=row["link_content_id"],
         author_kind=row["author_kind"] if "author_kind" in row.keys() else "user",
+        announcement=bool(row["announcement"]) if "announcement" in row.keys() else False,
     )
 
 
@@ -426,10 +427,14 @@ def materialize_carried_channel_message(
     db.connection.execute(
         """
         INSERT INTO channel_messages
-            (channel_id, kind, author_label, author_fingerprint, body, created_at, link_content_id, author_kind)
-        VALUES (?, 'message', ?, NULL, ?, ?, ?, ?)
+            (channel_id, kind, author_label, author_fingerprint, body, created_at, link_content_id, author_kind,
+             announcement)
+        VALUES (?, 'message', ?, NULL, ?, ?, ?, ?, ?)
         """,
-        (channel_local_id, author_label, payload["body"], payload["created_at"], message.content_id, author_kind),
+        (channel_local_id, author_label, payload["body"], payload["created_at"], message.content_id, author_kind,
+         # Issue #1380: the optional marker; anything but `true` (or a bot
+         # claiming it) is shown as the plain line it also is.
+         1 if payload.get("announcement") is True and author_kind == "user" else None),
     )
     limit = get_scrollback_limit(db)
     db.connection.execute(
@@ -506,6 +511,7 @@ def queue_channel_message_if_linked(
         channel_id=channel.channel_id,
         body=message.body or "",
         created_at=message.created_at,
+        announcement=message.announcement,
     )
 
     db.connection.execute(
