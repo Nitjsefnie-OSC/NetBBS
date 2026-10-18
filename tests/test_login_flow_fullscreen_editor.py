@@ -232,7 +232,7 @@ def test_profile_toggle_switches_the_preference_on_and_off(db, lane, alice):
 def test_profile_color_depth_toggle_cycles_auto_truecolor_256_16(db, lane, alice):
     from netbbs.net.color_depth_preference import color_depth_override
 
-    session = FakeSession(["1", "4"] * 4 + ["b"])
+    session = FakeSession(["1", "5"] * 4 + ["b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
     text = _visible(session)
     assert "Color depth: truecolor (forced)" in squeezed(text)
@@ -247,7 +247,7 @@ def test_profile_menu_descriptions_toggle_cycles_off_brief_detailed(db, lane, al
     from netbbs.net.menu_description_preference import menu_description_level
 
     assert menu_description_level(db, alice) == "brief"  # default
-    session = FakeSession(["1", "5", "1", "5", "1", "5", "b"])
+    session = FakeSession(["1", "6", "1", "6", "1", "6", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
     text = _visible(session)
     assert "Menu descriptions: detailed" in squeezed(text)
@@ -261,9 +261,9 @@ def test_profile_redraw_in_place_toggle_switches_on_and_off(db, lane, alice):
     from netbbs.net.redraw_preference import redraw_in_place_enabled
 
     assert redraw_in_place_enabled(db, alice) is False  # default
-    session = FakeSession(["1", "6", "1", "6", "b"])
+    session = FakeSession(["1", "7", "1", "7", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
-    # First "16" turns it on, second turns it back off.
+    # First "17" turns it on, second turns it back off.
     assert redraw_in_place_enabled(db, alice) is False
     text = _visible(session)
     assert "In-place redraw: on" in squeezed(text)
@@ -275,7 +275,7 @@ def test_profile_banner_animations_toggle_applies_at_once(db, lane, alice):
     from netbbs.net.animation_preference import animations_enabled
 
     assert animations_enabled(db, alice) is True  # default
-    session = FakeSession(["1", "7", "b"])
+    session = FakeSession(["1", "8", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
     assert animations_enabled(db, alice) is False
     assert session.animations_enabled is False
@@ -288,7 +288,7 @@ def test_profile_character_set_cycles_and_applies_at_once(db, lane, alice):
     from netbbs.net.unicode_style_preference import charset_preference
 
     assert charset_preference(db, alice) == "auto"  # default
-    session = FakeSession(["1", "8", "1", "8", "1", "8", "b"])
+    session = FakeSession(["1", "9", "1", "9", "1", "9", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
     assert charset_preference(db, alice) == "ascii"
     assert session.output_charset == "ascii"
@@ -324,7 +324,7 @@ def test_profile_ssh_public_key_self_service_adds_a_key(db, lane, alice):
     verify_key = nacl.signing.SigningKey.generate().verify_key
     raw_b64 = base64.b64encode(bytes(verify_key)).decode()
 
-    session = FakeSession(["2", "4", "a", raw_b64, "phone", "b", "b"])
+    session = FakeSession(["2", "5", "a", raw_b64, "phone", "b", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
 
     updated = login_flow.get_user_by_username(db, "alice")
@@ -333,7 +333,7 @@ def test_profile_ssh_public_key_self_service_adds_a_key(db, lane, alice):
 
 
 def test_profile_ssh_public_key_self_service_rejects_an_unparseable_key(db, lane, alice):
-    session = FakeSession(["2", "4", "a", "not a real key", "b", "b"])
+    session = FakeSession(["2", "5", "a", "not a real key", "b", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
 
     updated = login_flow.get_user_by_username(db, "alice")
@@ -352,7 +352,7 @@ def test_profile_ssh_public_key_self_service_refuses_a_key_already_in_use(db, la
     raw_b64 = base64.b64encode(bytes(verify_key)).decode()
     create_user(db, "bob", verify_key=verify_key, user_level=10)
 
-    session = FakeSession(["2", "4", "a", raw_b64, "phone", "b", "b"])
+    session = FakeSession(["2", "5", "a", raw_b64, "phone", "b", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
 
     updated = login_flow.get_user_by_username(db, "alice")
@@ -364,7 +364,7 @@ def test_profile_ssh_public_key_remove_not_offered_with_no_key_set(db, lane, ali
     # The [R]emove option only makes sense once a key actually exists --
     # shouldn't be advertised on an account with none.
     assert alice.fingerprint is None
-    session = FakeSession(["2", "4", "b", "b"])
+    session = FakeSession(["2", "5", "b", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
     assert "emove a key" not in _written_text(session)
 
@@ -382,7 +382,7 @@ def test_profile_ssh_public_key_self_service_removes_the_key(db, lane, alice):
     alice = login_flow.get_user_by_username(db, "alice")
     assert alice.fingerprint is not None
 
-    session = FakeSession(["2", "4", "r", "1", "y", "b", "b"])
+    session = FakeSession(["2", "5", "r", "1", "y", "b", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
 
     updated = login_flow.get_user_by_username(db, "alice")
@@ -399,7 +399,7 @@ def test_profile_ssh_public_key_self_service_remove_declined_keeps_the_key(db, l
     add_ssh_key(db, alice, verify_key, label="phone", changed_by=alice)
     alice = login_flow.get_user_by_username(db, "alice")
 
-    session = FakeSession(["2", "4", "r", "1", "n", "b", "b"])
+    session = FakeSession(["2", "5", "r", "1", "n", "b", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
 
     updated = login_flow.get_user_by_username(db, "alice")
@@ -439,7 +439,7 @@ def test_main_menu_refreshes_the_session_user_after_a_profile_key_change(db, lan
 
     session = FakeSession(
         [
-            "p", "PAGE_DOWN", "PAGE_DOWN", "PAGE_DOWN", "2", "4", "a", raw_b64, "phone", "b", "b",
+            "p", "PAGE_DOWN", "PAGE_DOWN", "PAGE_DOWN", "2", "5", "a", raw_b64, "phone", "b", "b",
             "p", "PAGE_DOWN", "PAGE_DOWN", "PAGE_DOWN", "b", "l", "y",
         ]
     )
