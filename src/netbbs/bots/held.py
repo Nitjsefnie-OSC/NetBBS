@@ -88,9 +88,14 @@ def prune_expired(db: Database) -> list[tuple[int, int, str]]:
     return dropped
 
 
-def hold_line(db: Database, bot_id: int, channel_name: str, caller, text, seconds) -> dict:
-    """Store a line for `caller`, who is not in the channel now."""
+def hold_line(db: Database, bot_id: int, channel_name: str, caller, text, seconds, private=False) -> dict:
+    """Store a line for `caller`, who is not in the channel now. A private
+    one is shown to that local caller alone on their return (issue #1372)."""
     user_id, link = caller_columns(caller)
+    if type(private) is not bool:
+        raise BotError("An action's private flag must be true or false.")
+    if private and link is not None:
+        raise BotError("A private held line reaches local callers only.")
     text = _line_body(text, "text")
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not (
             LINE_MIN_SECONDS <= seconds <= LINE_MAX_SECONDS):
@@ -114,8 +119,8 @@ def hold_line(db: Database, bot_id: int, channel_name: str, caller, text, second
         expires = utc_iso(now + dt.timedelta(seconds=seconds))
         cursor = db.connection.execute(
             "INSERT INTO bot_held_lines(bot_id, channel_id, kind, caller_user_id, caller_link, text, "
-            "created_at, expires_at) VALUES (?, ?, 'line', ?, ?, ?, ?, ?)",
-            (bot_id, channel.id, user_id, link, text, utc_iso(now), expires),
+            "created_at, expires_at, private) VALUES (?, ?, 'line', ?, ?, ?, ?, ?, ?)",
+            (bot_id, channel.id, user_id, link, text, utc_iso(now), expires, int(private)),
         )
     except BaseException:
         db.connection.rollback()
@@ -127,13 +132,13 @@ def hold_line(db: Database, bot_id: int, channel_name: str, caller, text, second
 def list_lines(db: Database, bot_id: int) -> list[dict]:
     """This bot's own held lines that have not expired (never tells)."""
     rows = db.connection.execute(
-        "SELECT h.id, c.name, h.caller_user_id, h.caller_link, h.created_at, h.expires_at "
+        "SELECT h.id, c.name, h.caller_user_id, h.caller_link, h.created_at, h.expires_at, h.private "
         "FROM bot_held_lines h JOIN channels c ON c.id = h.channel_id "
         "WHERE h.bot_id = ? AND h.kind = 'line' AND h.expires_at > ? ORDER BY h.id",
         (bot_id, utc_iso(_now())),
     ).fetchall()
     return [{"held_id": r[0], "channel": r[1], "caller": r[2] if r[2] is not None else r[3],
-             "created_at": r[4], "expires_at": r[5]} for r in rows]
+             "created_at": r[4], "expires_at": r[5], "private": bool(r[6])} for r in rows]
 
 
 def cancel_line(db: Database, bot_id: int, held_id) -> dict:
@@ -278,15 +283,36 @@ def cancel_tell(db: Database, bot_id: int, channel_name: str, sender: dict, tell
     return {"cancelled": cursor.rowcount > 0}
 
 
-def join_candidates(db: Database, channel: Channel, caller) -> list[tuple[int, int, str]]:
-    """`(id, bot_id, kind)` of the lines waiting for `caller` in `channel`."""
+def join_candidates(db: Database, channel: Channel, caller) -> list[tuple[int, int, str, bool]]:
+    """`(id, bot_id, kind, private)` of the lines waiting for `caller` in `channel`."""
     user_id, link = caller_columns(caller)
     rows = db.connection.execute(
-        "SELECT id, bot_id, kind FROM bot_held_lines WHERE channel_id = ? AND caller_user_id IS ? "
+        "SELECT id, bot_id, kind, private FROM bot_held_lines WHERE channel_id = ? AND caller_user_id IS ? "
         "AND caller_link IS ? AND expires_at > ? ORDER BY id",
         (channel.id, user_id, link, utc_iso(_now())),
     ).fetchall()
-    return [(r[0], r[1], r[2]) for r in rows]
+    return [(r[0], r[1], r[2], bool(r[3])) for r in rows]
+
+
+def deliver_private(db: Database, held_id: int, bot_id: int, channel_name: str, caller: int):
+    """Claim private held line `held_id` and debit `caller`'s private-answer
+    limit in one transaction: `(bot label, body)`, or `None` when it was
+    dropped. A refusal (`BotError`) leaves it held."""
+    db.connection.execute("BEGIN IMMEDIATE")
+    try:
+        bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True, private_caller=str(caller))
+        try:
+            body = claim(db, held_id, bot, channel)
+        except Dropped:
+            db.connection.commit()
+            return None
+        db.connection.execute("INSERT INTO bot_private_history(bot_id, caller, created_at) VALUES (?, ?, ?)",
+                              (bot.id, str(caller), utc_iso(_now())))
+    except BaseException:
+        db.connection.rollback()
+        raise
+    db.connection.commit()
+    return bot.label, body
 
 
 def _ago(created_at: str, now: dt.datetime) -> str:

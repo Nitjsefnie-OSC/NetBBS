@@ -638,3 +638,36 @@ def test_real_baud_holds_a_reminder_until_its_owner_joins(db, lane, hub, sysop, 
             await runtime.close()
 
     asyncio.run(run())
+
+
+def test_private_held_line_reaches_its_caller_alone(db, lane, hub, sysop, alice, channel):
+    from netbbs.chat.bots import BotPrivateAnswer
+    bot = install(db, sysop, channel)
+
+    async def run():
+        other = hub.join(channel.name, ParticipantId(sysop.username, 9))
+        async with Harness(lane, hub, bot) as h:
+            with pytest.raises(BotError, match="local callers only"):
+                await h.act(action="say.for", channel=channel.name, caller="link:abc123:bob", text="x",
+                            expires=WEEK, private=True)
+            result = await h.act(action="say.for", channel=channel.name, caller=alice.id, text="x",
+                                 held_text="alice: just for you", expires=WEEK, private=True)
+            assert result["held"] and held_rows(db)[0]["private"] == 1
+            mine = hub.join(channel.name, ParticipantId(alice.username, 1))
+            h.runtime.joined(channel, alice.id)
+            assert (await h.event()) == {"type": "held", "held_id": result["held_id"], "outcome": "delivered",
+                                         "private": True}
+            answer = mine.get_nowait()
+            assert isinstance(answer, BotPrivateAnswer) and answer.text == "alice: just for you"
+            # Present now: shown at once, to alice alone.
+            now = await h.act(action="say.for", channel=channel.name, caller=alice.id, text="alice: now",
+                              expires=WEEK, private=True)
+            assert now == {"delivered": True, "private": True}
+            assert mine.get_nowait().text == "alice: now"
+        assert other.empty()
+        assert bot_lines(db, channel) == [] and held_rows(db) == []
+        # Both debited alice's private-answer limit, not the channel's.
+        assert db.connection.execute("SELECT COUNT(*) FROM bot_private_history").fetchone()[0] == 2
+        assert db.connection.execute("SELECT COUNT(*) FROM bot_output_history").fetchone()[0] == 0
+
+    asyncio.run(run())

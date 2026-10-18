@@ -146,11 +146,14 @@ class Bot:
     def announce(self, event, then=None):
         return self.act("announce", then, event=event["event"])
 
-    def say_for(self, channel, caller, text, held_text=None, expires=7 * 86400, then=None):
+    def say_for(self, channel, caller, text, held_text=None, expires=7 * 86400, private=False, then=None):
         """Say ``text`` for one caller now if they are in ``channel``, or hold
         ``held_text`` (default ``text``) for their next join there, for at most
-        ``expires`` seconds. The outcome of a held line arrives as ``on_held``."""
+        ``expires`` seconds; ``private`` shows it to that local caller alone.
+        The outcome of a held line arrives as ``on_held``."""
         fields = {"channel": channel, "caller": caller, "text": text[:LINE_LIMIT], "expires": expires}
+        if private:
+            fields["private"] = True
         if held_text is not None:
             fields["held_text"] = held_text[:LINE_LIMIT]
         return self.act("say.for", then, **fields)

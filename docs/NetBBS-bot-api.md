@@ -207,6 +207,12 @@ so a restarted bot can tell which were delivered meanwhile, and
 same grant, policy, mute and hourly-output checks as `say` when it is
 delivered; a refused one stays held until it expires, and an expired one is
 dropped without a line. An instance holds at most 48 lines, 8 per caller.
+With `"private": true` the line is shown to that local caller alone, as a
+`(to you)` answer in each of their sessions in the channel, and debits their
+private-answer limit instead of the channel's hourly output (issue #1372); a
+private line for a Link caller is refused. The `held` event then carries
+`"private": true` instead of a `message_id`. Baud's reminders and tells are
+delivered publicly.
 The caller is any caller id the bot has seen; held lines live in the node
 database, not in the bot's state, and survive restarts.
 

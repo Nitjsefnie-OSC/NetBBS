@@ -221,6 +221,14 @@ class BotRuntime:
                        for n, u, _label in self.link.bridge.remote_channel_roster(channel.channel_id))
         return False
 
+    async def send_private(self, channel, caller: int, label: str, body: str) -> None:
+        """A `(to you)` line to every session of local `caller` in `channel`."""
+        from netbbs.auth.users import get_user_by_id
+        user = await self.lane.run(get_user_by_id, caller)
+        answer = BotPrivateAnswer(label, body, utc_now_iso())
+        for pid in self.hub.participants_for_username(channel.name, user.username) if user else ():
+            await self.hub.send_to(channel.name, pid, answer)
+
     async def publish_live(self, channel, message) -> None:
         await self.hub.broadcast(channel.name, message)
         if self.link is not None:
@@ -241,8 +249,8 @@ class BotRuntime:
                 except asyncio.TimeoutError:
                     continue
                 try:
-                    for held_id, bot_id, kind in await self.lane.run(join_candidates, channel, caller):
-                        await self._deliver(channel, held_id, bot_id, kind)
+                    for held_id, bot_id, kind, private in await self.lane.run(join_candidates, channel, caller):
+                        await self._deliver(channel, held_id, bot_id, kind, caller if private else None)
                 finally:
                     self.joins.task_done()
             except asyncio.CancelledError:
@@ -251,15 +259,23 @@ class BotRuntime:
                 _logger.exception("Could not deliver held bot lines; retrying")
                 await asyncio.sleep(self.poll_seconds)
 
-    async def _deliver(self, channel, held_id, bot_id, kind) -> None:
+    async def _deliver(self, channel, held_id, bot_id, kind, private_caller=None) -> None:
         link = self.link
         try:
-            published = await self.lane.run(publish, bot_id, channel.name, None, held_id=held_id,
-                                            node_identity=link.node.identity if link else None)
+            if private_caller is not None:
+                from netbbs.bots import held
+                published = await self.lane.run(held.deliver_private, held_id, bot_id, channel.name,
+                                                private_caller)
+            else:
+                published = await self.lane.run(publish, bot_id, channel.name, None, held_id=held_id,
+                                                node_identity=link.node.identity if link else None)
         except BotError:
             return  # Muted, over its hourly limit, or taken: held until expiry.
         if published is None:
             outcome = {"type": "held", "held_id": held_id, "outcome": "expired"}
+        elif private_caller is not None:
+            await self.send_private(channel, private_caller, *published)
+            outcome = {"type": "held", "held_id": held_id, "outcome": "delivered", "private": True}
         else:
             target, message = published
             await self.publish_live(target, message)
@@ -686,8 +702,18 @@ class _Worker:
             if not isinstance(channel_name, str):
                 raise BotError("say.for needs an allowed channel name.")
             held.caller_columns(caller)
+            private = value.get("private", False)
+            if type(private) is not bool:
+                raise BotError("An action's private flag must be true or false.")
+            if private and not isinstance(caller, int):
+                raise BotError("A private held line reaches local callers only.")
             channel = await lane.run(local_channel, channel_name,
                                      allow_linked=channel_name in self.bot.linked_channels)
+            if private and await self.owner.present(channel, caller):
+                text = value.get("text")
+                bot, _channel = await lane.run(deliver_private, self.bot.id, channel_name, text, str(caller))
+                await self.owner.send_private(channel, caller, bot.label, text)
+                return {"delivered": True, "private": True}
             if await self.owner.present(channel, caller):
                 link = self.owner.link
                 target, message = await lane.run(publish, self.bot.id, channel_name, value.get("text"),
@@ -695,7 +721,8 @@ class _Worker:
                 await self.owner.publish_live(target, message)
                 return {"delivered": True, "message_id": message.id}
             text = value.get("held_text", value.get("text"))
-            result = await lane.run(held.hold_line, self.bot.id, channel_name, caller, text, value.get("expires"))
+            result = await lane.run(held.hold_line, self.bot.id, channel_name, caller, text, value.get("expires"),
+                                    private)
             if await self.owner.present(channel, caller):
                 self.owner.joined(channel, caller)  # Arrived meanwhile: deliver now.
             return result

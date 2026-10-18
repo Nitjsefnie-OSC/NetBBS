@@ -4790,7 +4790,8 @@ MIGRATIONS = [
             "caller by local account (`caller_user_id`) or Link identity (`caller_link`, "
             "'link:<fingerprint>:<user>'), never both, and is published in its channel on that "
             "caller's next join, then deleted; expired rows are pruned. A tell keeps its sender "
-            "the same way, so blocks are checked again at delivery. Empty on upgrade."
+            "the same way, so blocks are checked again at delivery. `private` (issue #1372) shows "
+            "a line to its local caller alone, as a `(to you)` answer. Empty on upgrade."
         ),
         sql="""
         CREATE TABLE bot_held_lines (
@@ -4806,7 +4807,9 @@ MIGRATIONS = [
             text            TEXT NOT NULL,
             created_at      TEXT NOT NULL,
             expires_at      TEXT NOT NULL,
+            private         INTEGER NOT NULL DEFAULT 0 CHECK (private IN (0, 1)),
             CHECK ((caller_user_id IS NULL) <> (caller_link IS NULL)),
+            CHECK (private = 0 OR (kind = 'line' AND caller_user_id IS NOT NULL)),
             CHECK (kind = 'line' OR (caller_user_id IS NOT NULL
                                      AND (sender_user_id IS NULL) <> (sender_link IS NULL)))
         );
