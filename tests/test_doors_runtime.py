@@ -708,3 +708,101 @@ def test_a_terminal_too_small_is_its_own_outcome_not_a_setup_failure(db, lane, p
     assert result.exit_code is None
     assert result.diagnostic == "Terminal is 80x24; the door needs at least 80x25."
     assert asyncio.run(_run(session, lane, broken, player)).reason == "failed_to_start"
+
+
+# -- a stop is bounded, even when the door's exit is seen late (issue #1428)
+
+def _held_exits(monkeypatch):
+    """Once armed, a door process's exit reaches the event loop only when the
+    test hands it over, as it can arrive seconds late on a loaded machine (a
+    full suite beside other suites). `deliver()` hands over what is held."""
+    import asyncio.base_subprocess as base_subprocess
+    real = base_subprocess.BaseSubprocessTransport._process_exited
+    held = []
+
+    def late(transport, returncode):
+        held.append((transport, returncode))
+
+    def deliver():
+        while held:
+            real(*held.pop(0))
+
+    monkeypatch.setattr(base_subprocess.BaseSubprocessTransport, "_process_exited", late)
+    return deliver
+
+
+def test_a_door_stop_ends_although_the_door_exit_is_seen_late(db, lane, player, tmp_path, monkeypatch, caplog):
+    # Deaf to SIGTERM, so on POSIX it is still alive for the group SIGKILL,
+    # as a door slow to stop would be, and both of the stop's waits run.
+    # (On Windows terminate() ends it outright either way.)
+    from netbbs.doors.profiles import DoorProfile
+    from tests.bounded import run_bounded
+    from tests.door_python import DOOR_PYTHON
+    script = _write_script(tmp_path, "deaf_door.py", """
+        import signal, time
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        print("ready", flush=True)
+        time.sleep(60)
+    """)
+    door = create_door(db, "Deaf", DOOR_PYTHON, args=(str(script),), creator=player,
+                       profile=DoorProfile(stop_grace_seconds=1))
+    deliver = _held_exits(monkeypatch)
+
+    async def scenario():
+        try:
+            return await _run(FakeSession(), lane, door, player, wall_time_limit_seconds=1)
+        finally:
+            # Before the loop closes; asyncio collects the process then.
+            deliver()
+            await asyncio.sleep(0)
+
+    # The stop takes its 1 s grace and 2 s after the kill. Before the fix it
+    # waited for the exit without a bound, here until the bound runs out.
+    result = run_bounded(scenario(), timeout=30)
+    assert result.reason == "timed_out"
+    assert "had not reported its exit 2 seconds after a kill" in caplog.text
+
+
+def test_a_door_stop_ends_although_a_descendant_holds_its_output_open(db, lane, player, tmp_path):
+    # Windows has no group kill: the door is killed, and the child it started
+    # keeps the inherited stdout open. The stop must not wait for that child.
+    # (On POSIX the group SIGKILL ends the child too.)
+    import subprocess
+    from netbbs.doors.profiles import DoorProfile
+    from tests.bounded import run_bounded
+    from tests.door_python import DOOR_PYTHON
+    pid_file = tmp_path / "child.pid"
+    script = _write_script(tmp_path, "parent_door.py", f"""
+        import subprocess, sys, time
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], close_fds=False)
+        open({str(pid_file)!r}, "w").write(str(child.pid))
+        print("ready", flush=True)
+        time.sleep(60)
+    """)
+    door = create_door(db, "Parent", DOOR_PYTHON, args=(str(script),), creator=player,
+                       profile=DoorProfile(stop_grace_seconds=1))
+
+    def end_child():
+        if pid_file.exists() and (pid := pid_file.read_text().strip()):
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True)
+            else:
+                try:
+                    os.kill(int(pid), 9)
+                except ProcessLookupError:
+                    pass
+
+    async def scenario():
+        try:
+            return await _run(FakeSession(), lane, door, player, wall_time_limit_seconds=2)
+        finally:
+            # Before the loop closes, so the pipe it held can end there.
+            end_child()
+            await asyncio.sleep(0.5)
+
+    # Before the fix the stop waited for the child's 60 s sleep.
+    try:
+        assert run_bounded(scenario(), timeout=30).reason == "timed_out"
+    finally:
+        end_child()

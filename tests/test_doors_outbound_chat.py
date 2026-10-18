@@ -91,9 +91,13 @@ _ordinal = iter(range(1_000_000))
 
 
 def _say(workdir, **payload):
+    # Zero-padded: a drain answers requests in name order, and the ordinal is
+    # shared by every test a worker runs. Unpadded, "say10" sorts before
+    # "say9" on a worker that crossed a power of ten between the two, and a
+    # test whose second request must lose to its first fails (issue #1429).
     directory = workdir / OUTBOUND_DIRNAME
     directory.mkdir(exist_ok=True)
-    name = f"say{next(_ordinal)}"
+    name = f"say{next(_ordinal):07d}"
     (directory / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
     return name
 
