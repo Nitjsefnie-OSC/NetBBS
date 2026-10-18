@@ -40,8 +40,13 @@ def _display_timezone(db) -> str:
 
 
 class BotRuntime:
-    def __init__(self, lane, hub, *, presence=None, poll_seconds: float = 1.0, restart_seconds: float = 1.0):
+    def __init__(self, lane, hub, *, presence=None, poll_seconds: float = 1.0, restart_seconds: float = 1.0,
+                 trial=None):
         self.lane, self.hub = lane, hub
+        # Issue #1374: only the console's Try passes this (netbbs.bots.trial):
+        # it traces the protocol, keeps a bounded stderr excerpt and rehearses
+        # model actions. Live it is None, and none of that happens.
+        self.trial = trial
         self.presence = presence
         self.started_at = time.monotonic()
         self.poll_seconds, self.restart_seconds = poll_seconds, restart_seconds
@@ -79,6 +84,10 @@ class BotRuntime:
                     # Issue #1375: Baud reads absolute reminder times in the
                     # node display clock, which reaches it only in the hello.
                     timezone = await self.lane.run(_display_timezone)
+                    if self.trial is not None:
+                        # The scratch node has no model settings of its own;
+                        # the trial carries the live node's answer.
+                        model_enabled = self.trial.model_enabled
                     disclosures = {}
                     for bot in desired.values():
                         for name in bot.reading_channels:
@@ -420,18 +429,24 @@ class _Worker:
             raise BotError("Bot sent invalid JSON.") from exc
         if not isinstance(value, dict):
             raise BotError("Bot protocol requires JSON objects.")
+        if self.owner.trial is not None:
+            self.owner.trial.trace("bot", value)
         return value
 
     async def _write(self, value: dict) -> None:
         raw = (json.dumps(value, ensure_ascii=True, allow_nan=False) + "\n").encode("ascii")
         if len(raw) > MAX_LINE_BYTES:
             raise BotError("Host event exceeds the protocol line limit.")
+        if self.owner.trial is not None:
+            self.owner.trial.trace("host", value)
         self.proc.stdin.write(raw)
         await asyncio.wait_for(self.proc.stdin.drain(), 5)
 
     async def _drain_stderr(self) -> None:
-        while await self.proc.stderr.read(4096):
-            pass
+        while chunk := await self.proc.stderr.read(4096):
+            # Live, stderr is discarded: unbounded logs and prompt text.
+            if self.owner.trial is not None:
+                self.owner.trial.stderr(chunk)
 
     async def _writer(self) -> None:
         while True:
@@ -528,6 +543,15 @@ class _Worker:
                 raise BotError("Model actions need this bot's live addressed request token.")
             if request in self.model_tasks:
                 raise BotError("This request is already being handled by the model.")
+            if self.owner.trial is not None:
+                # A trial never calls the provider: it says what would have
+                # happened, as door outbound rehearsals do (issue #1374).
+                if not self.model_enabled:
+                    raise BotError("Model conversation is not granted to this bot, or the node's Model settings are off.")
+                text = ("Rehearsal: would clear this caller's model context." if action == "model.reset" else
+                        "Rehearsal: would ask the model with this caller's text: " + pending[5][:200])
+                await self.notify(request, text)
+                return {"pending": False, "rehearsal": text}
             task = asyncio.create_task(self._model_reply(request, pending, reset=action == "model.reset"), name="bot-model-reply")
             self.model_tasks[request] = task
             def finished(done):
