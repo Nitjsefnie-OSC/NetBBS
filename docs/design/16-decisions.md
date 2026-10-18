@@ -88,6 +88,9 @@ Each decision lives in its own file under [`decisions/`](decisions/), named afte
 | #1354 | [the New Year and clock changes in chat](decisions/1354-the-new-year-and-clock-changes-in-chat.md) | decided |
 | #1357 | [Link moderation: delegated moderators for linked boards and channels](decisions/1357-link-moderation-delegated-moderators-for-linked.md) | decided |
 | #1368 | [Link DMs: cross-node `/dm` direct chats](decisions/1368-link-dms-cross-node-dm-direct-chats.md) | decided and built |
+| #1377 | [paging the SysOp](decisions/1377-paging-the-sysop.md) | decided |
+| #1380 | [scheduled SysOp announcements in chat](decisions/1380-scheduled-sysop-announcements-in-chat.md) | decided |
+| #1391 | [the oneliner wall](decisions/1391-the-oneliner-wall.md) | decided |
 | #1394 | [splitting the design document by area](decisions/1394-splitting-the-design-document-by-area.md) | decided and built |
 | — | [Staff edit a member's Profile](decisions/staff-edit-a-members-profile.md) | decided |
 | — | [SFTP over the SSH transport](decisions/sftp-over-the-ssh-transport.md) | declined |
