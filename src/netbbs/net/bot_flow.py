@@ -4,7 +4,7 @@ import json
 
 from netbbs.bots.baud import PHRASE_KEYS
 from netbbs.bots.registry import (
-    BotError, MAX_PHRASE, NAME_ALLOWANCE, TEMPERAMENTS, get_bot, preset_phrase, list_bots, require_sysop, runtime_status, save_bot, stop_bots,
+    BotError, MAX_PHRASE_LENGTHS, NAME_ALLOWANCE, TEMPERAMENTS, get_bot, preset_phrase, list_bots, require_sysop, runtime_status, save_bot, stop_bots,
     deletable_bot, delete_bot,
     local_channel,
 )
@@ -295,7 +295,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 return f"(preset) {text}" if text else "(preset: none)"
             return FieldSpec(f"phrase_{key}", label, render, text_field(f"phrase_{key}"), section="Phrases",
                              help=help + " {name} is the caller's name; write {{ or }} for a literal brace. "
-                             f"Up to {MAX_PHRASE} characters, each {{name}} counting as {NAME_ALLOWANCE}. "
+                             f"Up to {MAX_PHRASE_LENGTHS[key]} characters, each {{name}} counting as {NAME_ALLOWANCE}. "
                              "Blank uses the temperament's preset.")
 
         def switch(key, label, help, section):

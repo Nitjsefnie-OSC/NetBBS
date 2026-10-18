@@ -69,7 +69,7 @@ class Baud:
         if isinstance(custom, str) and custom.strip():
             try:
                 return custom.format(name=name)
-            except (ValueError, KeyError, IndexError, AttributeError):
+            except Exception:  # noqa: BLE001 - any formatting failure means the preset
                 pass
         return preset(key, self.temperament).format(name=name)
 

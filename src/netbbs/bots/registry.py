@@ -26,7 +26,10 @@ MAX_BODY = 500
 TEMPERAMENTS = ("friendly", "terse", "retro")
 # Issue #1381: a phrase override is checked as the longest local caller name
 # would expand it, so "<name>: <phrase>" still fits one 500-character line.
+# The help opening shares its line with Baud's fixed command list (up to 226
+# characters with every grant), so it gets less room than a standalone phrase.
 MAX_PHRASE = 400
+MAX_PHRASE_LENGTHS = {"greeting": MAX_PHRASE, "help": 200, "busy": MAX_PHRASE, "limit": MAX_PHRASE}
 NAME_ALLOWANCE = 32
 PHRASE_LABELS = {"greeting": "greeting", "help": "help opening", "busy": "busy message",
                  "limit": "reminder-limit message"}
@@ -146,8 +149,9 @@ def validate_phrases(phrases: dict[str, str] | None) -> dict[str, str]:
             if field != "name" or spec or conversion:
                 shown = "{" + sanitize_text(field) + "}"
                 raise BotError(f"The {label} uses {shown}; the only placeholder is {{name}}, the caller's name.")
-        if len(text.format(name="x" * NAME_ALLOWANCE)) > MAX_PHRASE:
-            raise BotError(f"Keep the {label} to {MAX_PHRASE} characters, counting each {{name}} as "
+        limit = MAX_PHRASE_LENGTHS[key]
+        if len(text.format(name="x" * NAME_ALLOWANCE)) > limit:
+            raise BotError(f"Keep the {label} to {limit} characters, counting each {{name}} as "
                            f"{NAME_ALLOWANCE}, so the caller's name and the phrase fit one {MAX_BODY}-character line.")
         result[key] = text
     return result

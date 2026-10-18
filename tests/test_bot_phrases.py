@@ -90,9 +90,31 @@ def test_save_refuses_a_phrase_baud_could_not_say(db, sysop, channel, text, prob
     assert not db.connection.execute("SELECT 1 FROM chat_bots").fetchone()
 
 
+def test_the_longest_help_opening_never_cuts_the_command_list():
+    # Review of #1399: the opening shares its line with the fixed help text.
+    sent = []
+    longest = "x" * 168 + "{name}"  # 200 with a 32-character name
+    assert validate_phrases({"help": longest}) == {"help": longest}
+    with pytest.raises(BotError, match="200 characters"):
+        validate_phrases({"help": longest + "x"})
+    baud = Baud({"queries": ["stats", "seen"], "model_conversation": True, "phrases": {"help": longest}}, sent.append)
+    baud.handle(message("help", name="n" * 32))
+    assert len(sent[-1]["text"]) <= 500
+    assert sent[-1]["text"].endswith("reset clears your temporary context here. Replies are public.")
+
+
+def test_baud_survives_a_phrase_that_raises_type_error():
+    sent = []
+    baud = Baud({"greetings": True, "phrases": {"greeting": "Hi {name[a]}"}}, sent.append)
+    baud.handle(join())
+    assert sent[-1]["text"] == "Welcome, alice!"
+
+
 def test_validation_keeps_overrides_only_and_allows_literal_braces():
     assert validate_phrases({"greeting": "  ", "help": " {{help}} for {name} ", "busy": "", "limit": "x" * 400}) == {
         "help": "{{help}} for {name}", "limit": "x" * 400}
+    with pytest.raises(BotError, match="placeholder"):
+        validate_phrases({"greeting": "Hi {name[a]}"})
     with pytest.raises(BotError, match="Unknown bot phrase"):
         validate_phrases({"farewell": "Bye"})
 

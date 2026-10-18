@@ -48,7 +48,8 @@ and `limit`; a key is present only when the SysOp wrote that phrase, so an
 absent key means "use your preset". The host checks each phrase on Save: plain
 text on one line, no placeholder but `{name}` (the caller's name; `{{` and `}}`
 are literal braces), and at most 400 characters with each `{name}` counted as
-32, so `<caller>: <phrase>` fits one 500-character line. Any bot may honour
+32, so `<caller>: <phrase>` fits one 500-character line; `help` is held to 200,
+since Baud's command list follows it on the same line. Any bot may honour
 them; Baud does (see below).
 
 The bot must answer within five seconds with exactly:

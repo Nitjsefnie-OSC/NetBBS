@@ -2378,8 +2378,8 @@ the instance's editor:
 
 > [!NOTE]
 > Save refuses any other placeholder, an unmatched brace, terminal controls,
-> or a phrase over 400 characters (each `{name}` counts as 32), and keeps your
-> draft. Clear a phrase to go back to the preset.
+> or a phrase over 400 characters (200 for the help opening, which Baud's
+> command list follows; each `{name}` counts as 32), and keeps your draft. Clear a phrase to go back to the preset.
 
 Everything else is a separate grant in the editor, off until you set it:
 
