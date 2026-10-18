@@ -31,7 +31,8 @@ from netbbs.auth.users import SYSOP_LEVEL, create_user, is_usable_sysop
 from netbbs.boards.boards import create_board
 from netbbs.chat.channels import create_channel
 from netbbs.communities import create_community, meets_write_gate
-from netbbs.config import set_mail_min_level, set_node_map_min_level
+from netbbs.config import set_mail_min_level, set_node_map_min_level, set_oneliner_min_level
+from netbbs.oneliners import may_write_oneliners
 from netbbs.doors.registry import create_door
 from netbbs.files.areas import create_file_area
 from netbbs.ftn.address import FtnAddress
@@ -85,6 +86,7 @@ def _node(db: Database):
     create_door(db, "blacksite", "blacksite.py", min_play_level=50, creator=sysop)
     set_node_map_min_level(db, 10)
     set_mail_min_level(db, 5)
+    set_oneliner_min_level(db, 10)
     set_configured_link_enabled(db, True)
     save_mrc_settings(db, MrcSettings(enabled=True, host="127.0.0.1", port=5000, tls=False, site_name="Board"))
     save_open_room_settings(db, OpenRoomSettings(enabled=True, min_level=99))
@@ -205,6 +207,8 @@ def _real_check(db: Database, user, gate: Gate) -> bool:
         return may_open_node_map(db, user)
     if kind is GateKind.MAIL:
         return mail_access_refusal(db, user) is None
+    if kind is GateKind.ONELINERS:
+        return may_write_oneliners(db, user)
     if kind is GateKind.MRC_OPEN_ROOM:
         return _open_room_gate_denial(db, user, load_open_room_settings(db)) is None
     if kind is GateKind.NETMAIL:
@@ -277,6 +281,8 @@ LEVEL_CHECK_SITES: dict[tuple[str, str], GateKind | str] = {
     ("netbbs/net/directory_flow.py", "playable_registrations"): GateKind.DOOR,
     ("netbbs/net/node_map_flow.py", "may_open_node_map"): GateKind.NODE_MAP,
     ("netbbs/mail.py", "mail_access_refusal"): GateKind.MAIL,
+    ("netbbs/oneliners.py", "may_write_oneliners"): GateKind.ONELINERS,
+    ("netbbs/oneliners.py", "oneliner_refusal"): GateKind.ONELINERS,
     ("netbbs/ftn/netmail.py", "netmail_refusal"): GateKind.NETMAIL,
     ("netbbs/auth/users.py", "set_user_level"): "who may raise whom (§5.6)",
     ("netbbs/chat/moderation.py", "_ensure_target_rank_allows_moderation"): "moderator rank, not access",
