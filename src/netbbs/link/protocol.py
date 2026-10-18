@@ -735,15 +735,22 @@ def _validate_node_presence_delta_payload(payload: dict, *, path: str) -> None:
 _CHANNEL_MESSAGE_FRAME_KEYS = frozenset({"channel_id", "user_id", "display_label", "body", "created_at"})
 # Issue #860, sent only to a peer advertising `CHANNEL_RELAY_CAPABILITY`.
 _CHANNEL_MESSAGE_FRAME_OPTIONAL_KEYS = frozenset({"author_node_fingerprint", "content_id"})
+# Issue #1380, sent only to a peer advertising `CHAT_ANNOUNCEMENTS_CAPABILITY`:
+# the line is a SysOp's scheduled announcement. Always `true` when present.
+_CHANNEL_MESSAGE_FRAME_FLAG_KEYS = frozenset({"announcement"})
 
 
 def _validate_channel_message_payload(payload: dict, *, path: str) -> None:
     keys = set(payload)
-    if not _CHANNEL_MESSAGE_FRAME_KEYS <= keys or keys - _CHANNEL_MESSAGE_FRAME_KEYS - _CHANNEL_MESSAGE_FRAME_OPTIONAL_KEYS:
+    optional = _CHANNEL_MESSAGE_FRAME_OPTIONAL_KEYS | _CHANNEL_MESSAGE_FRAME_FLAG_KEYS
+    if not _CHANNEL_MESSAGE_FRAME_KEYS <= keys or keys - _CHANNEL_MESSAGE_FRAME_KEYS - optional:
         raise LinkProtocolError(
             f"{path} must contain exactly channel_id, user_id, display_label, body, and created_at, "
-            "optionally with author_node_fingerprint and content_id"
+            "optionally with author_node_fingerprint, content_id and announcement"
         )
+    for key in _CHANNEL_MESSAGE_FRAME_FLAG_KEYS & keys:
+        if payload[key] is not True:
+            raise LinkProtocolError(f"{path}.{key} must be true when present")
     _validate_bounded_id(payload["channel_id"], path=f"{path}.channel_id")
     for key in _CHANNEL_MESSAGE_FRAME_OPTIONAL_KEYS & keys:
         _validate_bounded_id(payload[key], path=f"{path}.{key}")
@@ -764,8 +771,12 @@ def _validate_scrollback_entry(entry: object, *, path: str) -> None:
         "kind", "author_label", "author_node_fingerprint", "author_user_id",
         "content_id", "body", "body_truncated", "created_at",
     }
-    if not isinstance(entry, dict) or set(entry) != expected:
+    # Issue #1380: `announcement`, only to a peer advertising
+    # `CHAT_ANNOUNCEMENTS_CAPABILITY`, on an authored message entry.
+    if not isinstance(entry, dict) or not expected <= set(entry) or set(entry) - expected - {"announcement"}:
         raise LinkProtocolError(f"{path} has unexpected or missing fields")
+    if "announcement" in entry and (entry["announcement"] is not True or entry["kind"] != "message"):
+        raise LinkProtocolError(f"{path}.announcement must be true, on a message entry")
     if not isinstance(entry["kind"], str) or entry["kind"] not in _REALTIME_SCROLLBACK_ENTRY_KINDS:
         raise LinkProtocolError(f"{path}.kind is not a recognized scrollback event kind")
     # author_label is display-only. The separate node/user identity fields
@@ -1168,10 +1179,12 @@ def build_node_presence_delta_frame(
 def build_channel_message_frame(
     channel_id: str, user_id: str, display_label: str, body: str, created_at: str,
     *, message_id: str | None = None, content_id: str | None = None,
-    author_node_fingerprint: str | None = None,
+    author_node_fingerprint: str | None = None, announcement: bool = False,
 ) -> RealtimeFrame:
     """`content_id` and `author_node_fingerprint` (issue #860) only for a
-    peer advertising `CHANNEL_RELAY_CAPABILITY`; see its docstring."""
+    peer advertising `CHANNEL_RELAY_CAPABILITY`, `announcement` (issue
+    #1380) only for one advertising `CHAT_ANNOUNCEMENTS_CAPABILITY`; see
+    their docstrings."""
     payload = {
         "channel_id": channel_id, "user_id": user_id, "display_label": display_label,
         "body": body, "created_at": created_at,
@@ -1180,6 +1193,8 @@ def build_channel_message_frame(
         payload["content_id"] = content_id
     if author_node_fingerprint is not None:
         payload["author_node_fingerprint"] = author_node_fingerprint
+    if announcement:
+        payload["announcement"] = True
     frame = RealtimeFrame(
         type="channel_message",
         message_id=message_id or new_realtime_message_id(),
