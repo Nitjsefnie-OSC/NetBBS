@@ -135,10 +135,11 @@ def oneliner_refusal(db: Database, user: User, *, added_this_call: bool) -> str 
 def add_oneliner(db: Database, user: User, text: str, *, added_this_call: bool) -> Oneliner:
     """Add one line by `user`, newest first on the wall, and prune the
     wall to its newest `MAX_KEPT_ONELINERS`. Raises `OnelinerError` with
-    the reason when the line is refused."""
-    refusal = oneliner_refusal(db, user, added_this_call=added_this_call)
-    if refusal is not None:
-        raise OnelinerError(refusal)
+    the reason when the line is refused.
+
+    The quota check and the insert share one write transaction, so two
+    sessions on one account (every guest shares one) cannot both pass a
+    count of two."""
     line = normalize_oneliner(text)
     if not line:
         raise OnelinerError("A blank line leaves nothing on the wall.")
@@ -147,21 +148,30 @@ def add_oneliner(db: Database, user: User, text: str, *, added_this_call: bool) 
         raise OnelinerError(
             f"That line is {over} column{'s' if over != 1 else ''} too long ({MAX_ONELINER_COLUMNS} at most)."
         )
-    created_at = utc_now_iso()
-    cursor = db.connection.execute(
-        "INSERT INTO oneliners (author_user_id, author_label, text, created_at) VALUES (?, ?, ?, ?)",
-        (user.id, user.username, line, created_at),
-    )
-    db.connection.execute(
-        "DELETE FROM oneliners WHERE id NOT IN (SELECT id FROM oneliners ORDER BY id DESC LIMIT ?)",
-        (MAX_KEPT_ONELINERS,),
-    )
-    # The log only has to remember a day: older entries never count.
-    db.connection.execute(
-        "INSERT INTO oneliner_additions (user_id, created_at) VALUES (?, ?)", (user.id, created_at)
-    )
-    db.connection.execute("DELETE FROM oneliner_additions WHERE created_at <= ?", (_a_day_ago(),))
-    db.connection.commit()
+    db.connection.execute("BEGIN IMMEDIATE")
+    try:
+        refusal = oneliner_refusal(db, user, added_this_call=added_this_call)
+        if refusal is not None:
+            raise OnelinerError(refusal)
+        created_at = utc_now_iso()
+        cursor = db.connection.execute(
+            "INSERT INTO oneliners (author_user_id, author_label, text, created_at) VALUES (?, ?, ?, ?)",
+            (user.id, user.username, line, created_at),
+        )
+        db.connection.execute(
+            "DELETE FROM oneliners WHERE id NOT IN (SELECT id FROM oneliners ORDER BY id DESC LIMIT ?)",
+            (MAX_KEPT_ONELINERS,),
+        )
+        # The log only has to remember a day: older entries never count.
+        db.connection.execute(
+            "INSERT INTO oneliner_additions (user_id, created_at) VALUES (?, ?)", (user.id, created_at)
+        )
+        db.connection.execute("DELETE FROM oneliner_additions WHERE created_at <= ?", (_a_day_ago(),))
+    except BaseException:
+        db.connection.rollback()
+        raise
+    else:
+        db.connection.commit()
     return Oneliner(cursor.lastrowid, user.id, user.username, line, created_at)
 
 

@@ -564,3 +564,14 @@ def test_the_oneliner_level_is_a_limits_setting(db, lane):
     assert get_oneliner_min_level(db) == 30
     audit = [a for a in list_recent_actions(db, limit=10) if a.action == "set_limits_and_retention"]
     assert len(audit) == 1 and "oneliner_level=30" in audit[0].detail
+
+
+def test_a_moderator_is_not_offered_delete_on_an_empty_page(db, lane, alice):
+    sysop = create_user(db, "root", password="hunter2pw", user_level=SYSOP_LEVEL)
+    _say(db, alice, "hello")
+    session = FakeSession(keys=["/", "b"], lines=["nothing matches this"])
+
+    asyncio.run(oneliner_wall_screen(session, db, sysop, lane=lane))
+
+    last = _visible(session).split("No line matches")[-1]
+    assert "[D]elete" not in last

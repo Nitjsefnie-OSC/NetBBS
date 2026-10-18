@@ -260,7 +260,7 @@ async def oneliner_wall_screen(
             rendered = _line_rows(page, db, width=width, accent_color=accent_color)
             await session.write_line("\r\n".join(row for rows in rendered for row in rows))
         has_prev, has_next = page_index > 0, page_index < len(pages) - 1
-        offers_delete = moderator or any(line.author_user_id == user.id for line in page)
+        offers_delete = bool(page) and (moderator or any(line.author_user_id == user.id for line in page))
         await session.write_line(
             "\r\n" + _bar(offers_delete=offers_delete, has_prev=has_prev, has_next=has_next)
         )
