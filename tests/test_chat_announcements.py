@@ -463,3 +463,28 @@ def test_the_live_line_and_snapshot_carry_the_marker_only_to_peers_that_take_it(
     assert "announcement" not in older.frames[0].payload
     assert newer.frames[1].payload["entries"][-1].get("announcement") is True
     assert "announcement" not in older.frames[1].payload["entries"][-1]
+
+
+@pytest.mark.parametrize("user,expected", [("inkwell", True), ("Baud.bot", False)])
+def test_a_live_or_snapshot_marker_from_a_bot_is_refused_as_the_signed_one_is(db, sysop, channel, identity, tmp_path,
+                                                                               monkeypatch, user, expected):
+    from netbbs.link.realtime_channels import _accept_scrollback_snapshot
+
+    remote = bootstrap_node_identity(tmp_path / "remote")
+    link_channel(db, channel, node_identity=identity)
+    db.connection.execute("UPDATE channels SET link_origin_fingerprint = ? WHERE id = ?",
+                          (remote.fingerprint, channel.id))
+    db.connection.commit()
+    entry = {
+        "kind": "message", "author_label": f"{user}@x", "author_node_fingerprint": remote.fingerprint,
+        "author_user_id": user, "content_id": None, "body": "Announcement: x", "body_truncated": False,
+        "created_at": "2026-10-18T17:00:00Z", "announcement": True,
+    }
+    # The peer's subscribe authorization is not what this is about.
+    monkeypatch.setattr("netbbs.link.realtime_channels._decide_channel_subscribe_authorization",
+                        lambda db, **kwargs: channel)
+    _, messages = _accept_scrollback_snapshot(db, channel_id=channel.channel_id,
+                                              peer_fingerprint=remote.fingerprint, entries=[entry])
+    assert [m.announcement for m in messages] == [expected]
+    from netbbs.link.channels import announcement_claimed
+    assert announcement_claimed(True, user) is expected

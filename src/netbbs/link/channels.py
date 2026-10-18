@@ -338,6 +338,16 @@ def _channel_message_from_row(row) -> LocalChannelMessage:
     )
 
 
+def announcement_claimed(flag: object, local_user_id: str) -> bool:
+    """Whether a received line is a SysOp's announcement (issue #1380): the
+    marker is `true` and the author is not a bot. One rule for the signed
+    event, the live frame and the snapshot entry; anything else is shown as
+    the plain line it also is."""
+    from netbbs.auth.users import BOT_LABEL_SUFFIX
+
+    return flag is True and not local_user_id.lower().endswith(BOT_LABEL_SUFFIX)
+
+
 def materialize_carried_channel_message(
     db: Database, message: ChannelMessage, *, sender_fingerprint: str
 ) -> LocalChannelMessage | None:
@@ -434,7 +444,7 @@ def materialize_carried_channel_message(
         (channel_local_id, author_label, payload["body"], payload["created_at"], message.content_id, author_kind,
          # Issue #1380: the optional marker; anything but `true` (or a bot
          # claiming it) is shown as the plain line it also is.
-         1 if payload.get("announcement") is True and author_kind == "user" else None),
+         1 if announcement_claimed(payload.get("announcement"), author["local_user_id"]) else None),
     )
     limit = get_scrollback_limit(db)
     db.connection.execute(

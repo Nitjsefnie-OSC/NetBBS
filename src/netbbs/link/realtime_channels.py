@@ -37,7 +37,9 @@ from netbbs.chat.hub import ChatHub
 from netbbs.chat.presence import PresenceRegistry
 from netbbs.chat.scrollback import ChannelMessage as LocalChannelMessage
 from netbbs.chat.scrollback import get_scrollback
-from netbbs.link.channels import channel_origin_fingerprint, get_channel_by_channel_id, is_channel_linked
+from netbbs.link.channels import (
+    announcement_claimed, channel_origin_fingerprint, get_channel_by_channel_id, is_channel_linked,
+)
 from netbbs.link.enforcement import (
     LinkPolicyAction,
     content_visible_for_subject,
@@ -213,7 +215,7 @@ def _accept_scrollback_snapshot(
             author_fingerprint=(entry["author_node_fingerprint"] if authored else None),
             body=entry["body"], created_at=entry["created_at"],
             link_content_id=entry["content_id"], body_truncated=entry["body_truncated"],
-            announcement=entry.get("announcement") is True and authored,
+            announcement=authored and announcement_claimed(entry.get("announcement"), entry["author_user_id"]),
         ))
     return channel, messages
 
@@ -728,7 +730,7 @@ class LiveChannelBridge:
             # render the friendly label by default.
             author_fingerprint=author_node,
             body=payload["body"], created_at=payload["created_at"],
-            announcement=payload.get("announcement") is True,
+            announcement=announcement_claimed(payload.get("announcement"), payload["user_id"]),
         )
         await self._hub.broadcast(channel.name, message)
         if origin == own:
