@@ -1198,6 +1198,16 @@ idempotent design already covers.
   private request, private answer to a node without `chat_bot_private_v1`)
   raises `runtime._TokenKept`, which keeps the request token live and does
   not tell the caller.
+- A bot's titled block (issue #1373) is one `channel_messages` row whose
+  `body` is the host-built fallback line and whose `block_json` is the block.
+  `_render_channel_message` (and `_render_bot_private_answer`) return a
+  `_BlockLines` for it: a `str` whose value is the fallback line, with the
+  block's screen lines in `.lines`. A writer that knows only lines still shows
+  the whole fallback; one that draws blocks iterates `_rendered_lines`. The
+  block is width-dependent, so callers pass `width`. Every node, old or new,
+  keys live dedup on the fallback body, so a block and its plain copy are one
+  line. A received block is kept only for a `.bot` author, and on the live
+  frames only from a peer advertising `chat_bot_blocks_v1`.
 
 `ChatHub` routes opaque objects and owns bounded per-participant queues. It
 does not render messages or decide moderation semantics.

@@ -4858,6 +4858,18 @@ MIGRATIONS = [
     ),
     Migration(
         description=(
+            "Issue #1373 (design doc §16, titled block replies for bots): `channel_messages.block_json`, "
+            "a bot's titled block as JSON (its title and up to 12 rows of an optional label and a "
+            "text). A block is one row: `body` holds the host-built fallback line, which search, older "
+            "nodes and the hourly limit use, and this column the block a newer renderer draws. NULL "
+            "for every other line, and for every existing row on upgrade."
+        ),
+        sql="""
+        ALTER TABLE channel_messages ADD COLUMN block_json TEXT;
+        """,
+    ),
+    Migration(
+        description=(
             "Issue #1408 (design doc §16, issue #1378: door events as a bot announcement source): "
             "a door's game events and standings. `door_outbound.events_enabled` is the per-door "
             "SysOp switch, off by default, with its own hourly ceiling `events_per_hour`, debited "

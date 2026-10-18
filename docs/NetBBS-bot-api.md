@@ -40,13 +40,17 @@ Each line is one UTF-8 JSON object, at most 32 KiB including the newline.
 `BOT_API_VERSION = 1`. The host sends:
 
 ```json
-{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"door_sources":[],"announce_doors":false,"model_conversation":false,"timezone":"Europe/Berlin"}
+{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"door_sources":[],"announce_doors":false,"model_conversation":false,"timezone":"Europe/Berlin","blocks":true}
 ```
 
 `timezone` is the IANA name of the node's display clock (§6.3: one clock for
 the node, no per-caller zone), for a bot that reads or shows wall-clock times.
 When the SysOp changes the display zone, running instances restart, as they do
 when the model-service switch changes.
+
+`blocks` is true when the host takes a reply's titled block (see
+[Titled blocks](#titled-blocks)); an older host sends no `blocks` and refuses
+a reply that carries one.
 
 `temperament` is `friendly`, `terse` or `retro`. `phrases` holds the SysOp's
 overrides of the temperament's fixed phrases, keyed `greeting`, `help`, `busy`
@@ -55,7 +59,7 @@ absent key means "use your preset". The host checks each phrase on Save: plain
 text on one line, no placeholder but `{name}` (the caller's name; `{{` and `}}`
 are literal braces), and at most 400 characters with each `{name}` counted as
 32, so `<caller>: <phrase>` fits one 500-character line; `help` is held to 200,
-since Baud's command list follows it on the same line. Any bot may honour
+a block row's length, since it opens Baud's command list. Any bot may honour
 them; Baud does (see below).
 
 The bot must answer within five seconds with exactly:
@@ -308,6 +312,54 @@ against that limit before it is dispatched; a public one is checked against
 the channel's limit, since its answer may be public, and a private answer to
 it debits the caller's limit instead. A spent limit is told to the caller.
 
+### Titled blocks
+
+```json
+{"id":"9","action":"reply","request":"opaque-token","block":{"title":"Node stats","rows":[{"label":"Online","text":"4 people"},{"label":"Uptime","text":"3h 12m"}]}}
+{"type":"result","id":"9","ok":true,"value":{"message_id":42}}
+```
+
+A `reply` may carry a `block` instead of `text`: an answer longer than a line,
+drawn the way `/who` draws its rows. A block has a `title` of 1-40 characters
+and 1-12 `rows`; each row has a `text` of 1-200 characters and an optional
+`label` of up to 24, which is set in the label colour with the labels aligned,
+the text wrapping under itself. Everything is plain text on one line, without
+tabs or terminal controls; the bot sends no colour. A reply carries `text` or
+a `block`, never both, and `say` and `announce` take no block: reminders and
+announcements stay one line. A refused block is explained to the caller, as
+any refused reply is.
+
+Callers see the host's label in front of the bot's title, with the time at
+the right when they keep chat timestamps:
+
+```
+── [BOT] Baud.bot · Node stats ─────────────── 20:14 ──
+ Online  4 people
+ Uptime  3h 12m
+```
+
+The bot supplies only its own title, so a block can never claim another
+author. A narrow terminal shortens the bot's title before the label, wraps
+the last column under itself and cuts no row; a block taller than the chat
+area is paged (`page 1 of 2 · PgDn more · PgUp back · Esc done`). Join replay
+draws stored blocks whole, unpaged.
+
+The host builds a plain fallback line from every block, `Title: label text;
+label text`, cut to 500 characters: `Node stats: Online 4 people; Uptime 3h
+12m`. That line is the message's body. Search matches it, older nodes show it,
+and it is what the hourly limit counts: a block is one line, however many rows
+it has. The bot never supplies a fallback of its own. A block is one chat
+message, so mutes, `/bots local|none` and remote mutes hide it like any bot
+line.
+
+A block may also be a private answer, with `"private": true` or to a
+privately asked request; it debits one private answer and its title ends
+`to you`:
+
+```
+── [BOT] Baud.bot · Your reminders ──── to you · 20:14 ──
+```
+
 Running bots have separate channel presence, including bots on subscriber
 nodes. They never enter human or node-wide online counts. `/mute Baud.bot`
 controls a local instance; `/mute Baud.bot@node-fingerprint` filters that
@@ -356,6 +408,20 @@ gives no private answer to a caller whose node lacks it, and its bots see
 as a direct message or a channel event. The caller's node checks the remote
 bot against its local mute and `/bots local|none` again on receipt, and drops
 a hidden answer.
+
+A titled block in a Linked channel is an optional `block` field in the signed
+`channel_message` event, beside the fallback `body` the host built from it; a
+node that predates blocks keeps the field and shows `body`. A receiving node
+refuses an event whose block takes more than 12 KiB as JSON, and shows a
+malformed block, or one on a line that is not a bot's, as its fallback line.
+The optional capability `chat_bot_blocks_v1` carries the block live: as an
+optional `block` key on the live `channel_message` frame, on a
+`scrollback_snapshot` entry, and on a `bot_result`'s private answer
+(`"private": {"text": "...", "block": {...}}`, its text the fallback line).
+These frames are key-strict, so the key goes only to a peer advertising the
+capability, and every other peer gets the fallback line alone. The public
+reply to a remote request that goes directly to the caller's node carries the
+same block, so live deduplication still sees one line.
 
 ```json
 {"type":"result","id":"1","ok":true,"value":{"message_id":42}}
@@ -433,6 +499,9 @@ from one to 60 seconds. Kill controls disable the instance persistently.
 Commands: `help`, `remind <when> <text>`, `reminders`, `cancel <id>`,
 `tell <name> <text>`, `tells` and `cancel tell <id>`; `help remind` and
 `help tell` explain the two.
+On a host that takes blocks, `help` answers with a titled block, `Commands`,
+one row per command and the help opening (below) as its first row; an older
+host gets the same list as one line.
 `sysop` only points to the host's `/sysop <reason>` command: by the time Baud
 sees a `!` line it has already gone to the channel, so Baud cannot page anyone
 and says so. `help` mentions `/sysop` too. No bot can page the SysOp: a page
@@ -495,7 +564,7 @@ the hello's `phrases`):
 | Key | Used for | Friendly preset |
 | --- | --- | --- |
 | `greeting` | A live join, with greetings on | `Welcome, {name}!` |
-| `help` | The opening of the `help` reply | `Happy to help!` |
+| `help` | The opening of the `help` reply, its block's first row | `Happy to help!` |
 | `busy` | The reply while a full queue waits on a reminder save | `Busy saving reminders; try again shortly.` |
 | `limit` | The reply at the reminder limit, held reminders included | `Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first.` |
 
@@ -553,8 +622,8 @@ What it does for you:
   `bot.announce(event)`, `bot.say_for(channel, caller, text, held_text,
   expires)`, `bot.held_lines(then)`, `bot.cancel_held(held_id)`,
   `bot.load(then)` (`state.get`) and `bot.save(value)`, and on a message
-  `msg.reply(text)`, `msg.query(name, target)`, `msg.model()`,
-  `msg.model_reset()`, `msg.tell(to, text)`, `msg.tells()` and
+  `msg.reply(text)`, `msg.reply_block(title, rows)`, `msg.query(name, target)`,
+  `msg.model()`, `msg.model_reset()`, `msg.tell(to, text)`, `msg.tells()` and
   `msg.cancel_tell(tell_id)`. Each takes an optional `then`:
 
   ```python
@@ -565,6 +634,12 @@ What it does for you:
   or the reason the action was refused.
 - **Replies.** `msg.reply(text)` puts the caller's name in front and cuts the
   line to 500 characters, as Baud does. `say` is cut the same way.
+- **Blocks.** `msg.reply_block(title, rows)` answers with a titled block; a
+  row is a `(label, text)` pair, or a plain text for a row without a label.
+  It cuts the title, the rows, each label and each text to the block's bounds,
+  and puts no caller name in front: the host titles the block with the bot's
+  name. `private=True` sends it as a private answer. `bot.blocks` says whether
+  the host takes blocks; answer with `msg.reply` when it does not.
 - **State.** `bot.state` starts as the hello's `state` and becomes a saved
   value once the host has stored it; a refused save leaves it unchanged.
   `bot.change(step)` runs `step()` once every save already sent has its
