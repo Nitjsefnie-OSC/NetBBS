@@ -5109,6 +5109,105 @@ async def _handle_members(ctx: ChatCommandContext, args: str) -> None:
                        prose=[(names, None)], count=len(members))
 
 
+def _names_sentence(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _page_told_sentence(heard: dict[str, str]) -> str:
+    """How each online recipient heard of a page, never more than happened
+    (§5.6 Decision 5): told now in chat or the Monitor, on their next
+    screen elsewhere, or once they leave a door (#823)."""
+    from netbbs.net.page_delivery import IN_DOOR, NEXT_SCREEN, NOW
+
+    parts = []
+    for how, one, many in (
+        (NOW, "is online and was told just now", "are online and were told just now"),
+        (NEXT_SCREEN, "is online and sees it on their next screen", "are online and see it on their next screen"),
+        (IN_DOOR, "is in a door and sees it on leaving", "are in doors and see it on leaving"),
+    ):
+        names = sorted(name for name, state in heard.items() if state == how)
+        if names:
+            parts.append(f"{_names_sentence(names)} {one if len(names) == 1 else many}")
+    return "; ".join(parts)
+
+
+async def _handle_sysop(ctx: ChatCommandContext, args: str) -> None:
+    """`/sysop <reason>` (design doc §5.6 "Pages", decision 1377): page this
+    node's SysOps and staff. The reason goes into the shared Pages queue and
+    to whoever is online, and nowhere else: not to this channel, its
+    scrollback, Link or MRC. The answer is a private titled block."""
+    import uuid
+
+    from netbbs.guest import is_guest_account
+    from netbbs.net.page_delivery import Recipient, deliver_page, online
+    from netbbs.net.session_activity import describe
+    from netbbs.staff_pages import PageRefused, create_page, first_back, list_recipients
+
+    reason = args.strip()
+    if not reason:
+        await _show_usage(ctx.session, "sysop")
+        return
+    theme = await _reply_theme(ctx)
+    place = describe(tuple(getattr(ctx.session, "activity", ())), authenticated=True)
+
+    def _recipients(db: Database) -> tuple[list[Recipient], bool]:
+        people = [
+            Recipient(user.username, "SysOp" if user.user_level >= SYSOP_LEVEL else "Staff",
+                      unicode_style_enabled(db, user))
+            for user in list_recipients(db)
+        ]
+        return people, is_guest_account(db, ctx.user)
+
+    recipients, guest = await ctx.lane.run(_recipients)
+    live = online(ctx.session_registry, recipients)
+    token = None
+    if guest:
+        # The guest account is shared: a guest's limits hold per session.
+        token = getattr(ctx.session, "page_token", None)
+        if token is None:
+            token = uuid.uuid4().hex
+            ctx.session.page_token = token
+    try:
+        result = await ctx.lane.run(
+            create_page, ctx.user, reason, place=place, channel=ctx.channel.name, guest_session=token,
+            recipient_online=bool(live),
+        )
+    except PageRefused as exc:
+        sentence = str(exc)
+        sentence = sentence[0].upper() + sentence[1:]
+        if not sentence.endswith("."):
+            sentence += "."
+        await _write_block(ctx, theme, "Page not sent", prose=[(sentence, None)])
+        return
+    heard = await deliver_page(
+        ctx.session_registry, recipients, caller=result.page.caller_label, place=place, reason=result.page.reason,
+    )
+    rows: list[tuple[Cell, Cell]] = []
+    if heard:
+        rows.append((("Told", LABEL_COLOR), (_page_told_sentence(heard), SUCCESS_COLOR)))
+    else:
+        rows.append((("Waiting", LABEL_COLOR), ("Nobody is online; it waits in Pages", WARNING_COLOR)))
+
+    def _away_line(db: Database) -> str | None:
+        # Everyone is away (§5.6): name whoever is expected back first.
+        away = first_back(db, list_recipients(db))
+        if away is None:
+            return None
+        user, notice = away
+        when = (f"back {notice.until.isoformat()}" if notice.until is not None
+                else "away since " + format_for_display(notice.since, db, override_format="%Y-%m-%d"))
+        return f"{sanitize_text(user.username)}, {when} -- {sanitize_text(notice.message)}"
+
+    away_line = await ctx.lane.run(_away_line)
+    if away_line is not None:
+        rows.append((("Away", LABEL_COLOR), (away_line, WARNING_COLOR)))
+    rows.append((("Reason", LABEL_COLOR), (sanitize_text(result.page.reason), None)))
+    prose = [("Only staff see your reason; nothing was said here.", MUTED_COLOR)]
+    if result.replaced:
+        prose.append(("This replaces the reason of the page you already had open.", MUTED_COLOR))
+    await _write_block(ctx, theme, "Paged the SysOp", rows=rows, prose=prose)
+
+
 # Design doc: the single source of truth for every command's
 # syntax and a one-line description -- `_show_usage` generates each
 # handler's own "Usage: ..." error message from this same table
@@ -5163,6 +5262,10 @@ _COMMAND_INFO: dict[str, tuple[str, str]] = {
     "grantaccess": ("/grantaccess <user>", "Directly grant a user access to this chat channel."),
     "revokeaccess": ("/revokeaccess <user>", "Revoke a user's access to this chat channel."),
     "members": ("/members", "List users with direct access to this chat channel."),
+    "sysop": (
+        "/sysop <reason>",
+        "Page the SysOp and staff. Only they see your reason; nothing is said in the channel.",
+    ),
     "mrc": (
         "/mrc [rooms|who|bbses [search]|info <bbs>|motd|stats|help [topic]|lastseen <nick>|topics|msg <nick> <text>|r <text>|register|identify|roompass|update password|send <command>|ctcp <nick> <VERSION|TIME|PING|CLIENTINFO>]",
         "Show this channel's MRC bridge, ask the MRC hub something (its reply is shown to you alone), or message an MRC user privately if you opted in.",
@@ -5212,6 +5315,7 @@ _COMMANDS: dict[str, CommandHandler] = {
     "grantaccess": _handle_grantaccess,
     "revokeaccess": _handle_revokeaccess,
     "members": _handle_members,
+    "sysop": _handle_sysop,
 }
 
 
@@ -5264,7 +5368,16 @@ def _channel_is_mrc_bridged(db: Database, channel: Channel, user: User) -> bool:
     return get_mrc_mapping(db, channel) is not None
 
 
+def _may_page(db: Database, channel: Channel, user: User) -> bool:
+    """`/sysop` is not suggested to the people a page reaches (decision
+    1377): paging yourself has no use, and the command refuses it."""
+    from netbbs.staff_pages import is_page_recipient
+
+    return not is_page_recipient(user)
+
+
 _COMMAND_VISIBILITY: dict[str, Callable[[Database, Channel, User], bool]] = {
+    "sysop": _may_page,
     "mrc": _channel_is_mrc_bridged,
     "rooms": _channel_is_mrc_bridged,
     "mute": _requires_moderate,

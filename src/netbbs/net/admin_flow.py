@@ -184,6 +184,8 @@ from netbbs.net.admin_files import _area_menu
 from netbbs.net.admin_chat import _channel_menu
 from netbbs.net.admin_doors import _door_menu
 from netbbs.net.admin_users import _pick_and_edit_user, _users_menu
+from netbbs.net.admin_pages import pages_screen
+from netbbs.staff_pages import count_open_pages
 from netbbs.auth.renames import count_open_username_requests
 
 # Design doc -- node management, Thiesi's own request: an operator
@@ -434,6 +436,12 @@ async def admin_menu(
             dashboard_state = await _draw_admin_menu(
                 session, lane, user, node_controls=node_controls, link_context=link_context
             )
+        elif choice == "p":
+            await session.write_line("")
+            await pages_screen(session, lane, user, node_controls)
+            dashboard_state = await _draw_admin_menu(
+                session, lane, user, node_controls=node_controls, link_context=link_context
+            )
         elif choice == HELP_KEY:
             console, quick = _admin_menu_entries(node_controls, link_context)
             await show_menu_help(
@@ -496,6 +504,9 @@ async def staff_menu(
         elif choice == "t":
             await session.write_line("")
             await _away_screen(session, lane, user)
+        elif choice == "p":
+            await session.write_line("")
+            await pages_screen(session, lane, user, node_controls)
         elif choice == "m" and await lane.run(has_moderation_scope, user):
             await session.write_line("")
             await _pending_review_screen(
@@ -524,6 +535,7 @@ async def _draw_staff_menu(session: Session, lane: DatabaseLane, user: User) -> 
             "pending_accounts": count_pending_accounts(db),
             "moderates": has_moderation_scope(db, user),
             "held": count_moderation_items(db, user),
+            "open_pages": count_open_pages(db),
             "description_level": menu_description_level(db, user),
             "redraw_in_place": redraw_in_place_enabled(db, user),
             "unicode_style": unicode_style_enabled(db, user),
@@ -554,6 +566,8 @@ async def _draw_staff_menu(session: Session, lane: DatabaseLane, user: User) -> 
     if state["moderates"]:
         held = state["held"]
         counts.append(Field("Held for moderation", str(held), color=WARNING_COLOR if held else MUTED_COLOR))
+    pages = state["open_pages"]
+    counts.append(Field("Pages waiting", str(pages), color=WARNING_COLOR if pages else MUTED_COLOR))
     panel_rows = await _write_sections(session, [Section(None, counts)], unicode_style=unicode_style) if counts else 0
     for line in _away_panel_lines(state, width=min(session.terminal_width, 78) - 4, unicode_style=unicode_style):
         await session.write_line(line)
@@ -574,6 +588,7 @@ def _staff_menu_entries(user: User, *, moderates: bool) -> list[MenuEntry]:
         options.append(MenuEntry(label=menu_key("U", "sers"), brief="Levels, disabling, passwords"))
     if moderates:
         options.append(MenuEntry(label=menu_key("M", "oderation"), brief="Held posts and uploads"))
+    options.append(MenuEntry(label=menu_key("P", "ages"), brief="Callers asking for the SysOp"))
     options.append(MenuEntry(label=menu_key("T", "ime away"), brief="Tell members you're away"))
     options.append(MenuEntry(label=menu_key("R", "efresh"), brief="Redraw with current numbers"))
     options.append(MenuEntry(label=menu_key("B", "ack"), brief="Return to the main menu"))
@@ -816,6 +831,7 @@ async def _draw_admin_menu(
             "pending_posts": pending_posts,
             "pending_files": pending_files,
             "name_requests": count_open_username_requests(db),
+            "open_pages": count_open_pages(db),
             # Dogfood follow-up: the dashboard previously showed only
             # *pending* counts (always 0 on a quiet node) with no sense
             # of overall node scale at all -- a SysOp glancing at the
@@ -937,6 +953,8 @@ async def _draw_admin_menu(
             width=box_inner_width,
         )
     )
+    # Decision 1377: callers' /sysop pages, worked under [P]ages.
+    health.append("  " + counts_row([("Pages", state.get("open_pages", 0))]) + " open")
     backup_at, _backup_path = state["backup"]
     update_at, update_outcome = state["update"]
     # A real update-check outcome can be an arbitrary-length message (an
@@ -1058,6 +1076,7 @@ def _admin_menu_entries(
         MenuEntry(label=menu_key("F", "ull backups"), brief="Create and review complete backups"),
         MenuEntry(label=menu_key("D", "NS"), brief="Managed netbbs.org name status"),
         MenuEntry(label=menu_key("T", "ime away"), brief="Tell members you're away"),
+        MenuEntry(label=menu_key("P", "ages"), brief="Callers asking for the SysOp"),
     ]
     if node_controls is not None:
         quick.insert(
@@ -1125,7 +1144,7 @@ def _compact_dashboard_panel(
     panel.extend(_wrap_counts_panel(
         _label("ATTENTION") + counts_row([("Moderation", pending_total)]) + " pending  ",
         [("Users", state["pending_users"]), ("Posts", state["pending_posts"]), ("Files", state["pending_files"]),
-         *_carry_attention_pairs(state)],
+         *_carry_attention_pairs(state), ("Pages", state.get("open_pages", 0))],
         width=width,
     ))
     backup_at, _backup_path = state["backup"]

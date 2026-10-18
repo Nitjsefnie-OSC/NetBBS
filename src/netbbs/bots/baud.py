@@ -142,7 +142,8 @@ class Baud:
             self.reply(event, (opening + " " if opening else "") + "help; remind <1s-30d> <text>; reminders; cancel <id>. "
                        + ("stats; " if "stats" in self.queries else "")
                        + ("seen <local-account>; " if "seen" in self.queries else "") +
-                       "Reminders appear publicly here, including after restart. " +
+                       "Reminders appear publicly here, including after restart. "
+                       "/sysop <reason>: page staff. " +
                        ("Conversation is enabled; reset clears your temporary context here. Replies are public." if self.model_conversation
                         else "No language model is enabled."))
         elif command in {"stats", "seen"}:
@@ -176,6 +177,11 @@ class Baud:
                             "channel": event["channel"], "due": time.time() + seconds, "text": text.strip()}
                 self.store({"next": ordinal + 1, "reminders": [*self.state["reminders"], reminder]},
                            event, f"Saved reminder #{ordinal}; it will appear publicly here.")
+        elif command == "sysop":
+            # Paging is the host's /sysop (decision 1377): a ! line has
+            # already gone out publicly, so this only points the way.
+            self.reply(event, "I can't page anyone, and this line was public. "
+                       "Type /sysop <reason>: only the SysOp and staff see it.")
         elif command == "reset" and self.model_conversation:
             self.action("model.reset", request=event["request"])
         elif self.model_conversation:
