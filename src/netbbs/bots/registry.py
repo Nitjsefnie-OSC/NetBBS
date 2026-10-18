@@ -486,14 +486,33 @@ def observation_targets(db: Database, channel_name: str, kind: str) -> list[int]
     return result
 
 
-def publish(db: Database, bot_id: int, channel_name: str, body: str, *, node_identity=None, source_reference=None):
+def _check_body(body) -> None:
     if not isinstance(body, str) or not body.strip() or len(body) > MAX_BODY:
         raise BotError("A bot line must contain 1-500 characters.")
     if any(c in body for c in "\r\n\t") or sanitize_text(body) != body:
         raise BotError("Bot lines must be plain text without terminal controls.")
+
+
+def publish(db: Database, bot_id: int, channel_name: str, body: str | None, *, node_identity=None,
+            source_reference=None, held_id: int | None = None):
+    """Publish one bot line. With `held_id` the body is that host-held line's
+    (issue #1375), claimed in this transaction so two joins cannot both
+    deliver it. `None` is returned when it is dropped instead (expired, or a
+    tell whose recipient now refuses its sender); a refusal raised here
+    leaves it held."""
+    if held_id is None:
+        _check_body(body)
     db.connection.execute("BEGIN IMMEDIATE")
     try:
         bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True)
+        if held_id is not None:
+            from netbbs.bots.held import Dropped, claim
+            try:
+                body = claim(db, held_id, bot, channel)
+            except Dropped:
+                db.connection.commit()
+                return None
+            _check_body(body)
         if source_reference is not None:
             from netbbs.bots.sources import source_event
             event = source_event(db, bot_id, source_reference)

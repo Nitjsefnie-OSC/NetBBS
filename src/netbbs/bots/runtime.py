@@ -25,7 +25,18 @@ from netbbs.rendering import sanitize_text
 MAX_LINE_BYTES = 32768
 MAX_PENDING = 32
 REQUEST_SECONDS = 60
+# Joins waiting for held-line delivery (issue #1375). A join is queued with
+# put_nowait from the chat paths, so a slow database never holds a caller's
+# input; a full queue drops the join and its lines wait for the next one.
+MAX_JOINS = 256
+PRUNE_SECONDS = 60
 _logger = logging.getLogger(__name__)
+HELD_ACTIONS = frozenset({"say.for", "held.list", "held.cancel", "tell", "tell.list", "tell.cancel"})
+
+
+def _display_timezone(db) -> str:
+    from netbbs.timeutil import get_node_timezone
+    return get_node_timezone(db).key
 
 
 class BotRuntime:
@@ -38,6 +49,8 @@ class BotRuntime:
         self.task: asyncio.Task | None = None
         self.link = None
         self.disclosures = {}
+        self.joins: asyncio.Queue = asyncio.Queue(maxsize=MAX_JOINS)
+        self.delivery_task: asyncio.Task | None = None
         from netbbs.bots.model import ModelService
         self.model = ModelService(lane)
 
@@ -50,6 +63,7 @@ class BotRuntime:
             self.started_at = time.monotonic()
             self.hub.bot_runtime = self
             self.task = asyncio.create_task(self._run(), name="bot-manager")
+            self.delivery_task = asyncio.create_task(self._deliveries(), name="bot-held-delivery")
             if self.link is not None:
                 self.link.start()
 
@@ -62,6 +76,9 @@ class BotRuntime:
                     await self.model.upkeep()
                     desired = {b.id: b for b in await self.lane.run(list_bots) if b.enabled}
                     model_enabled = (await self.lane.run(model_settings)).enabled
+                    # Issue #1375: Baud reads absolute reminder times in the
+                    # node display clock, which reaches it only in the hello.
+                    timezone = await self.lane.run(_display_timezone)
                     disclosures = {}
                     for bot in desired.values():
                         for name in bot.reading_channels:
@@ -74,12 +91,14 @@ class BotRuntime:
                     self.disclosures = disclosures
                     for bot_id, worker in list(self.workers.items()):
                         if (desired.get(bot_id) != worker.bot or worker.task.done() or
-                                worker.model_enabled != (worker.bot.model_conversation and model_enabled)):
+                                worker.model_enabled != (worker.bot.model_conversation and model_enabled) or
+                                worker.timezone != timezone):
                             await worker.stop()
                             del self.workers[bot_id]
                     for bot_id, bot in desired.items():
                         if bot_id not in self.workers:
-                            worker = _Worker(self, bot, model_enabled=bot.model_conversation and model_enabled)
+                            worker = _Worker(self, bot, model_enabled=bot.model_conversation and model_enabled,
+                                             timezone=timezone)
                             self.workers[bot_id] = worker
                             worker.task = asyncio.create_task(worker.run(), name=f"bot-{bot.name}")
                 except Exception:
@@ -94,6 +113,10 @@ class BotRuntime:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
             self.task = None
+        if self.delivery_task is not None:
+            self.delivery_task.cancel()
+            await asyncio.gather(self.delivery_task, return_exceptions=True)
+            self.delivery_task = None
         if self.link is not None:
             await self.link.close()
         if self.hub.bot_runtime is self:
@@ -133,6 +156,76 @@ class BotRuntime:
         worker.events.put_nowait({"type": "message", "request": request, "channel": channel.name,
                                  "caller": caller, "text": text})
 
+    def joined(self, channel, caller) -> None:
+        """A caller joined `channel` live: deliver the lines held for them
+        (issues #1375, #1376). Called from the local and Linked join paths;
+        never blocks them."""
+        try:
+            self.joins.put_nowait((channel, caller))
+        except asyncio.QueueFull:
+            _logger.warning("Held bot lines: join queue full; lines wait for the caller's next join.")
+
+    async def present(self, channel, caller) -> bool:
+        """Whether `caller` (a bot caller id) is in `channel` now, on this node
+        or, for a Link caller, in the Linked channel's live roster."""
+        if isinstance(caller, int) and not isinstance(caller, bool):
+            from netbbs.auth.users import get_user_by_id
+            user = await self.lane.run(get_user_by_id, caller)
+            return user is not None and bool(self.hub.participants_for_username(channel.name, user.username))
+        if isinstance(caller, str) and caller.startswith("link:") and self.link is not None:
+            _prefix, node, user_id = caller.split(":", 2)
+            return any(n == node and u == user_id
+                       for n, u, _label in self.link.bridge.remote_channel_roster(channel.channel_id))
+        return False
+
+    async def publish_live(self, channel, message) -> None:
+        await self.hub.broadcast(channel.name, message)
+        if self.link is not None:
+            await self.link.bridge.broadcast_local_message_live(channel, message)
+
+    async def _deliveries(self) -> None:
+        from netbbs.bots.held import join_candidates, prune_expired
+        pruned = 0.0
+        while True:
+            try:
+                if time.monotonic() - pruned >= PRUNE_SECONDS:
+                    pruned = time.monotonic()
+                    for bot_id, held_id, kind in await self.lane.run(prune_expired):
+                        if kind == "line":
+                            self._tell_bot(bot_id, {"type": "held", "held_id": held_id, "outcome": "expired"})
+                try:
+                    channel, caller = await asyncio.wait_for(self.joins.get(), PRUNE_SECONDS)
+                except asyncio.TimeoutError:
+                    continue
+                for held_id, bot_id, kind in await self.lane.run(join_candidates, channel, caller):
+                    await self._deliver(channel, held_id, bot_id, kind)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _logger.exception("Could not deliver held bot lines; retrying")
+                await asyncio.sleep(self.poll_seconds)
+
+    async def _deliver(self, channel, held_id, bot_id, kind) -> None:
+        link = self.link
+        try:
+            published = await self.lane.run(publish, bot_id, channel.name, None, held_id=held_id,
+                                            node_identity=link.node.identity if link else None)
+        except BotError:
+            return  # Muted, over its hourly limit, or taken: held until expiry.
+        if published is None:
+            outcome = {"type": "held", "held_id": held_id, "outcome": "expired"}
+        else:
+            target, message = published
+            await self.publish_live(target, message)
+            outcome = {"type": "held", "held_id": held_id, "outcome": "delivered", "message_id": message.id}
+        if kind == "line":
+            self._tell_bot(bot_id, outcome)
+
+    def _tell_bot(self, bot_id, event) -> None:
+        worker = self.workers.get(bot_id)
+        if worker is not None and worker.ready and not worker.events.full():
+            worker.events.put_nowait(event)
+
     async def observe(self, channel, message, *, caller=None):
         """Only accepted live human paths call this; no tokens or replay dispatch."""
         from netbbs.bots.registry import observation_targets
@@ -162,9 +255,10 @@ class BotRuntime:
 
 
 class _Worker:
-    def __init__(self, owner: BotRuntime, bot: Bot, *, model_enabled: bool = False):
+    def __init__(self, owner: BotRuntime, bot: Bot, *, model_enabled: bool = False, timezone: str = "UTC"):
         self.owner, self.bot = owner, bot
         self.model_enabled = model_enabled
+        self.timezone = timezone
         self.events: asyncio.Queue = asyncio.Queue(maxsize=64)
         self.pending: dict[str, tuple] = {}
         self.announcements = {}
@@ -257,7 +351,7 @@ class _Worker:
                                "board_sources": self.bot.board_sources, "file_sources": self.bot.file_sources,
                                "announcement_channel": self.bot.announcement_channel,
                                "announce_posts": self.bot.announce_posts, "announce_files": self.bot.announce_files,
-                               "model_conversation": self.model_enabled})
+                               "model_conversation": self.model_enabled, "timezone": self.timezone})
             ready = await asyncio.wait_for(self._read(), 5)
             if ready != {"type": "ready", "version": BOT_API_VERSION}:
                 raise BotError("Bot did not acknowledge BOT_API_VERSION 1.")
@@ -413,7 +507,10 @@ class _Worker:
                 result["value"] = await self._action(value)
             except (BotError, OSError) as exc:
                 result.update(ok=False, error=str(exc)[:300])
-                await self.status("running", str(exc))
+                if value.get("action") != "tell":
+                    # A refused tell can name who blocks whom: the caller
+                    # alone is told, not the SysOp's status line.
+                    await self.status("running", str(exc))
                 request = value.get("request")
                 if isinstance(request, str) and value.get("action") != "query":
                     await self.notify(request, str(exc))
@@ -457,8 +554,11 @@ class _Worker:
                 caller=pending[4], online=self.owner.presence.online_usernames(),
                 uptime_seconds=int(time.monotonic() - self.owner.started_at),
             )
+        if action in HELD_ACTIONS:
+            return await self._held_action(action, value)
         if action not in {"say", "reply", "announce"}:
-            raise BotError("Unknown action or missing grant. Available: say, reply, announce, state.get, state.set, query.")
+            raise BotError("Unknown action or missing grant. Available: say, say.for, reply, announce, "
+                           "state.get, state.set, query, held.list, held.cancel, tell, tell.list, tell.cancel.")
         body = value.get("text")
         request = value.get("request")
         if action == "announce":
@@ -479,12 +579,55 @@ class _Worker:
         channel, message = await lane.run(publish, self.bot.id, channel_name, body,
                                           node_identity=link.node.identity if link else None,
                                           source_reference=reference[0] if action == "announce" else None)
-        await self.owner.hub.broadcast(channel.name, message)
-        if link is not None:
-            await link.bridge.broadcast_local_message_live(channel, message)
+        await self.owner.publish_live(channel, message)
         if action == "reply":
             await self.notify(request, "", message)
         return {"message_id": message.id}
+
+    def _live_request(self, value: dict, action: str) -> tuple:
+        request = value.get("request")
+        pending = self.pending.get(request) if isinstance(request, str) else None
+        if pending is None or pending[2] <= time.monotonic():
+            raise BotError(f"{action} needs this bot's live request token.")
+        return pending
+
+    async def _held_action(self, action: str, value: dict):
+        """Host-held lines (issues #1375, #1376). `say.for` names its caller;
+        the tell actions take the caller from the pending request only."""
+        from netbbs.bots import held
+        from netbbs.bots.registry import local_channel
+        lane = self.owner.lane
+        if action == "held.list":
+            return await lane.run(held.list_lines, self.bot.id)
+        if action == "held.cancel":
+            return await lane.run(held.cancel_line, self.bot.id, value.get("held_id"))
+        if action == "say.for":
+            channel_name, caller = value.get("channel"), value.get("caller")
+            if not isinstance(channel_name, str):
+                raise BotError("say.for needs an allowed channel name.")
+            held.caller_columns(caller)
+            channel = await lane.run(local_channel, channel_name,
+                                     allow_linked=channel_name in self.bot.linked_channels)
+            if await self.owner.present(channel, caller):
+                link = self.owner.link
+                target, message = await lane.run(publish, self.bot.id, channel_name, value.get("text"),
+                                                 node_identity=link.node.identity if link else None)
+                await self.owner.publish_live(target, message)
+                return {"delivered": True, "message_id": message.id}
+            text = value.get("held_text", value.get("text"))
+            result = await lane.run(held.hold_line, self.bot.id, channel_name, caller, text, value.get("expires"))
+            if await self.owner.present(channel, caller):
+                self.owner.joined(channel, caller)  # Arrived meanwhile: deliver now.
+            return result
+        pending = self._live_request(value, action)
+        channel_name, caller = pending[0], pending[4]
+        if action == "tell.list":
+            return await lane.run(held.list_tells, self.bot.id, channel_name, caller)
+        if action == "tell.cancel":
+            return await lane.run(held.cancel_tell, self.bot.id, channel_name, caller, value.get("tell_id"))
+        present = frozenset(pid.username for pid in self.owner.hub.participant_ids(channel_name))
+        return await lane.run(held.hold_tell, self.bot.id, channel_name, caller, value.get("to"),
+                              value.get("text"), present)
 
     async def _model_reply(self, request, pending, *, reset):
         try:

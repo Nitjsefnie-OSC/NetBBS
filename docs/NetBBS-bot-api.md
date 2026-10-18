@@ -39,8 +39,13 @@ Each line is one UTF-8 JSON object, at most 32 KiB including the newline.
 `BOT_API_VERSION = 1`. The host sends:
 
 ```json
-{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"model_conversation":false}
+{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"model_conversation":false,"timezone":"Europe/Berlin"}
 ```
+
+`timezone` is the IANA name of the node's display clock (§6.3: one clock for
+the node, no per-caller zone), for a bot that reads or shows wall-clock times.
+When the SysOp changes the display zone, running instances restart, as they do
+when the model-service switch changes.
 
 `temperament` is `friendly`, `terse` or `retro`. `phrases` holds the SysOp's
 overrides of the temperament's fixed phrases, keyed `greeting`, `help`, `busy`
@@ -163,6 +168,60 @@ events and live delivery; MRC never receives it. A remote request's public
 reply is also delivered directly to its requesting node, so it can arrive
 while the channel origin is offline. Normal live-message deduplication hides
 any second copy through the origin. Reminders use the ordinary channel route.
+
+### Lines held for a caller
+
+`say.for` says a line for one caller (issue #1375). If that caller is in the
+channel now, on this node or in a Linked channel's live roster, the host
+publishes `text` at once. Otherwise it holds `held_text` (default `text`) and
+publishes it in that channel, and only there, on the caller's next join of it:
+once per join of the account, not once per session, and whether the caller is
+away or not. `expires` is 60 seconds to 7 days.
+
+```json
+{"id":"9","action":"say.for","channel":"lobby","caller":7,"text":"alice: reminder #3: tea","held_text":"alice: reminder #3 (due 18:00, held until you came back): tea","expires":604800}
+{"type":"result","id":"9","ok":true,"value":{"held":true,"held_id":12,"expires_at":"2026-10-25T16:00:00.000000Z"}}
+{"type":"held","held_id":12,"outcome":"delivered","message_id":57}
+```
+
+A line published at once returns `{"delivered": true, "message_id": ...}`
+instead. A held line's outcome arrives later as a `held` event, `delivered` or
+`expired`, if the instance is running then; `held.list` returns the instance's
+waiting lines (`held_id`, `channel`, `caller`, `created_at`, `expires_at`),
+so a restarted bot can tell which were delivered meanwhile, and
+`held.cancel` with a `held_id` withdraws one. A held publication obeys the
+same grant, policy, mute and hourly-output checks as `say` when it is
+delivered; a refused one stays held until it expires, and an expired one is
+dropped without a line. An instance holds at most 48 lines, 8 per caller.
+The caller is any caller id the bot has seen; held lines live in the node
+database, not in the bot's state, and survive restarts.
+
+`tell` is the token-bound form (issue #1376): a note from the request's caller
+to a local account, delivered publicly in the request's channel on that
+account's next join of it:
+
+```json
+{"id":"10","action":"tell","request":"opaque-token","to":"Nib","text":"check the Retro board"}
+{"type":"result","id":"10","ok":true,"value":{"held":true,"tell_id":4,"name":"Nib","expires_at":"..."}}
+```
+
+The host takes the sender from its pending request, never from the action, and
+publishes the line itself: `Nib: Quill asked me to tell you (3h ago): check the
+Retro board`. A recipient already in the channel gets nothing stored and the
+value is `{"held": false, "present": true, "name": "Nib"}`. Recipients are
+local accounts only, keyed by account, so a rename before delivery changes
+nothing; `@` names are refused, and so is a recipient who could not enter the
+channel. The recipient's direct-message opt-out and §6.4 block list apply,
+for a local sender or a Link sender as `user@<fingerprint>`, when the tell is
+made ("Nib does not accept messages from you") and again at delivery, where a
+refused tell, or one from a Link node no longer allowed to author here, is
+dropped silently. The text is 1-160 characters. At most 3 tells wait per
+sender, 5 per recipient and 32 per instance, for at most 14 days, then are
+dropped silently. A refused `tell` is shown to its caller alone, privately,
+and consumes the token; it is not written to the SysOp's status line.
+`tell.list` returns the request caller's own waiting tells in that channel
+(`tell_id`, `to`, `text`, `created_at`), and `tell.cancel` with a `tell_id`
+withdraws one of them; neither consumes the token.
 
 `announce` consumes this instance's live source-event token. The host chooses
 the destination and public summary; action-supplied text or channel cannot

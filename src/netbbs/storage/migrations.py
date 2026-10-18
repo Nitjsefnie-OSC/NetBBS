@@ -4764,4 +4764,38 @@ MIGRATIONS = [
         CREATE INDEX idx_oneliner_additions_user ON oneliner_additions(user_id, created_at);
         """,
     ),
+    Migration(
+        description=(
+            "Issues #1375/#1376 (design doc §6.3, Chat bots): `bot_held_lines`, the host-held "
+            "lines a bot asked to say for one caller (`kind` 'line', a reminder) or a caller's tell "
+            "to a local account (`kind` 'tell', bound to the request token). A row names its "
+            "caller by local account (`caller_user_id`) or Link identity (`caller_link`, "
+            "'link:<fingerprint>:<user>'), never both, and is published in its channel on that "
+            "caller's next join, then deleted; expired rows are pruned. A tell keeps its sender "
+            "the same way, so blocks are checked again at delivery. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE bot_held_lines (
+            id              INTEGER PRIMARY KEY,
+            bot_id          INTEGER NOT NULL REFERENCES chat_bots(id) ON DELETE CASCADE,
+            channel_id      INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            kind            TEXT NOT NULL CHECK (kind IN ('line', 'tell')),
+            caller_user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            caller_link     TEXT,
+            sender_user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            sender_link     TEXT,
+            sender_label    TEXT,
+            text            TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            expires_at      TEXT NOT NULL,
+            CHECK ((caller_user_id IS NULL) <> (caller_link IS NULL)),
+            CHECK (kind = 'line' OR (caller_user_id IS NOT NULL
+                                     AND (sender_user_id IS NULL) <> (sender_link IS NULL)))
+        );
+        CREATE INDEX idx_bot_held_local ON bot_held_lines(channel_id, caller_user_id);
+        CREATE INDEX idx_bot_held_link ON bot_held_lines(channel_id, caller_link);
+        CREATE INDEX idx_bot_held_bot ON bot_held_lines(bot_id, kind);
+        CREATE INDEX idx_bot_held_expiry ON bot_held_lines(expires_at);
+        """,
+    ),
 ]
