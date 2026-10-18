@@ -390,16 +390,17 @@ async def capture_chat(tmp: Path) -> str:
 
     Baud runs for real: its own process under `BotRuntime`, answering what
     the caller types into the channel. It greets the caller on joining,
-    answers `seen` and `stats`, and saves a reminder and then delivers it.
+    answers `top` with Voidrunner's Hall of Fame as a titled block, answers
+    `seen` privately ("(to you)", asked with `/msg`), and answers `stats`.
     The channel's clock is pinned to one evening, and each live line is
-    stamped with its own minute, so the half hour keeper spends there reads
-    as one and a recapture shows the same times whenever it is run. The
-    reminder is for twenty minutes: Baud saves it with its own clock, and the
-    host's tick that delivers it is moved those twenty minutes on.
+    stamped with its own minute, so a recapture shows the same times
+    whenever it is run. A reminder is left out: Baud's confirmation now
+    names the time it falls due, read from Baud's own clock, which the
+    capture cannot pin.
     """
     import datetime
+    import json
     import re
-    import time
 
     from netbbs.bots.registry import save_bot
     from netbbs.bots.runtime import BotRuntime
@@ -416,23 +417,14 @@ async def capture_chat(tmp: Path) -> str:
     from netbbs.net.char_input import InputHistory
 
     from netbbs.bots import runtime as runtime_module
+    from netbbs.doors import create_door
+    from netbbs.doors.events import set_events_enabled
+    from netbbs.doors.outbound import OUTBOUND_DIRNAME, drain, enable_outbound
 
     evening = datetime.datetime(2026, 10, 12, 20, 12, tzinfo=datetime.timezone.utc)
 
     def ago(minutes: float) -> str:
         return (evening - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-    class _Later:
-        """`time` for the bot host, `skip` seconds ahead: what the twenty
-        minutes a reminder waits would have done to its ticks."""
-
-        skip = 0.0
-
-        def __getattr__(self, name):
-            return getattr(time, name)
-
-        def time(self) -> float:
-            return time.time() + self.skip
 
     db, lane = _node(tmp)
     try:
@@ -440,7 +432,25 @@ async def capture_chat(tmp: Path) -> str:
         people = _people(db)
         channel = create_channel(db, "lobby", creator=people["keeper"],
                                  description="General chat")
-        channel = set_topic(db, channel, "release day: 7.27.0", set_by=people["keeper"])
+        channel = set_topic(db, channel, "release day: 7.31.0", set_by=people["keeper"])
+
+        # Voidrunner reports its Hall of Fame through the door outbound
+        # hook, the way a door with game events on does (door API 5):
+        # `!top voidrunner` answers it as a titled block.
+        workdir = tmp / "voidrunner"
+        workdir.mkdir()
+        door = create_door(db, "Voidrunner", sys.executable, creator=people["keeper"])
+        enable_outbound(db, door, enabled_by=people["keeper"])
+        set_events_enabled(db, door, True, changed_by=people["keeper"])
+        (workdir / OUTBOUND_DIRNAME).mkdir()
+        (workdir / OUTBOUND_DIRNAME / "req0000001.json").write_text(json.dumps({"standings": {
+            "title": "Hall of Fame",
+            "rows": [{"user_id": people[name].id, "value": value, "label": label}
+                     for name, value, label in (("wren", "48,210 pts", "Commodore"),
+                                                ("otto", "41,775 pts", "Fleet Captain"),
+                                                ("keeper", "29,040 pts", "Merchant Captain"),
+                                                ("alice", "12,380 pts", "Ensign"))]}}), encoding="utf-8")
+        drain(db, door, workdir)
 
         # alice called earlier this evening and has gone: what `seen` reports.
         stamps = iter([ago(95), ago(52)])
@@ -453,10 +463,10 @@ async def capture_chat(tmp: Path) -> str:
 
         said = [
             ("join", "wren", None, 14),
-            ("message", "wren", "evening -- did the 7.27.0 wheel land yet?", 13.5),
+            ("message", "wren", "evening -- did the 7.31.0 wheel land yet?", 13.5),
             ("join", "otto", None, 12),
-            ("message", "otto", "just pulled it. message boards can hold polls now", 11),
-            ("message", "wren", "and /bell mentions beeps when someone says my name", 10),
+            ("message", "otto", "just pulled it. Baud can roll dice and run polls now", 11),
+            ("message", "wren", "and /sysop pages the SysOp from any chat channel", 10),
             ("action", "otto", "goes looking for alice's new ANSI upload", 8),
         ]
         stamps = iter([ago(minutes) for *_rest, minutes in said])
@@ -469,7 +479,7 @@ async def capture_chat(tmp: Path) -> str:
             scrollback_module.utc_now_iso = original
 
         save_bot(db, actor=people["keeper"], name="Baud", channels=["lobby"], defaults=["lobby"],
-                 enabled=True, queries=["seen", "stats"], event_channels=["lobby"], greetings=True)
+                 enabled=True, queries=["seen", "stats", "top"], event_channels=["lobby"], greetings=True)
 
         presence = PresenceRegistry()
         for name in ("keeper", "wren", "otto"):
@@ -480,9 +490,9 @@ async def capture_chat(tmp: Path) -> str:
         minute = [2.0]
         original_clock = scrollback_module.utc_now_iso
         scrollback_module.utc_now_iso = lambda: ago(-minute[0])
-        later = _Later()
-        original_time = runtime_module.time
-        runtime_module.time = later
+        # A private answer is no channel message: the bot host stamps it.
+        original_runtime_clock = runtime_module.utc_now_iso
+        runtime_module.utc_now_iso = lambda: ago(-minute[0])
         hub = ChatHub()
         # wren and otto are in the channel too, and answer live: real
         # traffic is also what scrolls the join's blank block off the screen.
@@ -534,23 +544,18 @@ async def capture_chat(tmp: Path) -> str:
                 await session.inputs.put(line)
                 await until(lambda: shown(answer), f"the answer to {line!r}")
 
-            await say(2.4, "otto", "evening keeper")
-            await type_(3, "evening both. 7.27.0 is out", "7.27.0 is out")
-            await say(4, "wren", "saw it! your swap meet poll already has 8 votes")
-            await say(5, "otto", "i ticked two answers. it lets you pick two")
+            await type_(3, "evening all. 7.31.0 is out", "7.31.0 is out")
+            await say(4, "wren", "saw it! Baud keeps the voidrunner hall of fame now")
+            await type_(5, "!top voidrunner", "Hall of Fame")
+            await say(6, "otto", "second again. one more run tonight")
             await say(7, "wren", "hi keeper! ask Baud about alice, she was on earlier")
-            await type_(8, "!seen alice", "last recorded")
-            await say(9, "otto", "ha, missed her. her ANSI is up in the art area though")
-            await type_(11, "Baud.bot: remind 20m stretch, then the sync window", "Saved reminder #1")
-            await type_(14, "!stats", "human accounts online")
-            await say(15, "otto", "four hours and not a hiccup. nice wheel")
-            # Twenty minutes on: the next tick finds the reminder due.
-            minute[0] = 31
-            later.skip = 20 * 60 + 5
-            await until(lambda: shown("reminder #1: stretch"), "the reminder", seconds=15)
-            await say(32, "wren", "a bot that remembers things. better than me")
-            await type_(33, "thanks Baud. right, off to count votes", "off to count votes")
-            await say(34, "otto", "o/")
+            # Asked privately: the answer is drawn "(to you)", for keeper alone.
+            await type_(8, "/msg Baud.bot seen alice", "last recorded")
+            await type_(9, "missed her by an hour. and Baud told only me", "told only me")
+            await type_(11, "!stats", "human accounts online")
+            await say(12, "wren", "and if the wheel ever breaks, /sysop pages you now")
+            await type_(13, "good. right, off to beat otto's score", "beat otto's score")
+            await say(14, "otto", "o/")
             await asyncio.sleep(0.4)                   # let the status line settle
             return "".join(session.written)
         finally:
@@ -561,7 +566,7 @@ async def capture_chat(tmp: Path) -> str:
             for pid in others.values():
                 hub.leave(channel.name, pid)
             scrollback_module.utc_now_iso = original_clock
-            runtime_module.time = original_time
+            runtime_module.utc_now_iso = original_runtime_clock
     finally:
         lane.close()
         db.close()

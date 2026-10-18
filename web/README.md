@@ -108,8 +108,11 @@ The chat capture runs Baud for real: `BotRuntime` starts the bundled bot as
 its own process, and the caller's lines are typed into the channel, so every
 `[BOT]` line on the landing page is an answer Baud actually gave. The
 channel's clock is pinned to one evening and each line gets its own minute, so a
-recapture shows the same times whenever it runs. The twenty-minute reminder is
-saved by Baud and delivered by its next tick once the host's clock is moved on.
+recapture shows the same times whenever it runs; the bot host's clock, which
+stamps a private `(to you)` answer, is pinned with it. Voidrunner's Hall of Fame
+for `!top` is dropped through the door outbound hook before Baud starts. No
+reminder is shown: Baud's confirmation names the time it falls due from Baud's
+own clock, which runs in its own process and cannot be pinned.
 
 **Every embedded capture is reproducible.** `website_capture_screens.py --list`
 names the ten NetBBS screens; `website_capture_chat_mrc.py`,
