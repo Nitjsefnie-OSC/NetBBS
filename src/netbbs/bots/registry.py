@@ -73,12 +73,12 @@ class Bot:
     model_conversation: bool = False
     # (key, text) pairs in PHRASE_KEYS order; only overrides are stored.
     phrases: tuple[tuple[str, str], ...] = ()
-    # Issue #1408: door events, a third source kind (§16, #1378).
-    door_sources: tuple[str, ...] = ()
-    announce_doors: bool = False
     # Issue #1379: Baud's quotes and quick polls, each off by default.
     quotes: bool = False
     polls: bool = False
+    # Issue #1408: door events, a third source kind (§16, #1378).
+    door_sources: tuple[str, ...] = ()
+    announce_doors: bool = False
 
     @property
     def phrase_overrides(self) -> dict[str, str]:

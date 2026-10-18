@@ -56,10 +56,10 @@ class TrialSpec:
     announce_posts: bool = False
     announce_files: bool = False
     model_conversation: bool = False
-    door_sources: list[str] = field(default_factory=list)
-    announce_doors: bool = False
     quotes: bool = False
     polls: bool = False
+    door_sources: list[str] = field(default_factory=list)
+    announce_doors: bool = False
 
     @classmethod
     def of_bot(cls, bot) -> "TrialSpec":

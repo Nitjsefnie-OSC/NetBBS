@@ -293,11 +293,11 @@ def test_try_selected_and_the_editors_try_run_without_a_question(db, lane, sysop
     # The editor's Try field is last, so the fields before it keep their numbers.
     async def edit():
         chrome = await _load_chrome(lane, sysop)
-        screen = Screen(["2", "7", "b", "y"], lines=["/join bob", "/quit"])
+        screen = Screen(["3", "0", "b", "y"], lines=["/join bob", "/quit"])
         await bot_flow.bot_editor(screen, lane, sysop, chrome)
         return screen.plain
     plain = asyncio.run(edit())
-    assert "27 Try" in plain or "Try:" in plain
+    assert "30 Try" in plain or "Try:" in plain
     assert "Try Baud.bot" in plain and "presence join bob" not in plain
 
 
