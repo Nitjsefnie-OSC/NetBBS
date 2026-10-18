@@ -7,6 +7,7 @@ import json
 import pytest
 
 from netbbs.bots.baud import Baud, PRESETS
+from netbbs.bots.botkit import MAX_CHANGES
 from netbbs.bots.registry import BotError, get_bot, save_bot, validate_phrases
 from netbbs.bots.runtime import BotRuntime
 from netbbs.chat.hub import ParticipantId
@@ -49,11 +50,12 @@ def test_baud_says_the_sysops_phrases_and_falls_back_for_blank_ones():
                                for i in range(8)]
     baud.handle(message("remind 1h more"))
     assert sent[-1]["text"] == "alice: Genug, alice: {8} Erinnerungen."
-    # Busy was left blank: the preset answers.
+    # Busy was left blank: the preset answers. Reminder commands wait for a
+    # save in flight (botkit's change queue); one past its bound is busy.
     baud.store(baud.state)
-    for _ in range(baud.backlog.maxlen):
-        baud.handle(message("help"))
-    baud.handle(message("help"))
+    for _ in range(MAX_CHANGES):
+        baud.handle(message("reminders"))
+    baud.handle(message("reminders"))
     assert sent[-1]["text"] == "alice: " + PRESETS["busy"]["retro"]
 
 

@@ -4709,4 +4709,114 @@ MIGRATIONS = [
         ALTER TABLE chat_bots ADD COLUMN phrases_json TEXT NOT NULL DEFAULT '{}';
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1377 (design doc §5.6, Pages): `staff_pages`, the shared queue of callers' "
+            "`/sysop` pages. One open page per member (`guest_session` NULL), a guest's keyed on "
+            "the session it came from; `place` is where the caller was, `channel` the chat channel "
+            "they paged from. `paged_at` moves when a new /sysop replaces the reason. "
+            "Handled pages keep who handled them and how (`done`, `chat`, `mail`). Empty on "
+            "upgrade."
+        ),
+        sql="""
+        CREATE TABLE staff_pages (
+            id                  INTEGER PRIMARY KEY,
+            user_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            caller_label        TEXT NOT NULL,
+            guest_session       TEXT,
+            place               TEXT NOT NULL,
+            channel             TEXT,
+            reason              TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            paged_at            TEXT NOT NULL,
+            handled_by_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            handled_by_label    TEXT,
+            handled_at          TEXT,
+            outcome             TEXT CHECK (outcome IN ('done', 'chat', 'mail')),
+            CHECK ((handled_at IS NULL) = (outcome IS NULL))
+        );
+        CREATE INDEX idx_staff_pages_open ON staff_pages(handled_at, paged_at);
+        CREATE INDEX idx_staff_pages_user ON staff_pages(user_id, paged_at);
+        CREATE INDEX idx_staff_pages_guest ON staff_pages(guest_session, paged_at);
+        """,
+    ),
+    Migration(
+        description=(
+            "Issue #1391 (design doc §3.3, the oneliner wall): `oneliners`, the short lines callers "
+            "leave under Recent callers, newest first. The author is kept by label beside "
+            "`author_user_id ON DELETE SET NULL`, so a line outlives its account as a post does. "
+            "`oneliner_additions` logs each line added for a day, so the per-account daily limit "
+            "counts lines added rather than lines still on the wall: deleting one's own line gives "
+            "no quota back. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE oneliners (
+            id              INTEGER PRIMARY KEY,
+            author_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            author_label    TEXT NOT NULL,
+            text            TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        );
+        CREATE TABLE oneliner_additions (
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX idx_oneliner_additions_user ON oneliner_additions(user_id, created_at);
+        """,
+    ),
+    Migration(
+        description=(
+            "Issue #1372 (design doc §16, private bot replies, Decision 4): "
+            "`bot_private_history`, one row per private answer a bot instance gave one caller, "
+            "for the fixed limit of 30 private answers per caller per hour per bot. A caller is "
+            "the bot API's caller id as text: a local account id, or "
+            "`link:<home-fingerprint>:<username>`. Rows older than an hour are pruned on write. "
+            "Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE bot_private_history (
+            bot_id INTEGER NOT NULL REFERENCES chat_bots(id) ON DELETE CASCADE,
+            caller TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_bot_private_rate ON bot_private_history(bot_id, caller, created_at);
+        """,
+    ),
+    Migration(
+        description=(
+            "Issue #1380 (design doc §16, scheduled SysOp announcements in chat): "
+            "`chat_announcements`, the rules a SysOp schedules into a channel -- once on a date, "
+            "daily, weekly on a set of weekdays (`weekdays`, a bit mask, Monday = 1), or monthly on "
+            "the first to fourth of a weekday. `time` is HH:MM in the node's display timezone, "
+            "`handled_until` the moment up to which every slot is said or skipped, and `saved_by` "
+            "the SysOp who saved the rule, by whose account it is carried on Link. "
+            "`chat_announcement_approvals`, the Linked channels a SysOp approved for "
+            "announcements. `channel_messages.announcement`, set on a line that is one -- this "
+            "node's own in an approved Linked channel, or one received with the signed event's "
+            "`announcement` marker. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE chat_announcements (
+            id                INTEGER PRIMARY KEY,
+            channel_id        INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            body              TEXT NOT NULL,
+            repeat            TEXT NOT NULL CHECK (repeat IN ('once', 'daily', 'weekly', 'monthly')),
+            time              TEXT NOT NULL,
+            once_date         TEXT,
+            weekdays          INTEGER NOT NULL DEFAULT 0,
+            month_week        INTEGER CHECK (month_week IS NULL OR month_week BETWEEN 1 AND 4),
+            month_weekday     INTEGER CHECK (month_weekday IS NULL OR month_weekday BETWEEN 0 AND 6),
+            saved_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            handled_until     TEXT NOT NULL,
+            created_at        TEXT NOT NULL
+        );
+        CREATE INDEX idx_chat_announcements_channel ON chat_announcements(channel_id);
+        CREATE TABLE chat_announcement_approvals (
+            channel_id   INTEGER PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+            approved_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            approved_at  TEXT NOT NULL
+        );
+        ALTER TABLE channel_messages ADD COLUMN announcement INTEGER;
+        """,
+    ),
 ]

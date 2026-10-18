@@ -14,6 +14,7 @@ to the exact source, fixtures, and normative decisions needed to go further.
 - [Developing a native door](#developing-a-native-door)
 - [Door launch metadata](#door-launch-metadata)
 - [Door outbound posting](#door-outbound-posting)
+- [Developing a chat bot](#developing-a-chat-bot)
 - [Implementing NetBBS Link](#implementing-netbbs-link)
 - [Two-node Link exercise](#two-node-link-exercise)
 - [Contributing to NetBBS](#contributing-to-netbbs)
@@ -26,6 +27,7 @@ to the exact source, fixtures, and normative decisions needed to go further.
 | --- | --- | --- |
 | A game or interactive external application | Supervised process, terminal streams, launch JSON, optional classic drop files | [Door runtime](../src/netbbs/doors/runtime.py), [Retro Trivia](../src/netbbs/doors/bundled/retro_trivia.py) |
 | A door posting results to a message board | SysOp-enabled file-drop hook, door-specific label and allowlist | [Outbound implementation](../src/netbbs/doors/outbound.py) |
+| A chat bot speaking in channels | Supervised process, JSON lines on stdin/stdout, SysOp grants per instance | [Bot API](NetBBS-bot-api.md), [botkit](../src/netbbs/bots/botkit.py), [Tally](../src/netbbs/bots/tally.py) |
 | Another implementation of a NetBBS Link node | Signed events, authenticated HTTP operations, separate Noise real-time transport | [Events](../src/netbbs/link/events.py), [protocol](../src/netbbs/link/protocol.py), [transport](../src/netbbs/link/transport.py) |
 | A change inside NetBBS | Domain functions and owned session/network flows | [Architecture and product design](NetBBS-design-doc.md), [engineering record](NetBBS-worklog.md) |
 
@@ -440,6 +442,30 @@ Name your requests as ordinary filenames. A receipt is named after the request
 it answers, so a request name holding a path separator — legal on the POSIX
 target — makes a receipt that is one file there and a path on another platform.
 Backups leave those out rather than carry a name that does not travel.
+
+## Developing a chat bot
+
+A chat bot is a program the node starts and supervises; it speaks as
+`<Name>.bot` through JSON lines on stdin and stdout, with only the grants the
+SysOp gives its instance. The [bot API](NetBBS-bot-api.md) is the contract.
+
+1. Read [botkit](../src/netbbs/bots/botkit.py), the standard-library helper
+   that owns the handshake, action ids and result callbacks, dispatch by event
+   type and ordered state saves. Import it as `netbbs.bots.botkit`, or copy
+   the one file next to your bot for an interpreter without NetBBS.
+2. Read the two examples written on it: [Baud](../src/netbbs/bots/baud.py)
+   (addressed commands, queries, reminders on ticks, announcements) and
+   [Tally](../src/netbbs/bots/tally.py) (whole-channel reading, where a bot
+   says rather than replies).
+3. Create an instance in the SysOp console with your program under
+   **Program arguments**, and run it with the editor's **Try** field. Try runs
+   the draft against a scratch database, state and channel, shows each event,
+   action and result and the program's stderr, and rehearses model requests.
+   See [Writing a bot](NetBBS-bot-api.md#writing-a-bot).
+4. Enable it in a real channel only once it behaves in Try.
+
+The host passes no `PYTHONPATH`, and the working directory is the instance's
+state directory: give absolute paths. Stderr is discarded outside Try.
 
 ## Implementing NetBBS Link
 

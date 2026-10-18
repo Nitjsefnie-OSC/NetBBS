@@ -1187,6 +1187,17 @@ idempotent design already covers.
   channel is empty (`NodeControls.chat_hub`, `None` from the standalone
   CLI, which instead states what a rename does to anyone inside). Re-keying
   the hub by channel id would remove the restriction; nothing has needed it.
+- A privately asked bot request (`/msg Baud.bot`, `/private Baud.bot`, issue
+  #1372) must never touch `send_loop`'s public path: `record_message`, the
+  Link queue and live push, the hub broadcast, `BotRuntime.observe` and
+  `_relay_to_mrc` all live there. `chat_flow._ask_bot_privately` is the only
+  seam, and it calls the bot runtime (or `BotLink.request(private=True)`)
+  and nothing else. The answer is a `BotPrivateAnswer` sent with
+  `hub.send_to`, never a `ChannelMessage`, so no history, search or replay
+  path can see it. A bot refusal that the bot can act on (public reply to a
+  private request, private answer to a node without `chat_bot_private_v1`)
+  raises `runtime._TokenKept`, which keeps the request token live and does
+  not tell the caller.
 
 `ChatHub` routes opaque objects and owns bounded per-participant queues. It
 does not render messages or decide moderation semantics.

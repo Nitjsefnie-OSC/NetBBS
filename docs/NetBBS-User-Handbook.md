@@ -130,6 +130,7 @@ things in different places. A few keys mean the same on every screen:
 | **Find** (<kbd>/</kbd>) | Search your own mail and the posts, files and retained chat on this node (below) |
 | <kbd>E</kbd> **E-mail** | Read and send persistent NetBBS mail, from the level the SysOp chose; not offered to the guest account |
 | <kbd>W</kbd> **Who's online** | See callers and available ways to contact them |
+| <kbd>R</kbd> **Recent callers** | Who called lately, and the newest lines on the oneliner wall (below) |
 | <kbd>P</kbd> **Profile** | Change your public profile and personal preferences |
 | **Approvals** (<kbd>A</kbd>) | Posts and uploads waiting for your decision, if the SysOp made you a moderator |
 | <kbd>S</kbd> **Staff** | Your staff console, if the SysOp gave you staff permissions |
@@ -156,6 +157,38 @@ and the posts, files and retained chat on this node.
 > [!NOTE]
 > Search covers content held by this node, including carried NetBBS Link
 > content; it is not a search of the entire network.
+
+#### The oneliner wall
+
+The oneliner wall is a list of short lines callers leave for the callers
+after them. After you sign in, its newest lines are shown under
+**Recent callers**, on the same screen and with one pause.
+
+To add a line:
+
+1. Press <kbd>A</kbd> **Add a line**, at that pause or on
+   ▸ **Recent callers**.
+2. Type your line, up to 60 columns, and press <kbd>Enter</kbd>.
+   <kbd>Esc</kbd> or an empty line cancels.
+
+Any other key at the pause goes on to the main menu, where the result is
+shown.
+
+- You can add one line per call, and three a day. Deleting a line does not
+  give you one back.
+- A line is plain text: colour codes are not drawn.
+- The SysOp may set a level for adding lines. Below it, **Add a line** is
+  not offered, but you can still read the wall.
+
+▸ **Recent callers** ▸ <kbd>O</kbd> **Oneliners** shows the whole wall,
+newest first. Page it with <kbd>&lt;</kbd> and <kbd>&gt;</kbd>, and press
+<kbd>/</kbd> to find a name or a word. To remove one of your own lines,
+press <kbd>D</kbd> **Delete**, type its number and answer <kbd>Y</kbd>.
+
+> [!NOTE]
+> Your line shows your account name, even if you hide your name from
+> Recent callers. The SysOp and staff who moderate everything can delete
+> any line.
 
 #### Lists of boards and areas
 
@@ -471,7 +504,7 @@ Choose a chat channel to join the conversation. Type a line and press
 | `/join channel` | Switch to another channel |
 | `/leave` | Return to the channel picker |
 | `/quit` | Leave chat |
-| `/msg user text` | Send a live private message |
+| `/msg user text` | Send a live private message; `/msg Baud.bot text` asks a bot privately |
 | `/away text` | Set an away message |
 | `/nick name` | Set a chat alias; a bare `/nick` clears it |
 | `/dm user` | Invite someone online to a private direct chat; `user@TheirBBS` for someone on a linked BBS |
@@ -484,6 +517,13 @@ Choose a chat channel to join the conversation. Type a line and press
 > bottom, until you return with <kbd>Esc</kbd>, with <kbd>PgDn</kbd> past the
 > newest line, or by sending a line. Your terminal's own scrollback jumps back
 > to the bottom whenever chat redraws, so use these keys instead.
+
+Gray lines with no name in front are the BBS itself speaking: a good-morning
+line at midnight, and announcements the SysOp has scheduled, such as
+`Announcement: Net meeting tonight at 20:00 in #main.` They stay in the
+channel's scrollback, so you see them even if you arrive later. In a channel
+shared with linked BBSes, an announcement from another BBS names it:
+`Announcement from Vertigo: Tournament at 21:00.`
 
 #### Aliases and names from other BBSes
 
@@ -548,6 +588,33 @@ Your terminal decides whether a bell beeps, flashes or stays quiet. In the
 web client it plays a short tone once you have pressed a key or clicked in
 the page, and while the tab is in the background its title starts with `(!)`
 until you come back.
+
+#### Getting help from the SysOp
+
+To ask the SysOp for help, type `/sysop` and what you need in any chat
+channel:
+
+```
+/sysop my upload to Retro stops at 90% every time
+```
+
+1. Your reason goes to the SysOp and staff, and nowhere else: nothing is said
+   in the channel, its history, linked BBSes or MRC.
+2. A block that only you see says who was told. Staff in chat are told at
+   once; staff elsewhere on the BBS see it on their next screen, or when they
+   leave a door.
+3. If nobody is online, the page waits for them. When they are all away, the
+   block says who is expected back first.
+
+> [!NOTE]
+> You can have one page open at a time, and page at most once every 10
+> minutes. Paging again after that replaces the reason of your open page. As
+> a guest you can page only while someone is online, because a guest's page
+> can't be answered later.
+
+The SysOp answers by opening a chat on your screen, or by mail. Use `/sysop`,
+not `!sysop`: a `!` line goes to the whole channel before a bot sees it, and
+Baud can only point you to `/sysop`.
 
 ### Mail
 
@@ -928,6 +995,9 @@ default, prefix the commands with `Baud.bot:` instead of `!`.
 | List reminders | `!reminders` | `Baud.bot: reminders` |
 | Cancel a reminder | `!cancel 1` | `Baud.bot: cancel 1` |
 
+To reach the SysOp, use `/sysop <reason>` rather than Baud: see
+[Getting help from the SysOp](#getting-help-from-the-sysop).
+
 - Reminders and replies are public in that channel.
 - Reminders survive restarts, though mutes or limits can delay them.
 - Ordinary conversation is not sent to an addressed-only bot.
@@ -941,6 +1011,32 @@ default, prefix the commands with `Baud.bot:` instead of `!`.
 > goes to a language model: your first such message only shows a notice
 > naming the service, the replies are public, and `reset` clears your
 > conversation.
+
+#### Ask a bot privately
+
+A question typed into the channel is seen by everyone there. To ask a bot
+where only you see the question and its answer:
+
+| To | Type |
+| --- | --- |
+| Ask one question | `/msg Baud.bot reminders` |
+| Keep asking | `/private Baud.bot`, then type your questions; `/close` ends it |
+| Ask a bot on a linked BBS | `/msg Baud.bot@Node help` or `/private Baud.bot@Node` |
+
+- What you asked shows as `(privately to Baud.bot: ...)`, and the answer as a
+  bot line marked **(to you)**:
+  `[20:14] [BOT] <Baud.bot> (to you) Saved reminder #4.`
+- Nobody else sees either, and neither is kept in the channel's history or
+  search. Like `/msg`, the answer stays among your own lines, so
+  <kbd>PgUp</kbd> shows it, and it never rings your bell.
+- A bot may also answer a question you asked in the channel this way.
+- The bot has to be allowed in the channel you are in. If it is muted there,
+  or the channel's `/bots` setting hides it, you are told why.
+- A bot answers each caller at most 30 times an hour privately; when that
+  runs out, you are told so.
+- A bot on another node can answer privately only if that BBS, and yours,
+  support it; otherwise you are told to ask in the channel instead.
+- If you leave the channel before the answer arrives, it is not shown.
 
 ### MRC: chat across BBSes
 

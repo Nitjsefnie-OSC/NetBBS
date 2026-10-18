@@ -2,19 +2,24 @@
 
 Run by filename so it also works from a source checkout without an installed
 package. It has no database imports, filesystem access, or special host grants.
+It is written on botkit (issue #1374), the same helper any other bot may use;
+botkit is a sibling module, imported from this directory when Baud runs by
+filename.
 """
 
-import json
 import re
-import sys
 import time
-from collections import deque
 
-VERSION = 1
+try:
+    from . import botkit
+except ImportError:  # run by filename: sys.path[0] is this directory
+    import botkit
+
+VERSION = botkit.API_VERSION
 # A refused reminder is retried with backoff, then dropped; it never blocks
 # the reminders behind it (a deleted channel or removed grant never heals).
 MAX_DELIVERY_ATTEMPTS = 8
-LINE_LIMIT = 500
+LINE_LIMIT = botkit.LINE_LIMIT
 
 # Issue #1381: the temperament presets are only defaults. The SysOp may
 # override each phrase per instance; the host passes the overrides in the
@@ -35,32 +40,23 @@ def preset(key, temperament):
     return PRESETS[key].get(temperament, PRESETS[key]["friendly"])
 
 
-class Baud:
-    def __init__(self, hello, emit):
-        self.emit = emit
+class Baud(botkit.Bot):
+    def __init__(self, hello, emit=None):
+        super().__init__(hello, emit)
         self.temperament = hello.get("temperament", "friendly")
         phrases = hello.get("phrases")
         self.phrases = phrases if isinstance(phrases, dict) else {}
-        self.queries = frozenset(hello.get("queries", []))
-        self.greetings = hello.get("greetings", False)
-        self.announce_posts = hello.get("announce_posts", False)
-        self.announce_files = hello.get("announce_files", False)
-        self.model_conversation = hello.get("model_conversation", False)
-        self.state = hello.get("state") or {"next": 1, "reminders": []}
-        if not isinstance(self.state, dict) or not isinstance(self.state.get("reminders", []), list):
+        state = self.state or {"next": 1, "reminders": []}
+        if not isinstance(state, dict) or not isinstance(state.get("reminders", []), list):
             raise ValueError("Invalid Baud reminder state")
-        self.state.setdefault("next", 1)
-        self.state.setdefault("reminders", [])
-        self.sequence = 0
-        self.waiting = None
-        self.backlog = deque(maxlen=32)
+        state.setdefault("next", 1)
+        state.setdefault("reminders", [])
+        self.state = state
         self.failures = {}
-
-    def action(self, action, **fields):
-        self.sequence += 1
-        identity = str(self.sequence)
-        self.emit({"id": identity, "action": action, **fields})
-        return identity
+        # The reminder whose delivery is waiting for its result: one at a
+        # time, so a slow result never delivers the same reminder twice.
+        self.delivering = None
+        self.forgetting = None
 
     def phrase(self, key, name):
         # The host validates every phrase on Save; a hand-edited or older
@@ -73,129 +69,130 @@ class Baud:
                 pass
         return preset(key, self.temperament).format(name=name)
 
-    def reply(self, event, text):
-        self.action("reply", request=event["request"], text=f"{event['caller']['name']}: {text}"[:LINE_LIMIT])
-
-    def store(self, state, event=None, text=None):
-        identity = self.action("state.set", value=state)
-        self.waiting = (identity, "store", state, event, text)
+    def store(self, state, msg=None, text=None):
+        def saved(result):
+            if msg is not None:
+                msg.reply(text if result.ok else "Could not save that reminder; ask the SysOp.")
+        self.save(state, then=saved)
 
     def delivered(self, reminder_id, ok):
         attempts = self.failures.pop(reminder_id, (0, 0))[0] + (0 if ok else 1)
         if not ok and attempts < MAX_DELIVERY_ATTEMPTS:
             self.failures[reminder_id] = (attempts, time.time() + min(3600, 60 * 2 ** (attempts - 1)))
+            self.delivering = None
             return
-        # Forget it in memory first: if the store fails, the next tick must
-        # not deliver it again, and the next successful store omits it.
-        self.state = {**self.state, "reminders": [r for r in self.state["reminders"] if r["id"] != reminder_id]}
-        self.store(self.state)
+        self.forget(reminder_id)
 
-    def handle(self, event):
-        if event.get("type") in {"post", "file"}:
-            enabled = self.announce_posts if event["type"] == "post" else self.announce_files
-            if enabled:
-                self.action("announce", event=event["event"])
+    def forget(self, reminder_id):
+        # A reminder saved while this one was being said is still in flight:
+        # removing it waits for that save, or it would build on the state
+        # before it and lose it (#1419 review). Until then `delivering` stays
+        # set, so no tick says this reminder again.
+        def step():
+            self.delivering = None
+            self.forgetting = None
+            # Forget it in memory first: if the store fails, the next tick must
+            # not deliver it again, and the next successful store omits it.
+            self.state = {**self.state, "reminders": [r for r in self.state["reminders"] if r["id"] != reminder_id]}
+            self.store(self.state)
+        if not self.change(step):
+            self.forgetting = reminder_id  # the queue is full: retried on the next tick
+
+    def on_post(self, event):
+        if self.announce_posts:
+            self.announce(event)
+
+    def on_file(self, event):
+        if self.announce_files:
+            self.announce(event)
+
+    def on_presence(self, event):
+        if self.greetings and event.kind == "join":
+            self.say(event.channel, self.phrase("greeting", event.caller["name"]))
+
+    def on_tick(self, event):
+        if self.forgetting is not None and not self.saving:
+            self.forget(self.forgetting)
             return
-        if event.get("type") == "presence":
-            if self.greetings and event.get("kind") == "join":
-                greeting = self.phrase("greeting", event["caller"]["name"])[:LINE_LIMIT]
-                self.action("say", channel=event["channel"], text=greeting)
+        if self.delivering is not None or self.saving:
             return
-        if event["type"] == "result":
-            if self.waiting and event["id"] == self.waiting[0]:
-                _, kind, value, request, text = self.waiting
-                self.waiting = None
-                if kind == "query":
-                    self.reply(request, event["value"]["text"] if event["ok"] else event.get("error", "Query unavailable."))
-                elif kind == "store":
-                    if event["ok"]:
-                        self.state = value
-                    if request:
-                        self.reply(request, text if event["ok"] else "Could not save that reminder; ask the SysOp.")
-                else:
-                    self.delivered(value, event["ok"])
-                while not self.waiting and self.backlog:
-                    self.handle(self.backlog.popleft())
-            return
-        if self.waiting:
-            if event["type"] == "message":
-                if len(self.backlog) == self.backlog.maxlen:
-                    self.reply(event, self.phrase("busy", event["caller"]["name"]))
-                else:
-                    self.backlog.append(event)
-            return
-        if event["type"] == "tick":
-            for reminder in self.state["reminders"]:
-                if reminder["due"] <= event["time"] and self.failures.get(reminder["id"], (0, 0))[1] <= event["time"]:
-                    identity = self.action("say", channel=reminder["channel"],
-                                           text=f"{reminder['name']}: reminder #{reminder['id']}: {reminder['text']}")
-                    self.waiting = (identity, "deliver", reminder["id"], None, None)
-                    break
-            return
-        if event["type"] != "message":
-            return
-        command, _, rest = event["text"].strip().lstrip("!").partition(" ")
+        for reminder in self.state["reminders"]:
+            if reminder["due"] <= event.time and self.failures.get(reminder["id"], (0, 0))[1] <= event.time:
+                self.delivering = reminder["id"]
+                self.say(reminder["channel"], f"{reminder['name']}: reminder #{reminder['id']}: {reminder['text']}",
+                         then=lambda result, ident=reminder["id"]: self.delivered(ident, result.ok))
+                break
+
+    def on_message(self, msg):
+        command, _, rest = msg.text.strip().lstrip("!").partition(" ")
         command = command.lower()
-        own = [r for r in self.state["reminders"] if r["user"] == event["caller"]["id"]]
         if command in {"", "help"}:
-            opening = self.phrase("help", event["caller"]["name"]).strip()
-            self.reply(event, (opening + " " if opening else "") + "help; remind <1s-30d> <text>; reminders; cancel <id>. "
-                       + ("stats; " if "stats" in self.queries else "")
-                       + ("seen <local-account>; " if "seen" in self.queries else "") +
-                       "Reminders appear publicly here, including after restart. " +
-                       ("Conversation is enabled; reset clears your temporary context here. Replies are public." if self.model_conversation
-                        else "No language model is enabled."))
+            opening = self.phrase("help", msg.name).strip()
+            msg.reply((opening + " " if opening else "") + "help; remind <1s-30d> <text>; reminders; cancel <id>. "
+                      + ("stats; " if "stats" in self.queries else "")
+                      + ("seen <local-account>; " if "seen" in self.queries else "") +
+                      "Reminders appear publicly here, including after restart. "
+                      "/sysop <reason>: page staff. " +
+                      ("Conversation is enabled; reset clears your temporary context here. Replies are public." if self.model_conversation
+                       else "No language model is enabled."))
         elif command in {"stats", "seen"}:
             if command not in self.queries:
-                self.reply(event, "The SysOp has not enabled this query ability.")
+                msg.reply("The SysOp has not enabled this query ability.")
             else:
-                identity = self.action("query", query=command, request=event["request"], target=rest.strip())
-                self.waiting = (identity, "query", None, event, None)
-        elif command == "reminders":
-            # Do not reveal reminder text from a different, possibly private channel.
-            here = [r for r in own if r["channel"] == event["channel"]]
-            self.reply(event, "; ".join(f"#{r['id']}: {r['text'][:35]}" for r in here) or "No reminders here.")
-        elif command == "cancel":
-            match = next((r for r in own if str(r["id"]) == rest.strip() and r["channel"] == event["channel"]), None)
-            if match is None:
-                self.reply(event, "No reminder with that id belongs to you in this channel.")
-            else:
-                self.store({**self.state, "reminders": [r for r in self.state["reminders"] if r != match]},
-                           event, f"Cancelled reminder #{match['id']}.")
-        elif command == "remind":
-            duration, _, text = rest.strip().partition(" ")
-            match = re.fullmatch(r"([1-9][0-9]{0,6})([smhd])", duration.lower())
-            seconds = int(match[1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match[2]] if match else 0
-            if not 1 <= seconds <= 30 * 86400 or not 1 <= len(text.strip()) <= 160:
-                self.reply(event, "Use remind <1s-30d> <text of 1-160 characters>.")
-            elif len(own) >= 8 or len(self.state["reminders"]) >= 48:
-                self.reply(event, self.phrase("limit", event["caller"]["name"]))
-            else:
-                ordinal = self.state["next"]
-                reminder = {"id": ordinal, "user": event["caller"]["id"], "name": event["caller"]["name"],
-                            "channel": event["channel"], "due": time.time() + seconds, "text": text.strip()}
-                self.store({"next": ordinal + 1, "reminders": [*self.state["reminders"], reminder]},
-                           event, f"Saved reminder #{ordinal}; it will appear publicly here.")
+                msg.query(command, rest.strip(), then=lambda result: msg.reply(
+                    result.value["text"] if result.ok else result.get("error", "Query unavailable.")))
+        elif command in {"reminders", "cancel", "remind"}:
+            # These read the reminders: each waits for any save in flight.
+            handler = getattr(self, "_" + command)
+            if not self.change(lambda: handler(msg, rest.strip())):
+                msg.reply(self.phrase("busy", msg.name))
+        elif command == "sysop":
+            # Paging is the host's /sysop (decision 1377): a ! line has
+            # already gone out publicly, so this only points the way.
+            msg.reply("I can't page anyone, and this line was public. "
+                      "Type /sysop <reason>: only the SysOp and staff see it.")
         elif command == "reset" and self.model_conversation:
-            self.action("model.reset", request=event["request"])
+            msg.model_reset()
         elif self.model_conversation:
-            self.action("model", request=event["request"])
+            msg.model()
         else:
             known = ["help", "remind", "reminders", "cancel", *sorted(self.queries & {"seen", "stats"})]
-            self.reply(event, f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
+            msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
+
+    def _own(self, msg):
+        return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]
+
+    def _reminders(self, msg, rest):
+        # Do not reveal reminder text from a different, possibly private channel.
+        here = [r for r in self._own(msg) if r["channel"] == msg.channel]
+        msg.reply("; ".join(f"#{r['id']}: {r['text'][:35]}" for r in here) or "No reminders here.")
+
+    def _cancel(self, msg, rest):
+        match = next((r for r in self._own(msg) if str(r["id"]) == rest and r["channel"] == msg.channel), None)
+        if match is None:
+            msg.reply("No reminder with that id belongs to you in this channel.")
+        else:
+            self.store({**self.state, "reminders": [r for r in self.state["reminders"] if r != match]},
+                       msg, f"Cancelled reminder #{match['id']}.")
+
+    def _remind(self, msg, rest):
+        duration, _, text = rest.partition(" ")
+        match = re.fullmatch(r"([1-9][0-9]{0,6})([smhd])", duration.lower())
+        seconds = int(match[1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match[2]] if match else 0
+        if not 1 <= seconds <= 30 * 86400 or not 1 <= len(text.strip()) <= 160:
+            msg.reply("Use remind <1s-30d> <text of 1-160 characters>.")
+        elif len(self._own(msg)) >= 8 or len(self.state["reminders"]) >= 48:
+            msg.reply(self.phrase("limit", msg.name))
+        else:
+            ordinal = self.state["next"]
+            reminder = {"id": ordinal, "user": msg.caller["id"], "name": msg.name,
+                        "channel": msg.channel, "due": time.time() + seconds, "text": text.strip()}
+            self.store({"next": ordinal + 1, "reminders": [*self.state["reminders"], reminder]},
+                       msg, f"Saved reminder #{ordinal}; it will appear publicly here.")
 
 
 def main():
-    def emit(value):
-        print(json.dumps(value, ensure_ascii=True), flush=True)
-
-    hello = json.loads(sys.stdin.readline())
-    if hello.get("type") != "hello" or hello.get("version") != VERSION:
-        raise ValueError("Unsupported bot API")
-    bot = Baud(hello, emit)
-    emit({"type": "ready", "version": VERSION})
-    for line in sys.stdin:
-        bot.handle(json.loads(line))
+    botkit.run(Baud)
 
 
 if __name__ == "__main__":

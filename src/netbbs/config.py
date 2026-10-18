@@ -332,6 +332,30 @@ def set_mail_min_level(db: Database, level: int) -> None:
     set_config(db, MAIL_MIN_LEVEL_CONFIG_KEY, str(level))
 
 
+# Issue #1391 (design doc §3.3): the lowest level that may add a line to the
+# oneliner wall. Reading it is open to every caller. A node-wide level like
+# the node map's, not a guest switch: a SysOp who wants guests read-only sets
+# this above the guest account's level.
+ONELINER_MIN_LEVEL_CONFIG_KEY = "oneliner_min_level"
+_DEFAULT_ONELINER_MIN_LEVEL = 0
+MAX_ONELINER_MIN_LEVEL = 255
+
+
+def get_oneliner_min_level(db: Database) -> int:
+    value = get_config(db, ONELINER_MIN_LEVEL_CONFIG_KEY)
+    try:
+        level = int(value) if value is not None else _DEFAULT_ONELINER_MIN_LEVEL
+    except ValueError:
+        return _DEFAULT_ONELINER_MIN_LEVEL
+    return min(max(level, 0), MAX_ONELINER_MIN_LEVEL)
+
+
+def set_oneliner_min_level(db: Database, level: int) -> None:
+    if not 0 <= level <= MAX_ONELINER_MIN_LEVEL:
+        raise ValueError(f"oneliner level must be 0-{MAX_ONELINER_MIN_LEVEL}, got {level!r}")
+    set_config(db, ONELINER_MIN_LEVEL_CONFIG_KEY, str(level))
+
+
 # Issue #1298 (design doc §6.1): the most message boards one post may be
 # cross-posted to, the board it was written on included. A post is written
 # once per board, so this bounds what one [P]ost writes. 1 turns

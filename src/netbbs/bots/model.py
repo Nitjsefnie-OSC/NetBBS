@@ -149,8 +149,11 @@ def caller_access(db, user_id):
     return {"level": user.user_level, "authenticated": not is_guest_account(db, user)}
 
 
-def authorize(db, bot_id, channel_name, caller):
-    bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True)
+def authorize(db, bot_id, channel_name, caller, *, private=False):
+    # A private answer (issue #1372) is held to the caller's own limit, never
+    # the channel's, which it makes no noise in.
+    bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True,
+                                   private_caller=str(caller["id"]) if private else None)
     config = settings(db)
     if not config.enabled or not bot.model_conversation:
         raise BotError("Model conversation is not enabled for this bot.")
@@ -195,9 +198,9 @@ def limit_hit(db, reason, now):
                               "SET hits=hits+1, last_at=excluded.last_at", (reason, now))
 
 
-def reserve(db, bot_id, channel_name, caller, config, messages, prompt, *, now=None):
+def reserve(db, bot_id, channel_name, caller, config, messages, prompt, *, now=None, private=False):
     now = time.time() if now is None else now
-    current, channel, _label = authorize(db, bot_id, channel_name, caller)
+    current, channel, _label = authorize(db, bot_id, channel_name, caller, private=private)
     if config != current:
         raise BotError("Model settings changed; address the bot again for the new disclosure.")
     inputs = sum(len(m["content"].encode("utf-8")) + 32 for m in messages) + 32
@@ -272,9 +275,10 @@ def usage_summary(db, *, now=None):
     return result
 
 
-def disclosure(config):
+def disclosure(config, *, private=False):
     return (f"Model provider: {config.endpoint}. Sends your addressed text + up to {config.context_lines} prior lines "
-            f"of only your exchange here. Prompt logging {'ON' if config.log_prompts else 'off'}. Replies are public. "
+            f"of only your {'private ' if private else ''}exchange here. Prompt logging "
+            f"{'ON' if config.log_prompts else 'off'}. Replies are {'private to you' if private else 'public'}. "
             "This first request was not sent or kept as context. Submit again to proceed; reset clears context.")
 
 
@@ -306,10 +310,14 @@ class ModelService:
             if key[0] == bot_id:
                 del self.contexts[key]
 
-    async def respond(self, bot_id, channel_name, caller, prompt, *, reset=False):
-        """Return (text, acceptance callback); remember only a published reply."""
-        config, channel, label = await self.lane.run(authorize, bot_id, channel_name, caller)
-        key = (bot_id, str(caller["id"]), channel.id)
+    async def respond(self, bot_id, channel_name, caller, prompt, *, reset=False, private=False):
+        """Return (text, acceptance callback); remember only a delivered reply.
+
+        Private and public exchanges of one caller, bot and channel never
+        share a context (issue #1372): a private answer may say what a public
+        one must not, and must not resurface through a later public answer."""
+        config, channel, label = await self.lane.run(authorize, bot_id, channel_name, caller, private=private)
+        key = (bot_id, str(caller["id"]), channel.id) + (("private",) if private else ())
         now = time.monotonic()
         for old, context in list(self.contexts.items()):
             if now - context.touched >= 1800:
@@ -324,7 +332,7 @@ class ModelService:
                 self.contexts.move_to_end(key)
                 while len(self.contexts) > MAX_CONTEXTS:
                     self.contexts.popitem(last=False)
-            return disclosure(config), accept_notice
+            return disclosure(config, private=private), accept_notice
         if key in self.busy or len(self.busy) >= 2:
             await self.lane.run(limit_hit, "model busy", time.time())
             raise BotError("The model is busy; try again shortly.")
@@ -338,7 +346,8 @@ class ModelService:
                          f"\nYour chat identity is {label}. Use this name when identifying yourself."}]
             messages.extend(context.lines[-config.context_lines:] if config.context_lines else [])
             messages.append({"role": "user", "content": prompt})
-            ticket = await self.lane.run(reserve, bot_id, channel_name, caller, config, messages, prompt)
+            ticket = await self.lane.run(lambda db: reserve(db, bot_id, channel_name, caller, config, messages, prompt,
+                                                            private=private))
             api_key = await self.lane.run(provider_key, config)
             response = await self._complete(config, messages, api_key)
             await self.lane.run(settle, ticket, config, response.get("usage"))
@@ -351,7 +360,7 @@ class ModelService:
                     raise ValueError
             except (KeyError, IndexError, TypeError, ValueError):
                 raise BotError("The model returned no usable text; try again or ask the SysOp.") from None
-            current, _, current_label = await self.lane.run(authorize, bot_id, channel_name, caller)
+            current, _, current_label = await self.lane.run(authorize, bot_id, channel_name, caller, private=private)
             if current != config or current_label != label or self.contexts.get(key) is not context:
                 raise BotError("Model settings, identity or context changed while waiting; the reply was discarded.")
             def accept_reply():
