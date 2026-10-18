@@ -1237,8 +1237,8 @@ def test_user_detail_edit_profile_opens_the_members_profile(db, lane, sysop):
 
     alice = create_user(db, "alice", password="hunter2", user_level=10)
     before = menu_description_level(db, alice)
-    # 15 is Profile's "Menu descriptions"; Back from Profile, then out.
-    session = FakeSession(["u", "u", "/", "alice", "e", "1", "5", "b", "b", "b", "b", "b"])
+    # 16 is Profile's "Menu descriptions"; Back from Profile, then out.
+    session = FakeSession(["u", "u", "/", "alice", "e", "1", "6", "b", "b", "b", "b", "b"])
     _run(session, lane, sysop)
     assert "[E]dit profile" in _visible(_written_text(session))
     assert "alice's profile. Every change is logged." in _visible(_written_text(session))

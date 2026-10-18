@@ -57,6 +57,7 @@ from netbbs.doors.outbound import (
     set_rate_ceiling,
 )
 from netbbs.doors.outbound import targets as outbound_targets
+from netbbs.doors.events import set_events_ceiling, set_events_enabled
 from netbbs.link.channels import is_channel_linked
 from netbbs.moderation.log import record_action
 from netbbs.net.char_input import HELP_KEY, reject_unhandled_key
@@ -935,7 +936,17 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
                     ", ".join(channel_summary) if channels else "(none)",
                     color=VALUE_COLOR if channels else MUTED_COLOR,
                 ),
+                # Issue #1408: reporting game events is a switch of its own,
+                # off by default, with its own ceiling (§16, #1378).
+                Field("Game events", status_badge("ON" if config.events_enabled else "OFF",
+                                                  tone="success" if config.events_enabled else "neutral",
+                                                  unicode_style=unicode_style), styled=True),
+                Field("Events ceiling", f"{config.events_per_hour} events per hour"),
             ]
+            if config.events_enabled:
+                hook.append(Note(
+                    "Bots granted this door may announce its game events in chat, worded by NetBBS. "
+                    "Callers who switched game results off are never named."))
             if lapsed:
                 hook.append(Note(
                     "The account which switched this on no longer exists, so the door is "
@@ -972,6 +983,9 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
                           brief="Let it chat in one more channel"),
                 MenuEntry(label=menu_key("D", "rop a channel"), brief="Stop it speaking in one"),
                 MenuEntry(label=menu_key("H", "ourly chat lines"), brief="Chat lines per hour"),
+                MenuEntry(label=menu_key("E", "vents " + ("off" if config.events_enabled else "on")),
+                          brief="Whether it may report game events"),
+                MenuEntry(label=menu_key("G", "ame events per hour"), brief="Events per hour"),
             ]
         options.append(MenuEntry(label=menu_key("B", "ack"), brief="Return to the door"))
         await session.write_line(
@@ -1085,11 +1099,27 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
                     message_failed = True
                     message = (str(exc) if isinstance(exc, OutboundError)
                                else "That is not a whole number.")
+        elif choice == "e" and config is not None:
+            config = await lane.run(set_events_enabled, door, not config.events_enabled, changed_by=actor)
+            message = ("Game events on. Grant this door to a bot as a door-event source to announce them."
+                       if config.events_enabled else "Game events off. Nothing it reports is announced.")
+        elif choice == "g" and config is not None:
+            await session.write_line(f"Game events per hour (1-240, currently {config.events_per_hour}):")
+            raw = (await session.read_line()).strip()
+            if raw:
+                try:
+                    config = await lane.run(set_events_ceiling, door, int(raw), changed_by=actor)
+                    message = f"Events ceiling is now {config.events_per_hour} events per hour."
+                except (ValueError, OutboundError) as exc:
+                    message_failed = True
+                    message = (str(exc) if isinstance(exc, OutboundError)
+                               else "That is not a whole number.")
         elif choice == HELP_KEY:
             await show_menu_help(
                 session, "Outbound help", options,
                 about="Whether this door may post to message boards and speak in chat channels, and "
-                      "where. It can only post where you allow it, never read the BBS or send mail.",
+                      "where, and whether it may report game events for a bot to announce. It can only "
+                      "post where you allow it, never read the BBS or send mail.",
                 header_color=header_color, unicode_style=unicode_style,
             )
         else:

@@ -173,6 +173,11 @@ class OutboundConfig:
     enabled_by_user_id: int | None
     last_refusal_logged_at: str | None
     created_at: str
+    #: Issue #1408 (design §16, #1378): whether this door may report game
+    #: events and standings, a switch of its own beside posting, off by
+    #: default, with its own hourly ceiling.
+    events_enabled: bool = False
+    events_per_hour: int = 12
 
 
 def _row_to_config(row: sqlite3.Row) -> OutboundConfig:
@@ -184,6 +189,8 @@ def _row_to_config(row: sqlite3.Row) -> OutboundConfig:
         enabled_by_user_id=row["enabled_by_user_id"],
         last_refusal_logged_at=row["last_refusal_logged_at"],
         created_at=row["created_at"],
+        events_enabled=bool(row["events_enabled"]),
+        events_per_hour=row["events_per_hour"],
     )
 
 
@@ -299,6 +306,9 @@ def disable_outbound(db: Database, door, *, disabled_by: User) -> None:
     db.connection.execute("DELETE FROM door_outbound_targets WHERE door_id = ?", (door.id,))
     db.connection.execute("DELETE FROM door_outbound_channel_targets WHERE door_id = ?", (door.id,))
     db.connection.execute("DELETE FROM door_outbound_history WHERE door_id = ?", (door.id,))
+    from netbbs.doors.events import forget_door
+
+    forget_door(db, door.id)
     db.connection.execute("DELETE FROM door_outbound WHERE door_id = ?", (door.id,))
     db.connection.commit()
     # Releases everything, results included: they name a label this door no
@@ -1206,6 +1216,20 @@ def _handle_one(db: Database, door, config: OutboundConfig, actor: User, launch:
     if not isinstance(payload, dict):
         answer({"status": "rejected", "reason": "request must be a JSON object"})
         return "malformed request"
+    if "event" in payload or "standings" in payload:
+        # Door API 5 (issue #1408): a game event or a standings snapshot.
+        # Neither publishes anything here; a bot announces an event later,
+        # with text the host composes.
+        from netbbs.doors.events import handle_event, handle_standings
+
+        if sum(key in payload for key in ("event", "standings", "board", "channel")) != 1:
+            answer({"status": "rejected",
+                    "reason": "a request is one of a board post, a chat line, an event or standings"})
+            return "malformed request"
+        if "event" in payload:
+            return handle_event(db, door, config, payload["event"], len(raw), answer,
+                                rehearsal=rehearsal, rehearsed=rehearsed)
+        return handle_standings(db, door, config, payload["standings"], len(raw), answer, rehearsal=rehearsal)
     if "channel" in payload:
         if "board" in payload:
             answer({"status": "rejected", "reason": "a request names a board or a channel, not both"})
@@ -1427,6 +1451,17 @@ def door_info_block(db: Database, door_id: int, *, rehearsal: bool = False) -> d
         "channels": [target.channel.name for target in channel_targets(db, door_id)],
         "chat_lines_per_hour": config.chat_lines_per_hour,
     }
+    if config.events_enabled:
+        # Door API 5 (issue #1408): present only while the SysOp has game
+        # events switched on, so a door can tell before it reports one.
+        from netbbs.doors import events
+
+        block["events"] = {
+            "types": list(events.EVENT_TYPES),
+            "events_per_hour": config.events_per_hour,
+            "title_max": events.TITLE_MAX,
+            "standings_rows": events.STANDINGS_ROWS,
+        }
     if rehearsal:
         # A SysOp testing a door still gets a working drop directory, so the
         # door exercises the same code path it will use in earnest -- but

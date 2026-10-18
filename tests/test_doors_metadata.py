@@ -30,7 +30,7 @@ def _only_user(db):
 
 
 def test_the_contract_version_is_published(db, tmp_path, player):
-    assert _info(db, tmp_path)["door_api"] == DOOR_API_VERSION == 4
+    assert _info(db, tmp_path)["door_api"] == DOOR_API_VERSION == 5
 
 
 def test_only_a_door_with_the_hook_hears_about_outbound(db, tmp_path, player):

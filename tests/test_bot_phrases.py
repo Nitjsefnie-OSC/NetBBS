@@ -135,9 +135,9 @@ def test_phrases_are_stored_per_instance_and_cleared_by_blanking(db, sysop, chan
 
 def test_editor_shows_presets_saves_an_override_and_keeps_the_draft_on_a_bad_one(db, lane, sysop, channel):
     bot = save_bot(db, actor=sysop, name="Baud", channels=[channel.name], defaults=[], temperament="retro")
-    # Field 20 is the greeting; a bad placeholder is refused on Save with the
+    # Field 23 is the greeting; a bad placeholder is refused on Save with the
     # draft kept, then fixed and saved.
-    session = Screen(["2", "0", "s", "2", "0", "s"],
+    session = Screen(["2", "3", "s", "2", "3", "s"],
                      lines=["Hi {user}", "Hi {name}"], height=60)
 
     async def fake_read_field_line(session_, *, initial="", echo=True):

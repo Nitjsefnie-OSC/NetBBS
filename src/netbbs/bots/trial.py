@@ -56,6 +56,8 @@ class TrialSpec:
     announce_posts: bool = False
     announce_files: bool = False
     model_conversation: bool = False
+    door_sources: list[str] = field(default_factory=list)
+    announce_doors: bool = False
 
     @classmethod
     def of_bot(cls, bot) -> "TrialSpec":
@@ -67,6 +69,7 @@ class TrialSpec:
             greetings=bot.greetings, board_sources=list(bot.board_sources), file_sources=list(bot.file_sources),
             announcement_channel=bot.announcement_channel, announce_posts=bot.announce_posts,
             announce_files=bot.announce_files, model_conversation=bot.model_conversation,
+            door_sources=list(bot.door_sources), announce_doors=bot.announce_doors,
         )
 
     def grants(self) -> list[str]:
@@ -76,7 +79,7 @@ class TrialSpec:
             names.append("read whole channel")
         if self.event_channels:
             names.append("presence events")
-        if self.board_sources or self.file_sources:
+        if self.board_sources or self.file_sources or self.door_sources:
             names.append("source events")
         names.extend(self.queries)
         if self.model_conversation:
@@ -202,6 +205,11 @@ class Trial:
             create_board(db, name, creator=actor)
         for name in spec.file_sources:
             create_file_area(db, name, creator=actor)
+        if spec.door_sources:
+            import sys
+            from netbbs.doors import create_door
+            for name in spec.door_sources:
+                create_door(db, name, sys.executable, creator=actor)
         # Linked approvals do not apply: no scratch channel is Linked.
         self.bot = save_bot(
             db, actor=actor, name=spec.name, enabled=True, command=list(spec.command),
@@ -212,7 +220,7 @@ class Trial:
             greetings=spec.greetings, board_sources=spec.board_sources, file_sources=spec.file_sources,
             announcement_channel=spec.announcement_channel, announce_posts=spec.announce_posts,
             announce_files=spec.announce_files, model_conversation=spec.model_conversation,
-            phrases=spec.phrases,
+            phrases=spec.phrases, door_sources=spec.door_sources, announce_doors=spec.announce_doors,
         )
         # Callers type where the bot answers "!" lines, if it does anywhere.
         from netbbs.chat.channels import get_channel_by_name

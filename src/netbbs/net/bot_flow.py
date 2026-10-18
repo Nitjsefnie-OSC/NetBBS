@@ -8,7 +8,7 @@ from netbbs.bots.registry import (
     MAX_PHRASE_LENGTHS, NAME_ALLOWANCE, TEMPERAMENTS, get_bot, preset_phrase, list_bots, require_sysop,
     runtime_status, save_bot, stop_bots,
     deletable_bot, delete_bot,
-    local_channel,
+    local_channel, QUERIES,
 )
 from netbbs.bots.sources import public_sources
 from netbbs.chat.channels import list_channels
@@ -34,6 +34,8 @@ _BOT_COLUMNS = [
     ListColumn("channels", 8, VALUE_COLOR, align_right=True),
     ListColumn("last error", 24, MUTED_COLOR),
 ]
+# Announcement sources: public resources, never channels (doors: issue #1408).
+_SOURCE_KEYS = ("boards", "files", "doors")
 _STATE_COLORS = {"running": SUCCESS_COLOR, "starting": VALUE_COLOR, "restarting": ERROR_COLOR}
 
 
@@ -169,14 +171,17 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             "linked": list(bot.linked_channels) if bot else [],
             "stats": "stats" in bot.queries if bot else False,
             "seen": "seen" in bot.queries if bot else False,
+            "top": "top" in bot.queries if bot else False,
             "reading": list(bot.reading_channels) if bot else [],
             "events": list(bot.event_channels) if bot else [],
             "greetings": bot.greetings if bot else False,
             "boards": list(bot.board_sources) if bot else [],
             "files": list(bot.file_sources) if bot else [],
+            "doors": list(bot.door_sources) if bot else [],
             "announcement_channel": (bot.announcement_channel or "") if bot else "",
             "announce_posts": bot.announce_posts if bot else False,
             "announce_files": bot.announce_files if bot else False,
+            "announce_doors": bot.announce_doors if bot else False,
             "model": bot.model_conversation if bot else False,
             "command": json.dumps(list(bot.command if bot else HOUSE_BOT_COMMAND)),
             "temperament": bot.temperament if bot else DEFAULT_TEMPERAMENT,
@@ -212,7 +217,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 channels=values["channels"],
                 defaults=values["defaults"], lines_per_hour=values["rate"],
                 linked_channels=linked,
-                queries=[key for key in ("stats", "seen") if values[key]],
+                queries=[key for key in QUERIES if values[key]],
                 reading_channels=reading,
                 event_channels=values["events"],
                 greetings=values["greetings"],
@@ -222,6 +227,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 announce_posts=values["announce_posts"], announce_files=values["announce_files"],
                 model_conversation=values["model"],
                 phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS},
+                door_sources=values["doors"], announce_doors=values["announce_doors"],
             )
 
         async def try_prompt(session, lane, values):
@@ -241,7 +247,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
         def resource_spec(key, label, help, *, multiple=True, section):
             async def prompt(session, lane, values):
                 eligible = await lane.run(_resource_names, key, values["channels"])
-                linked = await lane.run(_linked_names) if key not in ("boards", "files") else set()
+                linked = await lane.run(_linked_names) if key not in _SOURCE_KEYS else set()
                 chrome_args = dict(
                     redraw_in_place=chrome.redraw_in_place, unicode_style=chrome.unicode_style,
                     collapsed=chrome.collapsed, header_color=chrome.header_color,
@@ -291,7 +297,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                     linked_of=lambda name: name in linked,
                     description_of=lambda name: "Unavailable; remove this grant" if name not in eligible else None,
                     title=label,
-                    empty_message=("No public sources are available." if key in ("boards", "files") else
+                    empty_message=("No public sources are available." if key in _SOURCE_KEYS else
                                    "No eligible channels. Channel-specific grants require allowed channels first."),
                     preamble="Select rows to toggle; [B]ack returns to the draft. Save the bot to apply changes.",
                     live_label=lambda: f"{len(values[key])} selected", on_toggle=toggle, **chrome_args,
@@ -334,11 +340,14 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             switch("greetings", "Baud greetings", "Greet live joins in explicitly granted presence-event channels. Subject to the ordinary output limit and mutes.", "Greetings and announcements"),
             resource_spec("boards", "Board-event sources", "Select public boards. Grants new approved post titles only; inherited Community restrictions are checked. No post bodies.", section="Greetings and announcements"),
             resource_spec("files", "File-event sources", "Select public file areas. Grants newly approved uploads and carried file names. No file contents.", section="Greetings and announcements"),
+            resource_spec("doors", "Door-event sources", "Select doors every caller may play (minimum play level 0). Grants the game events a door reports: ranks, top achievements, medals, captures, perfect rounds. Each door's own Outbound screen must also switch its game events on; callers who switched game results off are never named.", section="Greetings and announcements"),
             resource_spec("announcement_channel", "Announcement channel", "One allowed channel for these source events; choose (none) to clear. Linked destinations need their existing approval. Sources must be readable by everyone.", multiple=False, section="Greetings and announcements"),
             switch("announce_posts", "Baud post announcements", "Requires explicit board-event sources and an announcement channel. Existing posts are not replayed on startup.", "Greetings and announcements"),
             switch("announce_files", "Baud file announcements", "Requires explicit file-event sources and an announcement channel. Subject to channel policy, mutes and output limits.", "Greetings and announcements"),
+            switch("announce_doors", "Baud door announcements", "Requires explicit door-event sources and an announcement channel. NetBBS words each line; events from before the bot started are not replayed.", "Greetings and announcements"),
             switch("stats", "Grant statistics query", "Allows node name, uptime and online human count. Replies are public; no board, file or channel activity is queried.", "Queries and conversation"),
             switch("seen", "Grant last-seen query", "Allows online status and public login/logout times for this node's accounts. Respects hidden session history and never exposes private-channel activity.", "Queries and conversation"),
+            switch("top", "Grant door standings query", "Allows !top <door>: the top ten a door last reported, for doors every caller may play whose game events are on. Callers who switched game results off are left out.", "Queries and conversation"),
             switch("model", "Grant model conversation", "Off by default. Also requires the node's Model settings to be enabled. Only the caller's addressed input and isolated temporary context go to the configured provider, after disclosure. Public replies; reset clears context.", "Queries and conversation"),
             FieldSpec("temperament", "Temperament", lambda d: d["temperament"], choice_field("temperament", list(TEMPERAMENTS)),
                       step=choice_step("temperament", list(TEMPERAMENTS)), section="Behaviour and program",
@@ -393,11 +402,12 @@ def _draft_spec(values):
         name=values["name"].strip(), command=_parse_command(values["command"]), temperament=values["temperament"],
         phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS}, channels=list(values["channels"]),
         defaults=list(values["defaults"]), lines_per_hour=values["rate"],
-        queries=[key for key in ("stats", "seen") if values[key]], reading_channels=list(values["reading"]),
+        queries=[key for key in QUERIES if values[key]], reading_channels=list(values["reading"]),
         event_channels=list(values["events"]), greetings=values["greetings"], board_sources=list(values["boards"]),
         file_sources=list(values["files"]), announcement_channel=values["announcement_channel"].strip() or None,
         announce_posts=values["announce_posts"], announce_files=values["announce_files"],
         model_conversation=values["model"],
+        door_sources=list(values["doors"]), announce_doors=values["announce_doors"],
     )
 
 
@@ -407,7 +417,7 @@ def _linked_names(db):
 
 def _resource_names(db, key, allowed):
     """Load valid choices on the database lane; Save revalidates every grant."""
-    if key in ("boards", "files"):
+    if key in _SOURCE_KEYS:
         return sorted((r.name for r in public_sources(db, kind=key)), key=str.casefold)
     names = []
     for channel in list_channels(db):

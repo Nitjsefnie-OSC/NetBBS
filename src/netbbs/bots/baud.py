@@ -106,6 +106,10 @@ class Baud(botkit.Bot):
         if self.announce_files:
             self.announce(event)
 
+    def on_door(self, event):
+        if self.announce_doors:
+            self.announce(event)
+
     def on_presence(self, event):
         if self.greetings and event.kind == "join":
             self.say(event.channel, self.phrase("greeting", event.caller["name"]))
@@ -130,7 +134,8 @@ class Baud(botkit.Bot):
             opening = self.phrase("help", msg.name).strip()
             msg.reply((opening + " " if opening else "") + "help; remind <1s-30d> <text>; reminders; cancel <id>. "
                       + ("stats; " if "stats" in self.queries else "")
-                      + ("seen <local-account>; " if "seen" in self.queries else "") +
+                      + ("seen <local-account>; " if "seen" in self.queries else "")
+                      + ("top <door>; " if "top" in self.queries else "") +
                       "Reminders appear publicly here, including after restart. "
                       "/sysop <reason>: page staff. " +
                       ("Conversation is enabled; reset clears your temporary context here. Replies are public." if self.model_conversation
@@ -141,6 +146,11 @@ class Baud(botkit.Bot):
             else:
                 msg.query(command, rest.strip(), then=lambda result: msg.reply(
                     result.value["text"] if result.ok else result.get("error", "Query unavailable.")))
+        elif command == "top":
+            if command not in self.queries:
+                msg.reply("The SysOp has not enabled this query ability.")
+            else:
+                msg.query("top", rest.strip(), then=lambda result: self._top(msg, result))
         elif command in {"reminders", "cancel", "remind"}:
             # These read the reminders: each waits for any save in flight.
             handler = getattr(self, "_" + command)
@@ -156,8 +166,12 @@ class Baud(botkit.Bot):
         elif self.model_conversation:
             msg.model()
         else:
-            known = ["help", "remind", "reminders", "cancel", *sorted(self.queries & {"seen", "stats"})]
+            known = ["help", "remind", "reminders", "cancel", *sorted(self.queries & {"seen", "stats", "top"})]
             msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
+
+    def _top(self, msg, result):
+        # Issue #1408: a door's standings, as the host filtered them.
+        msg.reply(result.value["text"] if result.ok else result.get("error", "Query unavailable."))
 
     def _own(self, msg):
         return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]

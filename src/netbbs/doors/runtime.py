@@ -80,9 +80,11 @@ class DoorRunResult:
 #: six fields; 2 adds the caller/node metadata below; 3 adds the optional
 #: `outbound` object (issue #520), present only for a door whose SysOp has
 #: switched its outbound hook on; 4 adds `outbound.channels` and
-#: `outbound.chat_lines_per_hour`, and requests naming a `channel`. A door may
-#: refuse a platform it does not understand instead of probing for fields.
-DOOR_API_VERSION = 4
+#: `outbound.chat_lines_per_hour`, and requests naming a `channel`; 5 adds
+#: `outbound.events` and the `event` and `standings` requests (issue #1408).
+#: A door may refuse a platform it does not understand instead of probing for
+#: fields.
+DOOR_API_VERSION = 5
 
 
 def node_opaque_id(db) -> str:
@@ -885,7 +887,7 @@ async def run_door(session, lane, door, player, *, wall_time_limit_seconds=None,
     qmp_socket = qmp_child = None
     # A rehearsal's would-be spend, for the whole session: rehearsal posts are
     # never persisted, so without this every drain would start from zero.
-    rehearsal_spend = {"posts": 0, "chat": 0}
+    rehearsal_spend = {"posts": 0, "chat": 0, "events": 0}
     slave = workdir = None
     diagnostic_tasks = []
     resize_task = None

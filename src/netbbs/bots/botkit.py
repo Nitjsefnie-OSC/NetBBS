@@ -9,7 +9,8 @@ plumbing, so a bot is only its own handlers:
 - action ids, and matching each result to the callback waiting for it, with
   any number of results outstanding;
 - dispatch by event type: ``on_message``, ``on_channel``, ``on_presence``,
-  ``on_tick``, ``on_post``, ``on_file``; a type without a handler is ignored;
+  ``on_tick``, ``on_post``, ``on_file``, ``on_door``; a type without a handler
+  is ignored;
 - a state cache whose writes are saved in order (``save`` and ``change``);
 - ``reply`` with the caller's name in front, cut to the 500-character limit;
 - flushing every line.
@@ -101,10 +102,12 @@ class Bot:
         self.event_channels = list(hello.get("event_channels") or [])
         self.board_sources = list(hello.get("board_sources") or [])
         self.file_sources = list(hello.get("file_sources") or [])
+        self.door_sources = list(hello.get("door_sources") or [])
         self.announcement_channel = hello.get("announcement_channel")
         self.greetings = bool(hello.get("greetings", False))
         self.announce_posts = bool(hello.get("announce_posts", False))
         self.announce_files = bool(hello.get("announce_files", False))
+        self.announce_doors = bool(hello.get("announce_doors", False))
         self.model_conversation = bool(hello.get("model_conversation", False))
         self.state = hello.get("state")
         self.emit = emit or _print

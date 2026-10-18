@@ -214,6 +214,7 @@ class _Worker:
         self.privacy: dict[str, tuple[bool, bool]] = {}
         self.announcements = {}
         self.source_cursor = 0
+        self.door_cursor = 0
         self.ready = False
         self.proc = None
         self.task = None
@@ -280,8 +281,10 @@ class _Worker:
 
     async def _session(self) -> None:
         lane = self.owner.lane
-        from netbbs.bots.sources import source_head
+        from netbbs.bots.sources import door_head, source_head
+        # Startup skips history: only what arrives while the bot runs.
         self.source_cursor = await lane.run(source_head)
+        self.door_cursor = await lane.run(door_head)
         self.announcements.clear()
         state = await lane.run(read_state, self.bot.storage_name)
         path = await lane.run(state_path, self.bot.storage_name)
@@ -314,6 +317,7 @@ class _Worker:
                                "board_sources": self.bot.board_sources, "file_sources": self.bot.file_sources,
                                "announcement_channel": self.bot.announcement_channel,
                                "announce_posts": self.bot.announce_posts, "announce_files": self.bot.announce_files,
+                               "door_sources": self.bot.door_sources, "announce_doors": self.bot.announce_doors,
                                "model_conversation": self.model_enabled})
             ready = await asyncio.wait_for(self._read(), 5)
             if ready != {"type": "ready", "version": BOT_API_VERSION}:
@@ -322,7 +326,7 @@ class _Worker:
             await self.status("running")
             tasks.extend([asyncio.create_task(self._reader()), asyncio.create_task(self._writer()),
                           asyncio.create_task(self._ticks())])
-            if self.bot.board_sources or self.bot.file_sources:
+            if self.bot.board_sources or self.bot.file_sources or self.bot.door_sources:
                 tasks.append(asyncio.create_task(self._source_events()))
             # A program may close stderr while keeping its protocol pipes open.
             # EOF there is not the end of the bot session.
@@ -411,7 +415,7 @@ class _Worker:
                 except BotError as exc:
                     await self.notify(event["request"], str(exc))
                     continue
-            elif event["type"] in {"post", "file"}:
+            elif event["type"] in {"post", "file", "door"}:
                 from netbbs.bots.sources import source_event
                 reference = self.announcements.get(event["event"])
                 if reference is None:
@@ -426,11 +430,18 @@ class _Worker:
             await self._write(event)
 
     async def _source_events(self):
-        from netbbs.bots.sources import source_batch, source_event
+        from netbbs.bots.sources import door_batch, source_batch, source_event
         while True:
-            rows, self.source_cursor, advanced = await self.owner.lane.run(source_batch, self.bot.id, self.source_cursor)
-            if advanced:
-                await self.status("running", "Source-event window advanced; earlier notifications may have been skipped.")
+            rows = []
+            if self.bot.board_sources or self.bot.file_sources:
+                rows, self.source_cursor, advanced = await self.owner.lane.run(source_batch, self.bot.id, self.source_cursor)
+                if advanced:
+                    await self.status("running", "Source-event window advanced; earlier notifications may have been skipped.")
+            if self.bot.door_sources:
+                doors, self.door_cursor, advanced = await self.owner.lane.run(door_batch, self.bot.id, self.door_cursor)
+                if advanced:
+                    await self.status("running", "Door-event window advanced; earlier notifications may have been skipped.")
+                rows = rows + doors
             for reference in rows:
                 if len(self.announcements) >= MAX_PENDING or self.events.full():
                     await self.status("running", "Bot source-event queue full; a notification was dropped.")
