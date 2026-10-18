@@ -765,9 +765,10 @@ def test_a_door_stop_ends_although_the_door_exit_is_seen_late(db, lane, player, 
 
 
 def test_a_door_stop_ends_although_a_descendant_holds_its_output_open(db, lane, player, tmp_path):
-    # Windows has no group kill: the door is killed, and the child it started
-    # keeps the inherited stdout open. The stop must not wait for that child.
-    # (On POSIX the group SIGKILL ends the child too.)
+    # The door is killed, and a child it started keeps the inherited stdout
+    # open. The stop must not wait for that child. On Windows, which has no
+    # group kill, any child does this; on POSIX one that left the door's
+    # process group (a daemonizing helper) does, so the child here leaves it.
     import subprocess
     from netbbs.doors.profiles import DoorProfile
     from tests.bounded import run_bounded
@@ -775,7 +776,8 @@ def test_a_door_stop_ends_although_a_descendant_holds_its_output_open(db, lane, 
     pid_file = tmp_path / "child.pid"
     script = _write_script(tmp_path, "parent_door.py", f"""
         import subprocess, sys, time
-        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], close_fds=False)
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], close_fds=False,
+                                 start_new_session=True)
         open({str(pid_file)!r}, "w").write(str(child.pid))
         print("ready", flush=True)
         time.sleep(60)

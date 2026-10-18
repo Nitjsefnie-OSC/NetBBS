@@ -805,8 +805,9 @@ async def _finish_drains(drains, seconds=_KILLED_EXIT_SECONDS):
     """Let the output drains reach end of file, for a bounded time after the stop.
 
     A pipe ends when the last process holding it does. The door's group is
-    dead by now, but on Windows there is no group kill: a descendant the door
-    started can hold its stdout open for as long as it runs. Waiting for that
+    dead by now, but a descendant outside it -- on Windows, which has no group
+    kill, any descendant; on POSIX, one that started its own session -- can
+    hold the door's stdout open for as long as it runs. Waiting for that
     would hang the caller's session as an unseen exit would (issue #1428).
     """
     if not drains:
