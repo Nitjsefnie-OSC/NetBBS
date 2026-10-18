@@ -151,10 +151,14 @@ async def offer_onboarding(session: Session, lane: DatabaseLane, actor: User | N
 
 async def _offer_house_bot(session: Session, lane: DatabaseLane, actor: User) -> None:
     key = lane.path.resolve()
-    if key in _house_bot_in_progress or not await lane.run(house_bot_offer_pending):
+    # Claimed with no await between the check and the add, so two SysOps
+    # logging in at once cannot both pass it (single-threaded event loop).
+    if key in _house_bot_in_progress:
         return
     _house_bot_in_progress.add(key)
     try:
+        if not await lane.run(house_bot_offer_pending):
+            return
         await _write_wrapped(session, _BAUD_BLURB)
         if not await prompt_yes_no(
             session, f"Switch on {HOUSE_BOT_NAME}, with help and greetings, in a channel you choose?", default=False
@@ -164,6 +168,7 @@ async def _offer_house_bot(session: Session, lane: DatabaseLane, actor: User) ->
                 session, f"(Noted. {HOUSE_BOT_NAME} stays off; set it up any time under {_BAUD_CHANGE_LATER}.)"
             )
             return
+        # Re-read after the yes: another session may have changed channels.
         channel = await _prompt_for_channel(session, await lane.run(house_bot_channels))
         if channel is None:
             await _write_wrapped(session, "(Nothing was changed -- you'll be asked again next time.)")
@@ -187,7 +192,9 @@ async def _offer_house_bot(session: Session, lane: DatabaseLane, actor: User) ->
 
 async def _prompt_for_channel(session: Session, names: list[str]) -> str | None:
     """Pick one channel by number or name; Enter takes the first. Two
-    unrecognised answers leave the question open."""
+    unrecognised answers, or no channel left, leave the question open."""
+    if not names:
+        return None
     await session.write_line("")
     for number, name in enumerate(names, start=1):
         await session.write_line(f"  {number}. #{sanitize_text(name)}")
