@@ -334,7 +334,9 @@ from one to 60 seconds. Kill controls disable the instance persistently.
 
 ## Bundled Baud
 
-Commands: `help`, `remind <1s-30d> <text>`, `reminders`, `cancel <id>`.
+Commands: `help`, `remind <when> <text>`, `reminders`, `cancel <id>`,
+`tell <name> <text>`, `tells` and `cancel tell <id>`; `help remind` and
+`help tell` explain the two.
 `sysop` only points to the host's `/sysop <reason>` command: by the time Baud
 sees a `!` line it has already gone to the channel, so Baud cannot page anyone
 and says so. `help` mentions `/sysop` too. No bot can page the SysOp: a page
@@ -355,6 +357,31 @@ per caller and 48 per instance, also subject to the state byte limit. Listing
 and cancelling work only for the caller's reminders in the current channel,
 so a public query cannot expose a reminder from a private channel.
 
+`<when>` is a duration (`10m`, `2h`, `1s` to `30d`) or a time in the node's
+display clock, from the hello's `timezone`: `HH:MM` (today, or tomorrow once
+it has passed), `tomorrow HH:MM`, `mon` to `sun HH:MM` (the next such day,
+today while the time is ahead) or `YYYY-MM-DD HH:MM` (refused once past).
+Times are 24-hour and dates ISO only: `01.11` could be either order and is
+refused. A time in a spring-forward gap is read at its pre-transition offset
+and a repeated one at its first occurrence, as the backup schedule does; at
+most 30 days ahead. Due times are stored as UTC instants, so a change of the
+display zone never moves a saved reminder. The confirmation names the instant
+in the node clock: `Saved reminder #3 for Fri 20:00 CET.`
+
+A due reminder is said with `say.for` for its owner. If they are not in its
+channel, the host holds it for 7 days and says it on their return, as
+`alice: reminder #3 (due 18:00, held until you came back): net meeting`;
+after that it is dropped silently. `reminders` lists a held one as `waiting
+since 18:00`, cancelling it withdraws the held line, and held reminders still
+count toward the eight and the 48. After a restart Baud asks `held.list` which
+of its held reminders are still waiting.
+
+`tell` sends the host's token-bound `tell` action, so tells live in the node,
+not in Baud's state. Baud confirms publicly where the note will be said, or
+answers `Nib is here now.`; a refusal is shown to the caller alone. `tells`
+lists the caller's own waiting tells in this channel, and `cancel tell <id>`
+withdraws one.
+
 Due reminders wait through shutdowns. A refused reminder backs off on its own
 (one minute, doubling to an hour) while other due reminders are still
 delivered, and is dropped after eight refusals. They are removed after
@@ -373,7 +400,7 @@ the hello's `phrases`):
 | `greeting` | A live join, with greetings on | `Welcome, {name}!` |
 | `help` | The opening of the `help` reply | `Happy to help!` |
 | `busy` | The reply while a full queue waits on a reminder save | `Busy saving reminders; try again shortly.` |
-| `limit` | The reply at the reminder limit | `Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first.` |
+| `limit` | The reply at the reminder limit, held reminders included | `Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first.` |
 
 Terse greets with `Welcome, {name}.` and has no help opening; retro says
 `Carrier detected: welcome, {name}!` and `Carrier detected.`. An empty override
@@ -412,7 +439,7 @@ What it does for you:
   with a line on stderr and exit status 1, and no `ready` is sent. Use the
   copy that ships with the node you run on.
 - **Dispatch by event type.** An event calls `on_<type>`: `on_message`,
-  `on_channel`, `on_presence`, `on_tick`, `on_post`, `on_file`. A type without
+  `on_channel`, `on_presence`, `on_tick`, `on_post`, `on_file`, `on_held`. A type without
   a handler, including one a newer host adds, is ignored. Fields read as keys
   or attributes (`event.channel`, `event["channel"]`); a missing one reads as
   `None`.
@@ -425,9 +452,12 @@ What it does for you:
   **fields)`, which gives it an id and, when `then` is given, calls
   `then(result)` when its result arrives. Any number may be outstanding, and
   events still arrive in between. The shortcuts are `bot.say(channel, text)`,
-  `bot.announce(event)`, `bot.load(then)` (`state.get`) and `bot.save(value)`,
-  and on a message `msg.reply(text)`, `msg.query(name, target)`, `msg.model()`
-  and `msg.model_reset()`. Each takes an optional `then`:
+  `bot.announce(event)`, `bot.say_for(channel, caller, text, held_text,
+  expires)`, `bot.held_lines(then)`, `bot.cancel_held(held_id)`,
+  `bot.load(then)` (`state.get`) and `bot.save(value)`, and on a message
+  `msg.reply(text)`, `msg.query(name, target)`, `msg.model()`,
+  `msg.model_reset()`, `msg.tell(to, text)`, `msg.tells()` and
+  `msg.cancel_tell(tell_id)`. Each takes an optional `then`:
 
   ```python
   msg.query("stats", then=lambda result: msg.reply(result.text))

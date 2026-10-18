@@ -443,3 +443,199 @@ def test_hello_names_the_display_zone_and_a_zone_change_restarts(db, lane, hub, 
             await runtime.close()
 
     asyncio.run(run())
+
+
+# -- Baud --------------------------------------------------------------------
+
+BERLIN = "Europe/Berlin"
+
+
+def _ts(text, tz=BERLIN):
+    from zoneinfo import ZoneInfo
+    return dt.datetime.fromisoformat(text).replace(tzinfo=ZoneInfo(tz)).timestamp()
+
+
+def _msg(text, request="r", caller=7, name="alice", channel="general"):
+    return {"type": "message", "request": request, "caller": {"id": caller, "name": name},
+            "channel": channel, "text": text}
+
+
+@pytest.mark.parametrize("when, now, expected", [
+    # Later today, and a time already past today meaning tomorrow.
+    ("20:00", "2026-10-21T10:00", "2026-10-21T20:00"),
+    ("08:00", "2026-10-21T10:00", "2026-10-22T08:00"),
+    ("tomorrow 9:05", "2026-10-21T23:30", "2026-10-22T09:05"),
+    # A weekday: the next such day, today while the time is still ahead.
+    ("wed 20:00", "2026-10-21T10:00", "2026-10-21T20:00"),
+    ("wed 08:00", "2026-10-21T10:00", "2026-10-28T08:00"),
+    ("fri 20:00", "2026-10-21T10:00", "2026-10-23T20:00"),
+    ("2026-11-01 20:00", "2026-10-21T10:00", "2026-11-01T20:00"),
+])
+def test_baud_absolute_times_in_the_node_clock(when, now, expected):
+    from netbbs.bots.baud import parse_when, zone
+    due, text = parse_when(f"{when} net meeting", _ts(now), zone(BERLIN))
+    assert (due, text) == (_ts(expected), "net meeting")
+
+
+def test_baud_absolute_times_across_both_dst_transitions():
+    from netbbs.bots.baud import describe, parse_when, zone
+    tz = zone(BERLIN)
+    utc = dt.timezone.utc
+    # Spring forward (29 March 2026, 02:00 -> 03:00): 02:30 does not exist and
+    # is read at its pre-transition offset, as the backup schedule does.
+    due, _ = parse_when("2026-03-29 02:30 gap", _ts("2026-03-28T12:00"), tz)
+    assert dt.datetime.fromtimestamp(due, utc) == dt.datetime(2026, 3, 29, 1, 30, tzinfo=utc)
+    assert describe(due, due - 3600, tz) == "Sun 03:30 CEST"
+    # Fall back (25 October 2026, 03:00 -> 02:00): 02:30 happens twice; the
+    # first occurrence counts.
+    due, _ = parse_when("sun 02:30 repeat", _ts("2026-10-24T12:00"), tz)
+    assert dt.datetime.fromtimestamp(due, utc) == dt.datetime(2026, 10, 25, 0, 30, tzinfo=utc)
+    assert describe(due, due - 3600, tz) == "Sun 02:30 CEST"
+    # A wall time after the change carries the new offset.
+    due, _ = parse_when("sun 20:00 after", _ts("2026-10-24T12:00"), tz)
+    assert describe(due, due - 3600, tz) == "Sun 20:00 CET"
+
+
+@pytest.mark.parametrize("rest, reason", [
+    ("01.11 20:00 x", "YYYY-MM-DD"),
+    ("11/01 20:00 x", "YYYY-MM-DD"),
+    ("2026-10-01 20:00 x", "already passed"),
+    ("2026-12-31 20:00 x", "30 days"),
+    ("31d x", "30 days"),
+    ("8pm x", "Use remind"),
+    ("2026-02-30 10:00 x", "no date"),
+])
+def test_baud_refuses_ambiguous_past_and_far_times(rest, reason):
+    from netbbs.bots.baud import WhenError, parse_when, zone
+    with pytest.raises(WhenError, match=reason):
+        parse_when(rest, _ts("2026-10-21T10:00"), zone(BERLIN))
+
+
+def test_baud_confirms_the_instant_with_the_zone(monkeypatch):
+    import netbbs.bots.baud as baud_module
+    monkeypatch.setattr(baud_module.time, "time", lambda: _ts("2026-10-21T10:00"))
+    sent = []
+    baud = baud_module.Baud({"timezone": BERLIN}, sent.append)
+    baud.handle(_msg("remind fri 20:00 net meeting"))
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
+    assert sent[-1]["text"] == ("alice: Saved reminder #1 for Fri 20:00 CEST. I'll say it here then, "
+                                "or when you next join if you're away.")
+
+
+def test_baud_holds_a_due_reminder_for_an_absent_owner_and_lists_it():
+    from netbbs.bots.baud import HELD_SECONDS, Baud
+    sent = []
+    due = _ts("2026-10-21T18:00")
+    reminder = {"id": 3, "user": 7, "name": "alice", "channel": "general", "due": due, "text": "net meeting 20:00"}
+    baud = Baud({"timezone": BERLIN, "state": {"next": 4, "reminders": [reminder]}}, sent.append)
+    baud.handle({"type": "tick", "time": due + 1})
+    say = sent[-1]
+    assert say == {"id": say["id"], "action": "say.for", "channel": "general", "caller": 7,
+                   "text": "alice: reminder #3: net meeting 20:00",
+                   "held_text": "alice: reminder #3 (due 18:00, held until you came back): net meeting 20:00",
+                   "expires": HELD_SECONDS}
+    baud.handle({"type": "result", "id": say["id"], "ok": True, "value": {"held": True, "held_id": 12}})
+    assert sent[-1]["action"] == "state.set" and sent[-1]["value"]["reminders"][0]["held"] == 12
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
+    # Held: never said again on later ticks, and listed as waiting.
+    count = len(sent)
+    baud.handle({"type": "tick", "time": due + 5})
+    assert len(sent) == count
+    baud.handle(_msg("reminders"))
+    assert sent[-1]["text"] == "alice: #3: net meeting 20:00 (waiting since 18:00)"
+    # Still counts toward the eight per caller.
+    for n in range(7):
+        baud.handle(_msg(f"remind 1h n{n}"))
+        baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
+    baud.handle(_msg("remind 1h one too many"))
+    assert "Reminder limit reached" in sent[-1]["text"]
+    # The host delivered it on the owner's return: Baud forgets it.
+    baud.handle({"type": "held", "held_id": 12, "outcome": "delivered", "message_id": 5})
+    assert sent[-1]["action"] == "state.set"
+    assert 3 not in [r["id"] for r in sent[-1]["value"]["reminders"]]
+
+
+def test_baud_cancelling_a_held_reminder_withdraws_the_held_line():
+    from netbbs.bots.baud import Baud
+    sent = []
+    reminder = {"id": 3, "user": 7, "name": "alice", "channel": "general", "due": 0, "text": "x", "held": 12}
+    baud = Baud({"state": {"next": 4, "reminders": [reminder]}}, sent.append)
+    baud.handle(_msg("cancel 3"))
+    assert sent[-2] == {"id": sent[-2]["id"], "action": "held.cancel", "held_id": 12}
+    assert sent[-1]["action"] == "state.set" and sent[-1]["value"]["reminders"] == []
+
+
+def test_baud_restart_reconciles_held_reminders_with_the_host():
+    from netbbs.bots.baud import Baud
+    sent = []
+    reminders = [{"id": i, "user": 7, "name": "alice", "channel": "general", "due": 0, "text": "x", "held": 10 + i}
+                 for i in (1, 2)]
+    baud = Baud({"state": {"next": 3, "reminders": reminders}}, sent.append)
+    baud.handle({"type": "tick", "time": 1})
+    assert sent[-1]["action"] == "held.list"
+    # Held line 11 was delivered while Baud was down; 12 still waits.
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True, "value": [{"held_id": 12}]})
+    assert sent[-1]["action"] == "state.set"
+    assert [r["id"] for r in sent[-1]["value"]["reminders"]] == [2]
+
+
+def test_baud_tell_commands_use_the_request_token():
+    from netbbs.bots.baud import Baud
+    sent = []
+    baud = Baud({}, sent.append)
+    baud.handle(_msg("tell Nib: check the Retro board", request="t1"))
+    assert sent[-1] == {"id": sent[-1]["id"], "action": "tell", "request": "t1", "to": "Nib",
+                        "text": "check the Retro board"}
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True,
+                 "value": {"held": True, "tell_id": 4, "name": "nib"}})
+    assert sent[-1]["text"].startswith("alice: I'll tell nib here, publicly, when they next join")
+    baud.handle(_msg("tell nib hi", request="t2"))
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True, "value": {"present": True, "name": "nib"}})
+    assert sent[-1]["text"] == "alice: nib is here now."
+    # A refusal was shown privately by the host: nothing public follows.
+    baud.handle(_msg("tell nib hi", request="t3"))
+    count = len(sent)
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": False,
+                 "error": "nib does not accept messages from you."})
+    assert len(sent) == count
+    baud.handle(_msg("tells", request="t4"))
+    assert sent[-1]["action"] == "tell.list"
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True,
+                 "value": [{"tell_id": 4, "to": "nib", "text": "check the Retro board", "created_at": "x"}]})
+    assert sent[-1]["text"] == "alice: tell #4 to nib: check the Retro board"
+    baud.handle(_msg("cancel tell 4", request="t5"))
+    assert sent[-1]["action"] == "tell.cancel" and sent[-1]["tell_id"] == 4
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True, "value": {"cancelled": True}})
+    assert sent[-1]["text"] == "alice: Cancelled tell #4."
+
+
+def test_real_baud_holds_a_reminder_until_its_owner_joins(db, lane, hub, sysop, alice, channel):
+    from netbbs.bots.state import read_state
+    bot = install(db, sysop, channel)
+
+    async def run():
+        runtime = BotRuntime(lane, hub, poll_seconds=.03, restart_seconds=.03)
+        runtime.start()
+        watcher = ParticipantId(sysop.username, 9)
+        queue = hub.join(channel.name, watcher)
+        try:
+            async with asyncio.timeout(30):
+                while bot.id not in runtime.running_ids:
+                    await asyncio.sleep(.02)
+                # Alice sets it and is gone when it falls due.
+                await runtime.enqueue(bot, channel, {"id": alice.id, "name": alice.username}, "remind 1s tea")
+                while not (read_state(db, bot.storage_name).get("reminders") or [{}])[0].get("held"):
+                    await asyncio.sleep(.05)
+                assert len(held_rows(db)) == 1
+                hub.join(channel.name, ParticipantId(alice.username, 1))
+                runtime.joined(channel, alice.id)
+                while True:
+                    line = await queue.get()
+                    if "held until you came back" in getattr(line, "body", ""):
+                        break
+                while read_state(db, bot.storage_name)["reminders"]:
+                    await asyncio.sleep(.05)
+        finally:
+            await runtime.close()
+
+    asyncio.run(run())
