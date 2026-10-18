@@ -206,8 +206,11 @@ class BotRuntime:
                     channel, caller = await asyncio.wait_for(self.joins.get(), PRUNE_SECONDS)
                 except asyncio.TimeoutError:
                     continue
-                for held_id, bot_id, kind in await self.lane.run(join_candidates, channel, caller):
-                    await self._deliver(channel, held_id, bot_id, kind)
+                try:
+                    for held_id, bot_id, kind in await self.lane.run(join_candidates, channel, caller):
+                        await self._deliver(channel, held_id, bot_id, kind)
+                finally:
+                    self.joins.task_done()
             except asyncio.CancelledError:
                 raise
             except Exception:

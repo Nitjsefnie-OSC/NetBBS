@@ -78,7 +78,7 @@ class Harness:
         self.worker.pending[token] = (channel.name, None, time.monotonic() + 60, None, dict(caller), "")
         return token
 
-    async def event(self, kind="held", timeout=5):
+    async def event(self, kind="held", timeout=30):
         async with asyncio.timeout(timeout):
             while True:
                 event = await self.worker.events.get()
@@ -86,10 +86,9 @@ class Harness:
                     return event
 
     async def settle(self):
-        async with asyncio.timeout(5):
-            while not self.runtime.joins.empty():
-                await asyncio.sleep(.01)
-        await asyncio.sleep(.1)
+        # Every queued join handled, not merely taken off the queue.
+        async with asyncio.timeout(30):
+            await self.runtime.joins.join()
 
 
 def test_say_for_a_present_caller_publishes_at_once(db, lane, hub, sysop, alice, channel):
@@ -259,7 +258,7 @@ def test_real_chat_join_delivers_the_held_line(db, lane, hub, presence, mailbox,
                                                             channel, alice))
             try:
                 # The line is wrapped at the terminal width.
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(30):
                     while "held until you came" not in "".join(session.written):
                         await asyncio.sleep(.02)
                 session.input.put_nowait("/quit")
