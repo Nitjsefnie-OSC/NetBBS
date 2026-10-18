@@ -276,12 +276,12 @@ class Baud(botkit.Bot):
             msg.reply(f"remind <when> <text>: when is 10m, 2h, 20:00, tomorrow 09:00, fri 20:00 or "
                       f"2026-11-01 20:00, 24-hour, in the node clock ({dt.datetime.now(self.tz).strftime('%Z') or 'UTC'}"
                       "), up to 30 days ahead. I say it publicly here when it is due, or when you next join "
-                      "this channel if you are away (within 7 days).")
+                      "this channel if you are away (within 7 days).", private=msg.private or None)
         elif command in {"", "help"} and topic == "tell":
             msg.reply("tell <name> <text>: a note of up to 160 characters for a local account. I say it "
                       "publicly here when they next join this channel (within 14 days). tells lists yours; "
                       "cancel tell <id> withdraws one. Nobody who blocks you or takes no direct messages "
-                      "gets your tells.")
+                      "gets your tells.", private=msg.private or None)
         elif command in {"", "help"}:
             opening = self.phrase("help", msg.name).strip()
             if self.blocks:
@@ -291,8 +291,9 @@ class Baud(botkit.Bot):
                       + ("stats; " if "stats" in self.queries else "")
                       + ("seen <name>; " if "seen" in self.queries else "") +
                       "help remind|tell: more. /sysop <reason>: page staff. " +
-                      ("Conversation is enabled; reset clears your temporary context here. Replies are public." if self.model_conversation
-                       else "No language model is enabled."))
+                      ("Conversation is enabled; reset clears your temporary context here. " if self.model_conversation
+                       else "No language model is enabled. ") + self._privacy_note(msg),
+                      private=msg.private or None)
         elif command == "tell":
             self._tell(msg, rest.strip())
         elif command == "tells":
@@ -321,8 +322,8 @@ class Baud(botkit.Bot):
         elif command == "sysop":
             # Paging is the host's /sysop (decision 1377): a ! line has
             # already gone out publicly, so this only points the way.
-            msg.reply("I can't page anyone, and this line was public. "
-                      "Type /sysop <reason>: only the SysOp and staff see it.")
+            msg.reply("I can't page anyone" + ("" if msg.asked_privately else ", and this line was public") +
+                      ". Type /sysop <reason>: only the SysOp and staff see it.")
         elif command == "reset" and self.model_conversation:
             msg.model_reset()
         elif self.model_conversation:
@@ -331,15 +332,25 @@ class Baud(botkit.Bot):
             known = ["help", "remind", "reminders", "cancel", "tell", "tells", *sorted(self.queries & {"seen", "stats"})]
             msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
 
+    def _privacy_note(self, msg):
+        # What is true for this caller (issue #1372). A caller a private
+        # answer can reach gets this help, and reminders, privately.
+        if not msg.private:
+            return "Replies are public."
+        name = self.name or "Baud.bot"
+        if str(msg.caller["id"]).startswith("link:"):
+            name += "@Node"
+        return f"Ask privately: /msg {name} <text>."
+
     def _help_block(self, msg, opening):
         # Issue #1373: the command list as a titled block; the opening
         # phrase heads it, and the line form above is for an older host.
         # At most 12 rows: the opening, seven commands, two queries, /sysop
-        # and the model line.
+        # and the model line, which ends with what is private (issue #1372).
         rows = [opening] if opening else []
         rows += [("help", "this list; help remind or help tell for more"),
                  ("remind <when> <text>", "a reminder here, shown publicly"),
-                 ("reminders", "your reminders here"), ("cancel <id>", "cancel one of yours"),
+                 ("reminders", "your reminders in every channel" if msg.private else "your reminders here"), ("cancel <id>", "cancel one of yours"),
                  ("tell <name> <text>", "a note for someone's next join here"),
                  ("tells", "your waiting tells"), ("cancel tell <id>", "withdraw one")]
         if "stats" in self.queries:
@@ -347,24 +358,35 @@ class Baud(botkit.Bot):
         if "seen" in self.queries:
             rows.append(("seen <name>", "when someone was last on"))
         rows.append(("/sysop <reason>", "page staff"))
-        rows.append("Conversation is enabled; reset clears your temporary context here." if self.model_conversation
-                    else "No language model is enabled.")
-        msg.reply_block("Commands", rows)
+        rows.append(("Conversation is enabled; reset clears your temporary context here. " if self.model_conversation
+                     else "No language model is enabled. ") + self._privacy_note(msg))
+        msg.reply_block("Commands", rows, private=msg.private or None)
 
     def _own(self, msg):
         return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]
 
     def _reminders(self, msg, rest):
-        # Do not reveal reminder text from a different, possibly private channel.
+        def entry(r, where=""):
+            return (f"#{r['id']}{where}: {r['text'][:35]}"
+                    + (f" (waiting since {self.clock(r['due'])})" if r.get("held") else ""))
+        if msg.private:
+            # Answered to the caller alone, so every channel's reminders.
+            msg.reply("; ".join(entry(r, " " + r["channel"]) for r in self._own(msg))
+                      or "You have no reminders.", private=True)
+            return
+        # A public answer must not reveal reminder text from a different,
+        # possibly private channel.
         here = [r for r in self._own(msg) if r["channel"] == msg.channel]
-        msg.reply("; ".join(f"#{r['id']}: {r['text'][:35]}"
-                            + (f" (waiting since {self.clock(r['due'])})" if r.get("held") else "")
-                            for r in here) or "No reminders here.")
+        msg.reply("; ".join(entry(r) for r in here) or "No reminders here.")
 
     def _cancel(self, msg, rest):
-        match = next((r for r in self._own(msg) if str(r["id"]) == rest and r["channel"] == msg.channel), None)
+        # Where the private listing shows every channel, cancelling reaches
+        # every channel too; a public answer keeps to this one.
+        match = next((r for r in self._own(msg) if str(r["id"]) == rest
+                      and (msg.private or r["channel"] == msg.channel)), None)
         if match is None:
-            msg.reply("No reminder with that id belongs to you in this channel.")
+            msg.reply("No reminder with that id is yours." if msg.private
+                      else "No reminder with that id belongs to you in this channel.")
         else:
             if match.get("held"):
                 self.cancel_held(match["held"])

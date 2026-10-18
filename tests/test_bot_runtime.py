@@ -226,7 +226,7 @@ def test_real_baud_help_persistent_reminder_restart_and_stop(db, lane, hub, syso
             assert active_labels(db, channel, runtime.running_ids) == ["Baud.bot"]
             assert hub.participant_count(channel.name) == 1
             await send("!help")
-            assert "No language model" in (await next_line(queue, "No language model")).body
+            assert "No language model" in (await next_line(queue, "No language model")).text
             # A real unexpected exit recovers without taking chat down.
             proc.kill()
             await eventually(lambda: bot.id in runtime.running_ids and runtime.workers[bot.id].proc is not proc)
@@ -380,7 +380,10 @@ def test_real_chat_dispatch_roster_mute_and_no_replay_triggers(db, lane, hub, pr
             await eventually(lambda: "No language model" in "".join(session.written))
             assert "[BOT] Baud.bot" in "".join(session.written)
             assert "addressed messages only" in "".join(session.written)
-            assert len([m for m in get_scrollback(db, channel) if m.author_kind == "bot"]) == 1
+            # Help answers privately (issue #1372): a block whose title ends
+            # "to you", kept out of history.
+            assert "to you" in "".join(session.written)
+            assert not [m for m in get_scrollback(db, channel) if m.author_kind == "bot"]
             session.input.put_nowait("/mute Baud.bot")
             await eventually(lambda: "was muted" in "".join(session.written))
             session.input.put_nowait("!help")

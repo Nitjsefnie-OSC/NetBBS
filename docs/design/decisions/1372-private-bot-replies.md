@@ -129,9 +129,13 @@ summary (§6.6), is served only on a privately asked token, with a grant
 warning that says the program sees it. The issue that adds such a query
 decides it.
 
-**Baud.** Once private answers exist, `reminders` lists all of the caller's
-reminders privately, across channels; `help` answers privately; and the help
-line "Replies are public." is reworded.
+**Baud.** Wherever a private answer can reach the caller (the `message`
+event's `private`), `reminders` lists all of the caller's reminders
+privately, across channels, and `help` answers privately and ends "Ask
+privately: /msg Baud.bot <text>.". A caller whose node cannot take a private
+answer keeps the public, this-channel-only listing, and that help ends
+"Replies are public.". Baud's other answers follow how the request was
+asked; reminders are still said publicly when due.
 
 **Implementation notes.** One migration, for the per-caller private-answer
 count. The privately asked path must leave the request out of
