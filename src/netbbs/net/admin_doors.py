@@ -49,7 +49,9 @@ from netbbs.doors.outbound import (
     channel_not_allowable,
     channel_targets,
     disable_outbound,
+    door_not_public,
     enable_outbound,
+    not_public_message,
     outbound_config,
     revoke_channel,
     revoke_target,
@@ -897,6 +899,7 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
         allowed = await lane.run(outbound_targets, door.id) if config is not None else []
         channels = await lane.run(channel_targets, door.id) if config is not None else []
         channel_summary = [await lane.run(_door_channel_summary, target) for target in channels]
+        gated = await lane.run(door_not_public, door) if config is not None else None
         await session.write_line(
             "\r\n" + screen_title(f"{sanitize_text(door.name)} — outbound",
                 breadcrumb=crumbs(session, own=True), width=session.terminal_width,
@@ -936,6 +939,14 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
                     color=VALUE_COLOR if channels else MUTED_COLOR,
                 ),
             ]
+            if gated:
+                # Said where the allowlist is shown, because nothing else
+                # explains why a door with allowed targets posts nowhere: its
+                # level was raised after they were allowed (issue #1401).
+                hook.append(Note(
+                    f"Nothing it sends reaches anyone: {gated}. Set its minimum play level "
+                    "to 0 to let it post and chat again.", color=WARNING_COLOR,
+                ))
             if lapsed:
                 hook.append(Note(
                     "The account which switched this on no longer exists, so the door is "
@@ -999,6 +1010,10 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
             config = await lane.run(enable_outbound, door, enabled_by=actor)
             message = (f"You are now responsible for what {sanitize_text(door.name)} posts. "
                        f"It kept the name {config.label} and its allowed boards.")
+        elif choice in ("a", "l") and gated:
+            # Refused before the picker, not after it: choosing a target only
+            # to be told no target can be allowed is a wasted step.
+            message, message_failed = not_public_message(gated), True
         elif choice == "a" and config is not None:
             board = await pick_item(
                 session, await lane.run(list_boards, order_by="alphabetical"),
@@ -1010,8 +1025,11 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
                 accent_color=accent_color, header_color=header_color,
             )
             if board is not None:
-                await lane.run(allow_target, door, board, allowed_by=actor)
-                message = f"{board.name} allowed."
+                try:
+                    await lane.run(allow_target, door, board, allowed_by=actor)
+                    message = f"{board.name} allowed."
+                except OutboundError as exc:
+                    message, message_failed = str(exc), True
         elif choice == "r" and config is not None:
             board = await pick_item(
                 session, allowed, name_of=lambda b: b.name, stable_id_of=lambda b: b.id,
