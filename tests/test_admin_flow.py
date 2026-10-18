@@ -10007,6 +10007,32 @@ def test_the_outbound_screen_shows_a_moderators_mute(db, lane, sysop):
     assert "#lobby (muted by sysop)" in _normalized_visible(_written_text(session))
 
 
+def test_the_outbound_screen_says_why_a_gated_door_reaches_no_one(db, lane, sysop):
+    """Issue #1401: a door whose level was raised after its channel was
+    allowed keeps the allowlist but is refused every line, and nothing else
+    on the screen would tell the SysOp why."""
+    from netbbs.chat.channels import create_channel
+    from netbbs.doors import create_door
+    from netbbs.doors.outbound import allow_channel, channel_targets, enable_outbound
+
+    door = create_door(db, "Blacksite", "/usr/bin/python3", creator=sysop)
+    channel = create_channel(db, "lobby", creator=sysop)
+    create_channel(db, "games", creator=sysop)
+    enable_outbound(db, door, enabled_by=sysop)
+    allow_channel(db, door, channel, allowed_by=sysop)
+    db.connection.execute("UPDATE doors SET min_play_level = 10 WHERE id = ?", (door.id,))
+    db.connection.commit()
+
+    session = FakeSession(_door_outbound_keys("l"))
+    _run(session, lane, sysop)
+    text = _normalized_visible(_written_text(session))
+
+    assert "Nothing it sends reaches anyone: this door is limited to callers at level 10 or above" in text
+    assert "This door is limited to callers at level 10 or above" in text, "[L] is refused with the reason"
+    assert "Which channel may it speak in?" not in text, "and without a picker first"
+    assert [t.channel.name for t in channel_targets(db, door.id)] == ["lobby"]
+
+
 def test_the_chat_ceiling_is_set_on_its_own(db, lane, sysop):
     from netbbs.doors import create_door
     from netbbs.doors.outbound import enable_outbound, outbound_config
