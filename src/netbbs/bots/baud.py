@@ -224,7 +224,8 @@ class Baud(botkit.Bot):
             ordinal = self.state["next"]
             reminder = {"id": ordinal, "user": msg.caller["id"], "name": msg.name,
                         "channel": msg.channel, "due": time.time() + seconds, "text": text.strip()}
-            self.store({"next": ordinal + 1, "reminders": [*self.state["reminders"], reminder]},
+            # The rest of the state (quotes, polls) is kept as it is.
+            self.store({**self.state, "next": ordinal + 1, "reminders": [*self.state["reminders"], reminder]},
                        msg, f"Saved reminder #{ordinal}; it will appear publicly here.")
 
 
@@ -384,18 +385,24 @@ class Baud(botkit.Bot):
             msg.reply("No poll is open here.")
         elif here["u"] != msg.caller["id"] and msg.caller.get("moderator") is not True:
             msg.reply(f"Only the person who opened poll #{here['n']} or a channel moderator can close it early.")
-        elif here["n"] == self.closing:
+        elif here["n"] == self.closing or here["due"] <= time.time():
             msg.reply(f"Poll #{here['n']} is closing now.")
         else:
+            # Made due now: the next tick says the results with the same
+            # retries as a poll that ran its course, so a refused line (the
+            # hourly limit, a mute) never loses them (review of #1425).
             self.poll_failures.pop(here["n"], None)
-            results = _results(here)
-            self._keep(msg, {**self.state, "polls": [p for p in self.state["polls"] if p is not here]},
-                       lambda: self._publicly(msg, results, f"Closed poll #{here['n']}; the results are in the channel."))
+            poll = {**here, "due": time.time()}
+            self._keep(msg, {**self.state, "polls": [poll if p is here else p for p in self.state["polls"]]},
+                       lambda: msg.reply(f"Closing poll #{here['n']}; the results follow in the channel."))
 
     def _vote(self, msg, rest):
         here = self._poll_here(msg.channel) if self.polls_on else None
-        if here is None or here["n"] == self.closing:
+        if here is None:
             msg.reply("No poll is open here." + self._elsewhere(msg.channel))
+            return
+        if here["n"] == self.closing or here["due"] <= time.time():
+            msg.reply(f"Poll #{here['n']} has closed; the results follow.")
             return
         answers = here["o"]
         if not (_number(rest) and 1 <= int(rest) <= len(answers)):

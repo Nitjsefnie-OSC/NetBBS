@@ -4,6 +4,7 @@ and quick polls, and the host's caller facts and hello fields behind them."""
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -207,9 +208,12 @@ def test_votes_are_acknowledged_privately_changeable_and_results_come_at_close()
     status = bot("poll", name="nib")["text"]
     assert status.startswith("nib: Poll #1: Best door? 4 voters so far, closes ") and status.endswith("Results then.")
     assert "Voidrunner 2" not in status
-    closed = bot("poll close")["text"]
-    assert closed == ("alice: Poll #1 closed: Best door? Voidrunner 2 (50%), War Dialer 2 (50%), Trivia 0 (0%). "
-                      "4 voters.")
+    assert bot("poll close")["text"] == "alice: Closing poll #1; the results follow in the channel."
+    assert bot("vote 1")["text"] == "alice: Poll #1 has closed; the results follow."
+    said = bot.tick(time.time() + 1)
+    assert said["action"] == "say" and said["text"] == (
+        "Poll #1 closed: Best door? Voidrunner 2 (50%), War Dialer 2 (50%), Trivia 0 (0%). 4 voters.")
+    bot.baud.handle({"type": "result", "id": said["id"], "ok": True})
     assert bot.baud.state["polls"] == []
     assert bot("vote 1")["text"] == "alice: No poll is open here."
 
@@ -219,11 +223,19 @@ def test_early_close_by_opener_or_moderator_only():
     bot("poll Q? | a | b")
     assert bot("poll close", caller_id=8, name="bob")["text"] == (
         "bob: Only the person who opened poll #1 or a channel moderator can close it early.")
-    assert bot("poll close", caller_id=9, name="ann", moderator=True)["text"] == "ann: Poll #1 closed: Q? No votes."
-    # Asked privately, the results are still said in the channel.
-    bot("poll Again? | a | b")
-    bot("poll close", asked=True)
-    assert bot.sent[-2]["action"] == "say" and bot.sent[-2]["text"] == "Poll #2 closed: Again? No votes."
+    assert bot("poll close", caller_id=9, name="ann", moderator=True)["text"] == (
+        "ann: Closing poll #1; the results follow in the channel.")
+    assert bot("poll close")["text"] == "alice: Poll #1 is closing now."
+    # The results are said in the channel, with retries, even when the
+    # first attempt is refused (review of #1425).
+    said = bot.tick(time.time() + 1)
+    assert said["action"] == "say" and said["text"] == "Poll #1 closed: Q? No votes."
+    bot.baud.handle({"type": "result", "id": said["id"], "ok": False, "error": "Rate limited."})
+    assert bot.baud.state["polls"]
+    retry = bot.tick(time.time() + 61)
+    assert retry is not said and retry["text"] == "Poll #1 closed: Q? No votes."
+    bot.baud.handle({"type": "result", "id": retry["id"], "ok": True})
+    assert bot.baud.state["polls"] == []
 
 
 def test_voter_cap_counts_the_votes_not_counted():
@@ -233,7 +245,8 @@ def test_voter_cap_counts_the_votes_not_counted():
         bot("vote 1", caller_id=1000 + voter)
     assert bot("vote 2", caller_id=1)["text"] == "Poll #1 already has 100 voters; your vote was not counted."
     assert bot("vote 2", caller_id=1000)["text"].startswith("Vote counted: 2 b.")  # a counted voter may change
-    assert bot("poll close")["text"].endswith("100 voters. 1 vote not counted (limit 100 voters).")
+    bot("poll close")
+    assert bot.tick(time.time() + 1)["text"].endswith("100 voters. 1 vote not counted (limit 100 voters).")
     # The state stays compact: a voter is a short digest of the caller id.
     assert len(json.dumps(bot.baud.state)) < 4000
 
@@ -259,17 +272,27 @@ def test_due_poll_closes_on_a_tick_with_retries_and_survives_a_restart(monkeypat
     assert restarted.tick(5000)["action"] == "state.set"  # nothing more is said
 
 
+def test_a_reminder_keeps_the_quotes_and_polls():
+    # Review of #1425: a remind saved a fresh state and dropped the rest.
+    bot = Harness(quotes=True, polls=True)
+    bot("quote add keep me")
+    bot("poll Q? | a | b")
+    bot("remind 1h water the plants")
+    assert [q["t"] for q in bot.baud.state["quotes"]] == ["keep me"] and bot.baud.state["polls"]
+    assert bot("quote add next")["text"] == "alice: Saved quote #2 (added by alice)."
+
+
 def test_close_waits_for_a_vote_being_saved():
     sent = []
     baud = Baud({"polls": True, "state": {"next": 1, "reminders": [], "pnext": 2, "polls": [
-        {"n": 1, "c": "general", "u": 7, "q": "Q?", "o": ["a", "b"], "due": 0, "v": {}, "x": 0}]}}, sent.append)
+        {"n": 1, "c": "general", "u": 7, "q": "Q?", "o": ["a", "b"], "due": 4e9, "v": {}, "x": 0}]}}, sent.append)
     baud.handle(message("vote 1", caller_id=8))
     vote_save = sent[-1]
     assert vote_save["action"] == "state.set"
-    baud.handle({"type": "tick", "time": 10})
+    baud.handle({"type": "tick", "time": 4e9 + 10})
     assert sent[-1] is vote_save  # no results while the vote is unsaved
     baud.handle({"type": "result", "id": vote_save["id"], "ok": True})
-    baud.handle({"type": "tick", "time": 11})
+    baud.handle({"type": "tick", "time": 4e9 + 11})
     assert sent[-1]["action"] == "say" and sent[-1]["text"].endswith("a 1 (100%), b 0 (0%). 1 voter.")
 
 

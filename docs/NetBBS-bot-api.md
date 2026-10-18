@@ -407,7 +407,7 @@ acknowledged privately (publicly to a caller whose node cannot take a private
 answer). `poll` alone shows the question and the number of voters, never the
 tally. The results are said once, at close: `Poll #3 closed: Best door?
 Voidrunner 4 (50%), War Dialer 3 (38%), Trivia 1 (13%). 8 voters.` The opener
-or a moderator closes a poll early with `poll close`; otherwise it closes on a
+or a moderator closes a poll early with `poll close`. Either way it closes on a
 tick, with the reminder backoff and retries, survives restarts, and is removed
 once said. At most 100 voters are counted; the result says how many were not.
 The `!vote` line itself is public chat, and the opening line says so.
