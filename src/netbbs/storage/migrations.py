@@ -4709,4 +4709,35 @@ MIGRATIONS = [
         ALTER TABLE chat_bots ADD COLUMN phrases_json TEXT NOT NULL DEFAULT '{}';
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1377 (design doc §5.6, Pages): `staff_pages`, the shared queue of callers' "
+            "`/sysop` pages. One open page per member (`guest_session` NULL), a guest's keyed on "
+            "the session it came from; `place` is where the caller was, `channel` the chat channel "
+            "they paged from. `paged_at` moves when a new /sysop replaces the reason. "
+            "Handled pages keep who handled them and how (`done`, `chat`, `mail`). Empty on "
+            "upgrade."
+        ),
+        sql="""
+        CREATE TABLE staff_pages (
+            id                  INTEGER PRIMARY KEY,
+            user_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            caller_label        TEXT NOT NULL,
+            guest_session       TEXT,
+            place               TEXT NOT NULL,
+            channel             TEXT,
+            reason              TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            paged_at            TEXT NOT NULL,
+            handled_by_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            handled_by_label    TEXT,
+            handled_at          TEXT,
+            outcome             TEXT CHECK (outcome IN ('done', 'chat', 'mail')),
+            CHECK ((handled_at IS NULL) = (outcome IS NULL))
+        );
+        CREATE INDEX idx_staff_pages_open ON staff_pages(handled_at, paged_at);
+        CREATE INDEX idx_staff_pages_user ON staff_pages(user_id, paged_at);
+        CREATE INDEX idx_staff_pages_guest ON staff_pages(guest_session, paged_at);
+        """,
+    ),
 ]

@@ -549,6 +549,33 @@ web client it plays a short tone once you have pressed a key or clicked in
 the page, and while the tab is in the background its title starts with `(!)`
 until you come back.
 
+#### Getting help from the SysOp
+
+To ask the SysOp for help, type `/sysop` and what you need in any chat
+channel:
+
+```
+/sysop my upload to Retro stops at 90% every time
+```
+
+1. Your reason goes to the SysOp and staff, and nowhere else: nothing is said
+   in the channel, its history, linked BBSes or MRC.
+2. A block that only you see says who was told. Staff in chat are told at
+   once; staff elsewhere on the BBS see it on their next screen, or when they
+   leave a door.
+3. If nobody is online, the page waits for them. When they are all away, the
+   block says who is expected back first.
+
+> [!NOTE]
+> You can have one page open at a time, and page at most once every 10
+> minutes. Paging again after that replaces the reason of your open page. As
+> a guest you can page only while someone is online, because a guest's page
+> can't be answered later.
+
+The SysOp answers by opening a chat on your screen, or by mail. Use `/sysop`,
+not `!sysop`: a `!` line goes to the whole channel before a bot sees it, and
+Baud can only point you to `/sysop`.
+
 ### Mail
 
 **E-mail** is NetBBS mail, not an Internet email account.
@@ -927,6 +954,9 @@ default, prefix the commands with `Baud.bot:` instead of `!`.
 | Set a reminder | `!remind 10m check the oven` | `Baud.bot: remind 10m check the oven` |
 | List reminders | `!reminders` | `Baud.bot: reminders` |
 | Cancel a reminder | `!cancel 1` | `Baud.bot: cancel 1` |
+
+To reach the SysOp, use `/sysop <reason>` rather than Baud: see
+[Getting help from the SysOp](#getting-help-from-the-sysop).
 
 - Reminders and replies are public in that channel.
 - Reminders survive restarts, though mutes or limits can delay them.
