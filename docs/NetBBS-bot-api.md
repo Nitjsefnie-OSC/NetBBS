@@ -40,7 +40,7 @@ Each line is one UTF-8 JSON object, at most 32 KiB including the newline.
 `BOT_API_VERSION = 1`. The host sends:
 
 ```json
-{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"door_sources":[],"announce_doors":false,"model_conversation":false,"timezone":"Europe/Berlin","blocks":true}
+{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"door_sources":[],"announce_doors":false,"model_conversation":false,"timezone":"Europe/Berlin","blocks":true,"quotes":false,"polls":false,"linked_channels":[],"node":"Roanoke"}
 ```
 
 `timezone` is the IANA name of the node's display clock (§6.3: one clock for
@@ -52,9 +52,15 @@ when the model-service switch changes.
 [Titled blocks](#titled-blocks)); an older host sends no `blocks` and refuses
 a reply that carries one.
 
+`linked_channels` lists the channels among `channels` that are shared over
+Link and approved for this instance: callers on other BBSes see its lines
+there and reach it as `Name.bot@<node>: <text>`, where `node` is this node's
+display name. `quotes` and `polls` are Baud's two social switches (below);
+another bot may ignore them.
+
 `temperament` is `friendly`, `terse` or `retro`. `phrases` holds the SysOp's
-overrides of the temperament's fixed phrases, keyed `greeting`, `help`, `busy`
-and `limit`; a key is present only when the SysOp wrote that phrase, so an
+overrides of the temperament's fixed phrases, keyed `greeting`, `help`, `busy`,
+`limit` and `full`; a key is present only when the SysOp wrote that phrase, so an
 absent key means "use your preset". The host checks each phrase on Save: plain
 text on one line, no placeholder but `{name}` (the caller's name; `{{` and `}}`
 are literal braces), and at most 400 characters with each `{name}` counted as
@@ -71,7 +77,7 @@ The bot must answer within five seconds with exactly:
 The host then sends addressed messages and one timer tick per second:
 
 ```json
-{"type":"message","request":"opaque-token","channel":"lobby","caller":{"id":7,"name":"alice"},"text":"help","private":true,"asked_privately":false}
+{"type":"message","request":"opaque-token","channel":"lobby","caller":{"id":7,"name":"alice","moderator":false,"guest":false},"text":"help","private":true,"asked_privately":false}
 {"type":"tick","time":1791716400.0}
 ```
 
@@ -80,6 +86,14 @@ The host then sends addressed messages and one timer tick per second:
 linked node that cannot take one. `asked_privately` is true when the caller
 asked with `/msg Baud.bot <text>` or in a `/private Baud.bot` conversation;
 such a request takes only a private answer.
+
+`caller.moderator` is true when a local caller holds moderate permission on
+this channel, which the SysOp always does; a caller from another BBS is never
+a moderator here, whatever they hold at home. `caller.guest` is true for the
+node's guest account, and for a caller from another BBS whose home node says
+the account is not authenticated (`access.authenticated` false). Both are
+facts for a bot's own rules, such as who may delete a stored quote; they grant
+nothing at the host.
 
 Treat caller ids as opaque JSON values: local callers retain their integer
 account id; remote callers use `link:<home-fingerprint>:<canonical-username>`.
@@ -498,7 +512,8 @@ from one to 60 seconds. Kill controls disable the instance persistently.
 
 Commands: `help`, `remind <when> <text>`, `reminders`, `cancel <id>`,
 `tell <name> <text>`, `tells` and `cancel tell <id>`; `help remind` and
-`help tell` explain the two.
+`help tell` explain the two. `roll` and `coin`, and, when switched on,
+`quote` and `poll`/`vote` (below).
 On a host that takes blocks, `help` answers with a titled block, `Commands`,
 one row per command and the help opening (below) as its first row; an older
 host gets the same list as one line.
@@ -508,7 +523,22 @@ and says so. `help` mentions `/sysop` too. No bot can page the SysOp: a page
 comes only from a caller's own `/sysop` (decision 1377).
 With the corresponding grants, Baud also offers `stats`,
 `seen <local-account>` and `top <door>` (a door's standings) and lists them in
-`help`. The replies are public unless asked privately.
+`help`.
+
+Baud answers each request the way it was asked: a `!` line or `Baud.bot:`
+line publicly, with the caller's name in front, and `/msg Baud.bot <text>` or
+a `/private Baud.bot` line privately. Some answers are private whenever the
+`message` event's `private` says a private answer can reach the caller, even
+when the request was asked in the channel: `help`, `help remind` and
+`help tell`, with `help` ending "Ask privately: /msg Baud.bot <text>."
+(`Baud.bot@Node` for a Link caller), and `reminders`, which then lists all
+of the caller's reminders across channels as `#1 lobby: check the oven`.
+`cancel <id>` then reaches a reminder in any of the caller's channels, so
+every id that listing shows can be cancelled where it was read. Only a caller
+whose node cannot take a private answer gets these publicly; that `help`
+ends "Replies are public.", and that `reminders` and `cancel` keep to the
+current channel.
+
 With **Grant model conversation**, other addressed text requests the host's
 model service; `reset` clears this caller's temporary context here. Ordinary
 commands stay local and remain responsive during a provider request.
@@ -519,9 +549,10 @@ Post, file and door announcements likewise need only their explicit source
 grants and destination, with the corresponding Baud ability enabled. They require no
 channel reading or presence access.
 Reminder text is capped at 160 characters. Baud holds up to eight reminders
-per caller and 48 per instance, also subject to the state byte limit. Listing
-and cancelling work only for the caller's reminders in the current channel,
-so a public query cannot expose a reminder from a private channel.
+per caller and 48 per instance, also subject to the state byte limit. A
+public listing works only for the caller's reminders in the current channel,
+so a public answer cannot expose a reminder from a private channel. A reminder is said publicly in its channel when due, however it was
+set.
 
 `<when>` is a duration (`10m`, `2h`, `1s` to `30d`) or a time in the node's
 display clock, from the hello's `timezone`: `HH:MM` (today, or tomorrow once
@@ -543,8 +574,8 @@ count toward the eight and the 48. After a restart Baud asks `held.list` which
 of its held reminders are still waiting.
 
 `tell` sends the host's token-bound `tell` action, so tells live in the node,
-not in Baud's state. Baud confirms publicly where the note will be said, or
-answers `Nib is here now.`; a refusal is shown to the caller alone. `tells`
+not in Baud's state. Baud confirms where the note will be said, publicly
+unless the caller asked privately, or answers `Nib is here now.`; a refusal is shown to the caller alone. `tells`
 lists the caller's own waiting tells in this channel, and `cancel tell <id>`
 withdraws one.
 
@@ -557,7 +588,49 @@ is renamed or a grant removed, old reminders retain their original
 destination, cannot migrate to another channel automatically, and are dropped
 once their refusals run out.
 
-Its temperament sets four fixed phrases, and the SysOp may override any of
+### Dice, coin, quotes and quick polls
+
+`roll` is `1d6`; `roll NdS`, `roll dS` and an optional `+M` or `-M` (any case)
+roll N dice of S sides, N 1-20, S 2-1000, M 0-1000. The public reply lists each
+die and the total: `alice: rolled 2d6+1: 3 + 5 + 1 = 9.` Anything else gets the
+usage. `coin` answers `flips a coin: heads.` or `tails.` Both draw from
+`random.SystemRandom` and are always on.
+
+**Baud quotes** (off by default) keeps per-channel quotes: `quote add <text>`
+(1-160 characters), `quote` for a random one, `quote <n>` and `quote del <n>`.
+A quote shows who added it, `#4 "<Quill> the modem is on fire again" (added by
+Nib)`, and nothing else: a name inside the text is the adder's claim. Quotes
+are shown and deleted only in their channel. The adder or a channel moderator
+deletes one; a moderator's deletion of someone else's quote is said in the
+channel (`Quote #4 deleted by Ann.`), which is its record. Guests cannot add
+quotes. At most 30 per instance and 10 per adder.
+
+**Baud quick polls** (off by default): `poll [<1m-24h>] <question> | <a> | <b>
+...` opens a single-choice poll of 2-6 answers (up to 30 characters each, the
+question up to 100) for 10 minutes unless a length is given. One poll is open
+per channel and at most 4 per instance; guests may vote but cannot open one.
+`vote <n>` counts one vote per caller id, changeable until close, and is
+acknowledged privately (publicly to a caller whose node cannot take a private
+answer). `poll` alone shows the question and the number of voters, never the
+tally. The results are said once, at close: `Poll #3 closed: Best door?
+Voidrunner 4 (50%), War Dialer 3 (38%), Trivia 1 (13%). 8 voters.` The opener
+or a moderator closes a poll early with `poll close`. Either way it closes on a
+tick, with the reminder backoff and retries, survives restarts, and is removed
+once said. At most 100 voters are counted; the result says how many were not.
+The `!vote` line itself is public chat, and the opening line says so.
+
+In a Linked channel the opening line adds `or from another BBS:
+Baud.bot@<node>: vote <n>`, because a `!vote` there reaches the caller's own
+node's default bot. Baud on that node answers `No poll is open here.` with a
+pointer to the explicit form, even with its own polls switched off.
+
+Quotes and polls share the instance's one 16 KiB state value with reminders.
+A save the host refuses is answered with the `full` phrase, `Baud's memory is
+full; ask the SysOp.` Dice spam spends the channel's lines per hour like any
+reply and can delay a reminder or a poll's close; `/mute` and `/bots none` are
+the remedy.
+
+Its temperament sets five fixed phrases, and the SysOp may override any of
 them per instance under **Phrases** in the instance's editor (they arrive in
 the hello's `phrases`):
 
@@ -567,6 +640,7 @@ the hello's `phrases`):
 | `help` | The opening of the `help` reply, its block's first row | `Happy to help!` |
 | `busy` | The reply while a full queue waits on a reminder save | `Busy saving reminders; try again shortly.` |
 | `limit` | The reply at the reminder limit, held reminders included | `Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first.` |
+| `full` | A quote, poll or vote whose save was refused | `Baud's memory is full; ask the SysOp.` |
 
 Terse greets with `Welcome, {name}.` and has no help opening; retro says
 `Carrier detected: welcome, {name}!` and `Carrier detected.`. An empty override
@@ -634,6 +708,23 @@ What it does for you:
   or the reason the action was refused.
 - **Replies.** `msg.reply(text)` puts the caller's name in front and cuts the
   line to 500 characters, as Baud does. `say` is cut the same way.
+- **Private answers.** `msg.reply(text, private=True)` answers the caller
+  alone (see [Private answers](#private-answers)), without their name in
+  front. `msg.private` is true when a private answer can reach this caller,
+  and `msg.asked_privately` when they asked with `/msg` or `/private`; both
+  read false from a host that does not send them. Left out, `private`
+  follows how the request was asked, so a privately asked request is
+  answered privately and a public one publicly. `msg.model(private=True)`
+  and `msg.model_reset(private=True)` take the same flag.
+
+  ```python
+  def on_message(self, msg):
+      if msg.text == "mine":
+          msg.reply("only you see this", private=msg.private)
+  ```
+
+  With `private=msg.private`, a caller whose node cannot take a private
+  answer gets a public one instead of a refusal.
 - **Blocks.** `msg.reply_block(title, rows)` answers with a titled block; a
   row is a `(label, text)` pair, or a plain text for a row without a label.
   It cuts the title, the rows, each label and each text to the block's bounds,

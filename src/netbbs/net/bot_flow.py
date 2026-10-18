@@ -183,6 +183,8 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             "announce_files": bot.announce_files if bot else False,
             "announce_doors": bot.announce_doors if bot else False,
             "model": bot.model_conversation if bot else False,
+            "quotes": bot.quotes if bot else False,
+            "polls": bot.polls if bot else False,
             "command": json.dumps(list(bot.command if bot else HOUSE_BOT_COMMAND)),
             "temperament": bot.temperament if bot else DEFAULT_TEMPERAMENT,
             "rate": bot.lines_per_hour if bot else DEFAULT_LINES_PER_HOUR,
@@ -228,6 +230,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 model_conversation=values["model"],
                 phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS},
                 door_sources=values["doors"], announce_doors=values["announce_doors"],
+                quotes=values["quotes"], polls=values["polls"],
             )
 
         async def try_prompt(session, lane, values):
@@ -361,12 +364,21 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             phrase_spec("busy", "Busy message", "The reply while Baud is saving reminders and its queue is full."),
             phrase_spec("limit", "Reminder-limit message", "The reply when a caller or the bot has reached the "
                         "reminder limit (8 per caller, 48 per bot)."),
+            phrase_spec("full", "Memory-full message", "The reply when a quote, poll or vote cannot be saved "
+                        "because Baud's 16 KiB of saved state is full."),
+            # Issue #1379: dice and the coin are always on; these two are not.
+            switch("quotes", "Baud quotes", "Off by default. Per-channel quotes, added with !quote add (not by "
+                   "guests), 30 per bot and 10 per caller. The adder or a channel moderator can delete one; a "
+                   "moderator's deletion is said in the channel. !roll and !coin are always on.", "Social"),
+            switch("polls", "Baud quick polls", "Off by default. One open poll per channel, 2-6 answers, 10 minutes "
+                   "unless the opener says up to 24 hours; votes are public and results are said at close. Results "
+                   "and dice spend the channel's lines per hour; /mute and /bots none are the remedy.", "Social"),
             # Door games (issue #1408) come after Phrases, so the fields
             # SysOps already know keep their numbers.
             resource_spec("doors", "Door-event sources", "Select doors every caller may play (minimum play level 0). Grants the game events a door reports: ranks, top achievements, medals, captures, perfect rounds. Each door's own Outbound screen must also switch its game events on; callers who switched game results off are never named.", section="Door games"),
             switch("announce_doors", "Baud door announcements", "Requires explicit door-event sources and an announcement channel. NetBBS words each line; events from before the bot started are not replayed.", "Door games"),
             switch("top", "Grant door standings query", "Allows !top <door>: the top ten a door last reported, for doors every caller may play whose game events are on. Callers who switched game results off are left out.", "Door games"),
-            # Last, so every other field keeps its number.
+            # Last, so the fields before it keep their numbers.
             FieldSpec("try", "Try", lambda d: "Run this draft on a scratch node", try_prompt, section="Try",
                       help="Runs this draft, unsaved, against a scratch database, state and channel; type lines "
                            "as a caller and see each host event, bot action and result, the chat lines and the "
@@ -408,7 +420,7 @@ def _draft_spec(values):
         event_channels=list(values["events"]), greetings=values["greetings"], board_sources=list(values["boards"]),
         file_sources=list(values["files"]), announcement_channel=values["announcement_channel"].strip() or None,
         announce_posts=values["announce_posts"], announce_files=values["announce_files"],
-        model_conversation=values["model"],
+        model_conversation=values["model"], quotes=values["quotes"], polls=values["polls"],
         door_sources=list(values["doors"]), announce_doors=values["announce_doors"],
     )
 

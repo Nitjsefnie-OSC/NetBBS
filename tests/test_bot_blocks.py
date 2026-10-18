@@ -148,8 +148,8 @@ def test_baud_help_is_a_block_on_a_host_that_takes_them():
     assert sent[-1]["action"] == "reply" and "text" not in sent[-1]
     assert block.title == "Commands" and block.rows[0] == ("", "Hallo alice.")
     assert ("stats", "who is on, uptime") in block.rows
-    assert {"help", "tell <name> <text>", "tells", "cancel tell <id>"} <= {label for label, _ in block.rows}
-    assert block.rows[-1] == ("", "No language model is enabled.")
+    assert {"help", "tell <name> <text>", "tells, cancel tell <id>", "roll [NdS+M], coin"} <= {label for label, _ in block.rows}
+    assert block.rows[-1] == ("", "No language model is enabled. Replies are public.")
     # An older host gets the one line it always did.
     baud = Baud({}, sent.append)
     baud.handle({"type": "message", "request": "r", "caller": {"id": 7, "name": "alice"}, "channel": "c",
@@ -448,23 +448,39 @@ def test_a_line_is_a_block_or_an_announcement_never_both(db, sysop, channel):
 def test_baud_help_block_stays_in_bounds_with_every_grant_and_the_longest_opening(model):
     sent = []
     longest = "x" * 168 + "{name}"  # the longest help opening the editor saves
-    Baud({"blocks": True, "queries": ["stats", "seen", "top"], "model_conversation": model,
+    Baud({"blocks": True, "queries": ["stats", "seen", "top"], "model_conversation": model, "quotes": True, "polls": True,
           "phrases": {"help": longest}}, sent.append).handle(
         {"type": "message", "request": "r", "caller": {"id": 7, "name": "n" * 32}, "channel": "c", "text": "help"})
     block = check_block(sent[-1]["block"])
     assert len(block.rows) == 12 and len(block.fallback()) <= MAX_FALLBACK
-    assert "top <door>" in [label for label, _text in block.rows]
+    assert block.rows[-1][1].endswith("Replies are public.") and "private" not in sent[-1]
+    # Issue #1372: answered privately, its last row says how to ask
+    # privately; with the longest bot name and a Link caller it still fits.
+    Baud({"blocks": True, "name": "B" * 24 + ".bot", "queries": ["stats", "seen", "top"], "model_conversation": model, "quotes": True, "polls": True,
+          "phrases": {"help": longest}}, sent.append).handle(
+        {"type": "message", "request": "r", "caller": {"id": "link:abc:bob", "name": "n" * 32}, "channel": "c",
+         "text": "help", "private": True})
+    block = check_block(sent[-1]["block"])
+    assert sent[-1]["private"] is True and len(block.rows) == 12 and len(block.fallback()) <= MAX_FALLBACK
+    assert block.rows[-1][1].endswith(f"Ask privately: /msg {'B' * 24}.bot@Node <text>.")
+    assert ("reminders, cancel <id>", "your reminders in every channel; cancel one") in block.rows
+    assert ("stats, seen, top", "who is on, uptime; seen <name>: when someone was last on; "
+            "top <door>: a door game's top ten") in block.rows
 
 
-@pytest.mark.parametrize("model", [False, True])
-def test_baud_help_line_fits_one_line_with_every_grant(model):
-    """The line form, for a host without blocks, with `top` granted too.
-    botkit cuts it to 500; only the longest opening, the longest name and
-    model conversation together lose its last few characters."""
+@pytest.mark.parametrize("private", [False, True])
+def test_baud_help_line_with_top_fits_whole_in_the_worst_case(private):
+    """Issue #1408: the one-line help for a host without blocks, with
+    `top <door>; ` added, is never cut: longest opening, 24-character bot
+    name, 32-character Link caller, model conversation, every grant and
+    switch."""
+    from netbbs.bots import botkit
     sent = []
-    Baud({"queries": ["stats", "seen", "top"], "model_conversation": model,
-          "phrases": {"help": "x" * 168 + "{name}"}}, sent.append).handle(
-        {"type": "message", "request": "r", "caller": {"id": 7, "name": "n" * 32}, "channel": "c", "text": "help"})
+    Baud({"name": "B" * 24 + ".bot", "queries": ["stats", "seen", "top"], "model_conversation": True,
+          "quotes": True, "polls": True, "phrases": {"help": "x" * 168 + "{name}"}}, sent.append).handle(
+        {"type": "message", "request": "r", "caller": {"id": "link:" + "a" * 64 + ":nib", "name": "n" * 26 + "@Node1"},
+         "channel": "c", "text": "help", "private": private})
     text = sent[-1]["text"]
-    assert len(text) <= 500 and "top <door>" in text
-    assert model or text.endswith("No language model is enabled.")
+    assert len(text) <= botkit.LINE_LIMIT and "seen <name>; top <door>; roll|coin; " in text
+    assert text.endswith(f"Conversation is on; reset clears your context. Ask privately: /msg {'B' * 24}.bot@Node <text>."
+                         if private else "Conversation is on; reset clears your context. Replies are public.")

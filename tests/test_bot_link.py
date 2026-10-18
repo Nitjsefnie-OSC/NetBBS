@@ -86,10 +86,11 @@ def test_three_nodes_local_shorthand_remote_address_presence_mute_replay_and_sto
             assert "Baud.bot" not in first.presence.online_usernames()
             # A bot on a subscriber advertises to the origin and the other subscriber.
             assert ("Baud.bot", first.identity.fingerprint) in second.bots.visible_roster(second.db, sc)
-            assert await first.address(fc, "!help") is None
-            local_reply = await next_line(fq, "No language model")
-            await next_line(oq, "No language model")
-            remote_reply = await next_line(sq, "No language model")
+            # A public answer (help would be private, issue #1372).
+            assert await first.address(fc, "!xyzzy") is None
+            local_reply = await next_line(fq, "Conversation is not enabled")
+            await next_line(oq, "Conversation is not enabled")
+            remote_reply = await next_line(sq, "Conversation is not enabled")
             assert remote_reply.author_fingerprint == first.identity.fingerprint
             assert get_scrollback(origin.db, oc) == []  # origin's same-named default was not dispatched
             assert len([m for m in get_scrollback(first.db, fc) if m.author_kind == "bot"]) == 1
@@ -209,7 +210,8 @@ def test_remote_reply_reaches_caller_when_channel_origin_is_offline(tmp_path):
             await connect((host, caller))
             await eventually(lambda: bot.id in host.runtime.running_ids)
             assert await caller.address(cc, f"Baud.bot@{host.identity.fingerprint}: help") is None
-            assert "No language model" in (await next_line(queue, "No language model")).body
+            # Help is answered privately over Link too (issue #1372).
+            assert "No language model" in (await next_line(queue, "No language model")).text
             await eventually(lambda: not caller.bots.requests)
         finally:
             for node in (caller, host, origin):

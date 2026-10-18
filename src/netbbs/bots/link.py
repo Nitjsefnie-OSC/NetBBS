@@ -249,9 +249,13 @@ class BotLink:
             allowed_channel(db, bot.id, channel.name, check_rate=True,
                             private_caller=caller_id if asked_privately else None)
             home = identity_for_fingerprint(db, session.remote_fingerprint).label
+            access = p.get("access")
+            # Issue #1379: never a moderator here; a guest when their home
+            # node says the account is not authenticated.
             return bot, channel, {"id": caller_id,
                                   "name": link_address_label(caller, home),
-                                  "access": p.get("access")}
+                                  "access": access, "moderator": False,
+                                  "guest": isinstance(access, dict) and access.get("authenticated") is False}
 
         try:
             bot, channel, caller = await self.lane.run(authorize)

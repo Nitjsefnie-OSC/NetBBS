@@ -35,12 +35,14 @@ QUERIES = ("stats", "seen", "top")
 # Issue #1381: a phrase override is checked as the longest local caller name
 # would expand it, so "<name>: <phrase>" still fits one 500-character line.
 # The help opening shares its line with Baud's fixed command list (up to 256
-# characters with every grant), so it gets less room than a standalone phrase.
+# characters with every grant; the social commands are measured with it in
+# tests), so it gets less room than a standalone phrase.
 MAX_PHRASE = 400
-MAX_PHRASE_LENGTHS = {"greeting": MAX_PHRASE, "help": 200, "busy": MAX_PHRASE, "limit": MAX_PHRASE}
+MAX_PHRASE_LENGTHS = {"greeting": MAX_PHRASE, "help": 200, "busy": MAX_PHRASE, "limit": MAX_PHRASE,
+                      "full": MAX_PHRASE}
 NAME_ALLOWANCE = 32
 PHRASE_LABELS = {"greeting": "greeting", "help": "help opening", "busy": "busy message",
-                 "limit": "reminder-limit message"}
+                 "limit": "reminder-limit message", "full": "memory-full message"}
 
 
 class BotError(ValueError):
@@ -74,6 +76,9 @@ class Bot:
     # Issue #1408: door events, a third source kind (§16, #1378).
     door_sources: tuple[str, ...] = ()
     announce_doors: bool = False
+    # Issue #1379: Baud's quotes and quick polls, each off by default.
+    quotes: bool = False
+    polls: bool = False
 
     @property
     def phrase_overrides(self) -> dict[str, str]:
@@ -113,7 +118,7 @@ def list_bots(db: Database) -> list[Bot]:
                           tuple(g["name"] for g in grants if g["presence_events"]), bool(row["greetings"]),
                           boards, areas, destination[0] if destination else None,
                           bool(row["announce_posts"]), bool(row["announce_files"]), bool(row["model_conversation"]),
-                          _stored_phrases(row["phrases_json"]),
+                          _stored_phrases(row["phrases_json"]), bool(row["quotes"]), bool(row["polls"]),
                           door_sources=doors, announce_doors=bool(row["announce_doors"])))
     return result
 
@@ -184,6 +189,17 @@ def bot_for_label(db: Database, label: str) -> Bot | None:
     return next((b for b in list_bots(db) if b.label.casefold() == label.casefold()), None)
 
 
+def local_caller(db: Database, channel: Channel, user: User) -> dict:
+    """A local caller as every bot's message event names them (issue #1379):
+    `moderator` is moderate permission on this channel, which the SysOp
+    always holds, and `guest` is the designated guest account."""
+    from netbbs.guest import is_guest_account
+    return {"id": user.id, "name": user.username,
+            "moderator": has_permission(db, user, object_type="channel", object_id=channel.id,
+                                        permission=ChannelPermission.MODERATE),
+            "guest": is_guest_account(db, user)}
+
+
 def local_channel(db: Database, name: str, *, allow_linked: bool = False) -> Channel:
     try:
         channel = get_channel(db, name.lstrip("#"))
@@ -207,6 +223,7 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
              board_sources: list[str] | None = None, file_sources: list[str] | None = None,
              announcement_channel: str | None = None, announce_posts: bool = False, announce_files: bool = False,
              model_conversation: bool = False, phrases: dict[str, str] | None = None,
+             quotes: bool = False, polls: bool = False,
              door_sources: list[str] | None = None, announce_doors: bool = False) -> Bot:
     require_sysop(db, actor)
     name = name.strip()
@@ -272,6 +289,7 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
             db.connection.execute("UPDATE chat_bots SET greetings=? WHERE id=?", (int(greetings), bot_id))
             db.connection.execute("UPDATE chat_bots SET model_conversation=? WHERE id=?", (int(model_conversation), bot_id))
             db.connection.execute("UPDATE chat_bots SET phrases_json=? WHERE id=?", (json.dumps(phrases), bot_id))
+            db.connection.execute("UPDATE chat_bots SET quotes=?, polls=? WHERE id=?", (int(quotes), int(polls), bot_id))
             db.connection.execute(
                 "UPDATE chat_bots SET announcement_channel_id=?, announce_posts=?, announce_files=? WHERE id=?",
                 (destination.id if destination else None, int(announce_posts), int(announce_files), bot_id),
@@ -308,7 +326,7 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
                 if row[0] not in keep:
                     db.connection.execute("DELETE FROM bot_channels WHERE bot_id=? AND channel_id=?", (bot_id, row[0]))
             record_action(db, actor=actor, action="bot_configure", object_type="bot", object_id=bot_id,
-                          detail=f"{name}.bot enabled={enabled}; addressed channels={allowed}; defaults={sorted(default_names)}; Linked approvals={sorted(approved)}; queries={queries}; channel reads={sorted(reading)}; presence events={sorted(events)}; greetings={greetings}; post sources={[b.name for b in boards]}; file sources={[a.name for a in areas]}; door sources={[d.name for d in doors]}; announcement channel={announcement_channel}; post/file/door announcements={announce_posts}/{announce_files}/{announce_doors}; custom phrases={sorted(phrases)}")
+                          detail=f"{name}.bot enabled={enabled}; addressed channels={allowed}; defaults={sorted(default_names)}; Linked approvals={sorted(approved)}; queries={queries}; channel reads={sorted(reading)}; presence events={sorted(events)}; greetings={greetings}; post sources={[b.name for b in boards]}; file sources={[a.name for a in areas]}; door sources={[d.name for d in doors]}; announcement channel={announcement_channel}; post/file/door announcements={announce_posts}/{announce_files}/{announce_doors}; quotes/polls={quotes}/{polls}; custom phrases={sorted(phrases)}")
     except sqlite3.IntegrityError as exc:
         raise BotError("A bot with that name or state directory already exists.") from exc
     return get_bot(db, bot_id)

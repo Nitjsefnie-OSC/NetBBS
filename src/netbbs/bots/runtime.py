@@ -15,7 +15,8 @@ import uuid
 
 from netbbs.bots import BOT_API_VERSION
 from netbbs.bots.registry import (
-    Bot, BotError, allowed_channel, bot_for_label, check_block, deliver_private, list_bots, publish, select_request,
+    Bot, BotError, allowed_channel, bot_for_label, check_block, deliver_private, list_bots, local_caller, publish,
+    select_request,
     set_runtime_status, reset_runtime_status,
 )
 from netbbs.bots.state import read_state, write_state, state_path
@@ -151,7 +152,8 @@ class BotRuntime:
             if selected is None:
                 return None
             bot, text = selected
-            await self.enqueue(bot, channel, {"id": user.id, "name": user.username}, text, participant_id)
+            caller = await self.lane.run(local_caller, channel, user)
+            await self.enqueue(bot, channel, caller, text, participant_id)
         except BotError as exc:
             return str(exc)
         return None
@@ -166,8 +168,8 @@ class BotRuntime:
             bot = await self.lane.run(bot_for_label, label)
             if bot is None:
                 raise BotError("No local bot has that name. Use /names to see running bots here.")
-            await self.enqueue(bot, channel, {"id": user.id, "name": user.username}, text, participant_id,
-                               asked_privately=True)
+            caller = await self.lane.run(local_caller, channel, user)
+            await self.enqueue(bot, channel, caller, text, participant_id, asked_privately=True)
         except BotError as exc:
             return str(exc)
         return None
@@ -400,6 +402,8 @@ class _Worker:
         self.door_cursor = await lane.run(door_head)
         self.announcements.clear()
         state = await lane.run(read_state, self.bot.storage_name)
+        from netbbs.config import get_node_display_name
+        node = await lane.run(get_node_display_name)
         path = await lane.run(state_path, self.bot.storage_name)
         command = self.bot.command or (sys.executable, "-u", str(Path(__file__).with_name("baud.py")))
         env = {k: v for k, v in os.environ.items()
@@ -433,7 +437,12 @@ class _Worker:
                                "door_sources": self.bot.door_sources, "announce_doors": self.bot.announce_doors,
                                "model_conversation": self.model_enabled, "timezone": self.timezone,
                                # Issue #1373: this host takes a reply's titled block.
-                               "blocks": True})
+                               "blocks": True,
+                               # Issue #1379: Baud's switches; the Linked channels
+                               # among `channels`, and the name other BBSes address
+                               # this node by (`Baud.bot@<node>`).
+                               "quotes": self.bot.quotes, "polls": self.bot.polls,
+                               "linked_channels": list(self.bot.linked_channels), "node": node})
             ready = await asyncio.wait_for(self._read(), 5)
             if ready != {"type": "ready", "version": BOT_API_VERSION}:
                 raise BotError("Bot did not acknowledge BOT_API_VERSION 1.")
