@@ -1332,7 +1332,7 @@ a net meeting every Friday, a tournament on the first Saturday of the month,
 a maintenance window once.
 
 1. Open **Content ▸ Chat channels**, choose the channel, and press
-   <kbd>N</kbd> **An[n]ouncements**.
+   <kbd>N</kbd> **Notices**.
 2. Press <kbd>C</kbd> **Create** and type the **Text** (up to 160
    characters). It is shown muted as `Announcement: ` and your text.
 3. Set **Repeat** to once, daily, weekly or monthly, and fill in the fields

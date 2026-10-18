@@ -1,6 +1,6 @@
 """SysOp console: a channel's scheduled announcements (issue #1380).
 
-Content ▸ Chat channels ▸ a channel ▸ An[n]ouncements lists that channel's
+Content ▸ Chat channels ▸ a channel ▸ [N]otices lists that channel's
 rules; a rule is a draft editor that writes nothing before Save (design doc
 §3.5). Approving a Linked channel for announcements is confirmed on Save, the
 last keystroke before it, as a bot's Linked approval is.
