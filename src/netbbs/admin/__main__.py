@@ -341,7 +341,7 @@ async def _bootstrap_first_sysop(session: Session, lane: DatabaseLane) -> User:
     # deployment bootstraps its first SysOp non-interactively via
     # netbbs.admin and then runs headlessly under systemd/rc.d, with no
     # interactive channel left by the time the daemon itself starts.
-    await offer_onboarding(session, lane)
+    await offer_onboarding(session, lane, user)
     return user
 
 

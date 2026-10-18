@@ -890,7 +890,7 @@ async def _run_signed_in(
         # it answers the last thing the caller did.
         first_run = _TrailingOutput(session)
         if lane is not None and meets_level(user, SYSOP_LEVEL):
-            await offer_onboarding(first_run, lane)
+            await offer_onboarding(first_run, lane, user)
 
         # Deliberately after the watcher task above, not alongside the
         # other post-login notices earlier in this function: unlike

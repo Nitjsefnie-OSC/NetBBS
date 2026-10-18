@@ -110,7 +110,7 @@ def _fast_polling(monkeypatch):
 def _skip_sysop_onboarding(monkeypatch):
     # A SysOp's first login stops at the first-run onboarding screen;
     # these tests are about what happens after it.
-    async def _answered(session, lane):
+    async def _answered(session, lane, actor=None):
         return None
 
     monkeypatch.setattr(login_flow, "offer_onboarding", _answered)

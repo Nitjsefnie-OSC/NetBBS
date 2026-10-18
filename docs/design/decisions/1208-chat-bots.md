@@ -17,7 +17,8 @@ MRC mappings, including paused mappings, always refuse bots. The local
 runtime now supervises BOT API v1 programs, with addressed-only grants,
 per-channel output limits, mutes, local bot presence/counts and persistent
 stop controls. Baud provides help and public channel reminders through that
-same API. Instances are off by default and configured in Content > Chat bots.
+same API. Instances are off by default and configured in Content > Chat bots;
+first-run onboarding offers to create Baud, defaulting to no (issue #1383).
 Linked participation requires a per-instance, per-channel approval confirmed
 by the SysOp on Save. Approved bots publish ordinary signed/live channel
 messages and advertise separate channel-scoped presence. The optional
@@ -182,7 +183,10 @@ program arguments, provider details and numeric budgets remain editable text.
 
 **Decision 6 (locked in): the house bot, `Baud`.**
 - **Off by default.** The SysOp switches it on, chooses its channels and may
-  rename it. A node can run several instances, each with its own name,
+  rename it. First-run onboarding asks once whether to switch it on (default
+  no) and, on yes, creates it addressed in one channel the SysOp picks, with
+  greetings and their presence-event grant there (issue #1383). It is asked
+  only while the node has no bot instance and has a channel to offer. A node can run several instances, each with its own name,
   channels, temperament, limits and memory.
 - **Temperament.** A few presets shape its fixed phrases. They need no
   language model.

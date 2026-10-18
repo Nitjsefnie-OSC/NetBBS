@@ -265,18 +265,33 @@ is a development helper. SysOp accounts have level **255**.
 
 #### First-run onboarding
 
-First-run onboarding offers two independent choices:
+First-run onboarding offers three independent choices:
 
-| Choice | What it does |
-| --- | --- |
-| **Join NetBBS Link through the reliable nodes** | Outgoing-only participation, using the project's bootstrap and relay nodes. A distinct node name is required. |
-| **Managed `<name>.netbbs.org` subdomain** | A public hostname managed through the project's DNS service. This does not configure your router, TLS, or ports. |
+| Choice | Default | What it does |
+| --- | --- | --- |
+| **Join NetBBS Link through the reliable nodes** | Yes | Outgoing-only participation, using the project's bootstrap and relay nodes. A distinct node name is required. |
+| **Managed `<name>.netbbs.org` subdomain** | Yes | A public hostname managed through the project's DNS service. This does not configure your router, TLS, or ports. |
+| **Switch on the house bot Baud** | No | Creates Baud in one channel you pick: it answers messages addressed to it and greets callers who join. |
 
 > [!WARNING]
-> Read the choices before pressing <kbd>Enter</kbd>: the first-run choices
-> default to yes.
+> Read the choices before pressing <kbd>Enter</kbd>: the first two default
+> to yes.
 
 If not completed here, onboarding is offered at the first SysOp login.
+
+The Baud choice is asked only while the node has no bot instance and has a
+chat channel to offer. A brand-new node has no channels, so it is asked at the
+first SysOp login after you create one. Saying yes:
+
+1. Lists the channels, local ones whose policy shows bots.
+2. Takes a number or a name; <kbd>Enter</kbd> picks the first.
+3. Creates the instance enabled, addressed in that channel, with greetings
+   and the presence-event grant they need there, and the friendly
+   temperament. Nothing else is granted, and it is not that channel's
+   default bot.
+
+Change any of it later under **Content ▸ Open chat bots**
+(see [Run a bot](#run-a-bot)).
 
 <details>
 <summary>The managed subdomain on a node that has never been started</summary>
@@ -2359,6 +2374,10 @@ suffix is classified as a bot on this node.
 1. Create Baud.
 2. Choose its local channels, and optionally select it as their default.
 3. Enable it and <kbd>S</kbd> **Save**.
+
+First-run onboarding can also create Baud in one channel, with greetings
+there (see [First-run onboarding](#first-run-onboarding)); it then appears
+here like any other instance.
 
 Baud reads only messages addressed to it. Its replies and reminders are
 public in the channel. Friendly, terse and retro temperaments change its
