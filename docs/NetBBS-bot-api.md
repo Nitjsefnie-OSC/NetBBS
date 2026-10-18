@@ -31,7 +31,8 @@ permissions. Install trusted programs. On Unix, supervision ends the process
 group; on Windows, it ends the direct child. Programs must not daemonize or
 leave helper processes behind. Only a small environment (paths, home, temporary
 directory and locale variables) is inherited; stdout is protocol-only. Stderr
-is drained without retaining it, to avoid unbounded logs or prompt disclosure.
+is drained without retaining it, to avoid unbounded logs or prompt disclosure;
+only a console trial ([Try](#try-a-bot-in-the-console)) shows an excerpt.
 
 ## Handshake and events
 
@@ -382,8 +383,115 @@ falls back to the preset, and a phrase that does not format is ignored the
 same way rather than stopping Baud. Command syntax and the help list itself
 are not phrases and stay as they are.
 
-Baud's standalone implementation in `src/netbbs/bots/baud.py` is an API example:
-it uses standard input/output only and has no database or filesystem access.
+Baud's standalone implementation in `src/netbbs/bots/baud.py` is an API example
+written on the helper below: it uses standard input/output only and has no
+database or filesystem access.
+
+## Writing a bot
+
+### The helper: `netbbs.bots.botkit`
+
+`src/netbbs/bots/botkit.py` is one standard-library file that owns the
+protocol plumbing, so a bot is only its own handlers. It imports nothing from
+NetBBS: import it as `netbbs.bots.botkit` where NetBBS is installed, or copy
+the file next to your bot and `import botkit` under any Python 3.9 or later.
+
+```python
+from botkit import Bot, run
+
+class Echo(Bot):
+    def on_message(self, msg):
+        msg.reply("you said " + msg.text)
+
+run(Echo)
+```
+
+What it does for you:
+
+- **Handshake.** `run(BotClass)` reads the `hello`, builds your bot from it and
+  answers `ready`. It speaks exactly one version, `botkit.API_VERSION`, which
+  equals the host's `BOT_API_VERSION`; any other `hello` version is refused
+  with a line on stderr and exit status 1, and no `ready` is sent. Use the
+  copy that ships with the node you run on.
+- **Dispatch by event type.** An event calls `on_<type>`: `on_message`,
+  `on_channel`, `on_presence`, `on_tick`, `on_post`, `on_file`. A type without
+  a handler, including one a newer host adds, is ignored. Fields read as keys
+  or attributes (`event.channel`, `event["channel"]`); a missing one reads as
+  `None`.
+- **Grants.** The bot's attributes `queries`, `reading_channels`,
+  `event_channels`, `board_sources`, `file_sources`, `announcement_channel`,
+  `greetings`, `announce_posts`, `announce_files` and `model_conversation` are
+  read from the hello's grant lists. `scope` is always `addressed` and says
+  nothing about the other grants.
+- **Actions and results.** Every action goes through `bot.act(action, then,
+  **fields)`, which gives it an id and, when `then` is given, calls
+  `then(result)` when its result arrives. Any number may be outstanding, and
+  events still arrive in between. The shortcuts are `bot.say(channel, text)`,
+  `bot.announce(event)`, `bot.load(then)` (`state.get`) and `bot.save(value)`,
+  and on a message `msg.reply(text)`, `msg.query(name, target)`, `msg.model()`
+  and `msg.model_reset()`. Each takes an optional `then`:
+
+  ```python
+  msg.query("stats", then=lambda result: msg.reply(result.text))
+  ```
+
+  A `Result` has `ok`, `value` and `error`; `result.text` is a query's text,
+  or the reason the action was refused.
+- **Replies.** `msg.reply(text)` puts the caller's name in front and cuts the
+  line to 500 characters, as Baud does. `say` is cut the same way.
+- **State.** `bot.state` starts as the hello's `state` and becomes a saved
+  value once the host has stored it; a refused save leaves it unchanged.
+  `bot.change(step)` runs `step()` once every save already sent has its
+  result. Put a command that reads the state and saves a new one through it,
+  so two such commands never build on the same stale copy. It returns `False`
+  without running `step` when 32 are already waiting; answer that caller with
+  a "busy" line. `bot.saving` is true while a save or a change is waiting.
+- **Flushing.** Every line is written as ASCII JSON and flushed.
+
+Handlers are plain synchronous code; a wait is a callback, and two waits in a
+row nest. An exception ends the process, and the host restarts it with
+backoff; in a trial its traceback shows in the stderr excerpt.
+
+### The second example: Tally
+
+`src/netbbs/bots/tally.py` counts karma from whole-channel reading. It ships
+installed and off; no preset creates it. Enter it under **Program arguments**
+with the node's interpreter, for example
+`["/usr/pkg/bin/python3.11", "-u", "-m", "netbbs.bots.tally"]`, or by file name
+from a source checkout, and grant **Read whole channels** for the channels it
+should count. Callers see that grant in the channel heading and in `/who`.
+
+```
+[20:14] <alice> thanks bob++ for the file fix
+[20:14] [BOT] <Tally.bot> bob now has 4 karma.
+[20:15] <carol> !karma bob
+[20:15] [BOT] <Tally.bot> carol: bob has 4 karma (top: bob 4, alice 2).
+```
+
+It shows what Baud does not. A `channel` observation carries no request
+token, so there is no caller to reply to: Tally `say`s its line to the
+channel. `!karma [name]` is an addressed request and is answered with
+`reply`. Its own state holds at most 200 names, well under the 16 KiB limit,
+and a refused save is reported on stderr and said nowhere. A caller cannot
+give karma to themselves, and at most five names count per line.
+
+### Try a bot in the console
+
+The bot editor's **Try** field runs the draft as it stands, unsaved, and the
+Chat bots list's `[T]ry selected` runs the saved instance. Neither asks a
+question first: a trial changes nothing on the node. See the
+[SysOp handbook](NetBBS-SysOp-Handbook.md#try-a-bot) for the screen.
+
+A trial runs the real host runtime against a scratch database, state
+directory and channel in a temporary directory, so every check (addressing,
+grants, the 500-character line, state and rate limits, request tokens)
+applies as it will live. It never touches the node's database, `.bots`
+directory, rate history or chat, and live callers never see it. The channels,
+boards and file areas the grants name exist in the scratch node by the same
+names; Linked approvals do not apply there. Model actions are rehearsed: the
+result and the caller's notice say what would have been asked, and nothing is
+sent to the provider. Stderr is kept to its last 8 KiB and shown; live, it is
+discarded. There is no command-line front end.
 
 ## Optional model conversation
 

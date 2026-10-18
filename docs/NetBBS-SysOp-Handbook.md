@@ -765,7 +765,8 @@ A small club rarely needs more than this:
 3. Read the preview of what the change opens and closes for that account:
    - **Gains:** each board to read or post on, file area to download from or
      upload to, channel, door and node-wide feature (node map, mail, opening
-     MRC rooms, the SysOp console) the new level lets them into.
+     MRC rooms, the oneliner wall, the SysOp console) the new level lets them
+     into.
    - **Loses:** what the new level takes away.
    - **Still blocked:** what the new level opens, but another gate still
      keeps this account out of, such as an age or verified-name requirement
@@ -2376,6 +2377,7 @@ python -m netbbs.admin rotate-key signing      # or: rotate-key transport
 
 In this chapter: [Which bots a channel shows](#which-bots-a-channel-shows) ·
 [Run a bot](#run-a-bot) · [Manage running bots](#manage-running-bots) ·
+[Try a bot](#try-a-bot) ·
 [Linked channels and external bots](#linked-channels-and-external-bots) ·
 [Reminders](#reminders) · [Model conversation](#model-conversation)
 
@@ -2447,7 +2449,7 @@ Everything else is a separate grant in the editor, off until you set it:
 
 The [bot API guide](NetBBS-bot-api.md) describes each. The editor groups its
 fields under Bot, Channels, Greetings and announcements, Queries and
-conversation, Behaviour and program, and Phrases.
+conversation, Behaviour and program, Phrases, and Try.
 
 ### Manage running bots
 
@@ -2460,6 +2462,7 @@ error.
 | <kbd>K</kbd> **Kill selected** | Stops one bot |
 | <kbd>S</kbd> **Stop all** | Stops every bot |
 | <kbd>D</kbd> **Delete selected** | Removes a bot whose state reads off, with its state directory; channel history and existing backups remain |
+| <kbd>T</kbd> **Try selected** | Runs the saved bot on a scratch node (see [Try a bot](#try-a-bot)) |
 
 - Each action reports its outcome above the prompt.
 - Both stops persist across node restarts; enable an instance again in its
@@ -2479,6 +2482,48 @@ In channels:
   have a fixed limit of 30 an hour per caller per bot instead of the
   channel's output limit.
 - `/who`, `/names` and the status line distinguish bots from people.
+
+### Try a bot
+
+Try runs a bot on a scratch node: its own database, state and channel in a
+temporary directory, with the bot's grants. Nothing reaches your node's
+database, the bot's real state, its output limits or your callers, so Try asks
+no question first, and nothing is kept afterwards.
+
+1. Open it:
+   - **Content ▸ Open chat bots ▸ Try selected** (<kbd>T</kbd>, then the
+     bot's number) tries the saved instance.
+   - The **Try** field, last in the bot editor, tries the draft as it stands,
+     before you save it.
+2. Type lines as yourself, as in a channel: `!help`, `Baud.bot: help`, or
+   plain chat, which only a bot granted **Read whole channels** receives.
+3. Act out other events:
+
+   | Command | Effect |
+   | --- | --- |
+   | `/join <name>` | Another caller joins (reaches bots with presence events) |
+   | `/leave <name>` | That caller leaves |
+   | `/post <title>` | A new post in the first board-event source |
+   | `/file <name>` | A new file in the first file-event source |
+   | `/quit` or <kbd>Esc</kbd> | Ends the trial |
+
+4. Read the result under each line: `host >` is each event NetBBS sent,
+   `bot >` each action the bot took, followed by its result or the reason it
+   was refused, then the chat lines as callers would see them. Any stderr the
+   program wrote follows, its last 8 KiB kept. Enter alone shows what has
+   happened since, such as a reminder falling due.
+
+> [!NOTE]
+> Model conversation is rehearsed in a trial: the bot is told what would have
+> been asked, and nothing is sent to the provider or counted against its
+> budget.
+
+NetBBS also ships a second example bot, **Tally**, which counts karma
+(`bob++`) in channels where it may read every line. It is installed but never
+created for you. To use it, create a bot, enter
+`["<the node's python>", "-u", "-m", "netbbs.bots.tally"]` under **Program
+arguments**, and grant **Read whole channels** where it should count. The
+[bot API guide](NetBBS-bot-api.md#the-second-example-tally) describes it.
 
 ### Linked channels and external bots
 
@@ -2714,9 +2759,32 @@ last start.
 login in its default neon style, the same panel plain (your header colour and
 a quiet heading), and hidden.
 
+**Settings ▸ Wall of oneliners** cycles the oneliner wall after login through
+the same three states: neon, plain and hidden. The wall is the short lines
+callers leave, drawn as a lower **Oneliners** section of the Recent callers
+panel, in that panel's style. With Recent callers hidden, the wall is shown
+alone in its own style. ▸ **Recent callers** on the main menu shows both
+whatever these two settings say.
+
+- A line is plain text, up to 60 columns.
+- A caller can add one line per call and three a day. Deleting a line does
+  not give one back. Every guest shares the guest account's three.
+- The wall keeps its newest 200 lines.
+- Who may add lines is the **Oneliner level** under
+  [Limits and retention](#limits-and-retention).
+
+To delete a line, open ▸ **Recent callers** ▸ <kbd>O</kbd> **Oneliners**,
+press <kbd>D</kbd> **Delete**, type its number and answer <kbd>Y</kbd>. A
+SysOp and staff with **moderate everything** can delete any line, and the
+audit log records it with the line's text. Callers delete their own lines.
+
+> [!NOTE]
+> A block does not hide anyone's lines: the wall is public, like a chat
+> channel. Delete a line that should not be there.
+
 ### Limits and retention
 
-**Settings ▸ Limits & retention** holds seven node-wide values, saved together
+**Settings ▸ Limits & retention** holds eight node-wide values, saved together
 and applied without a restart:
 
 | Setting | Default | Effect |
@@ -2728,6 +2796,7 @@ and applied without a restart:
 | Node map level | 0 | The lowest level that may open **Directory ▸ Node map**. A guest is an ordinary account: set this above the guest account's level to keep the map from guests. |
 | Mail level | 0 | The lowest level that may open **E-mail**: read, write and reply, here and to other BBSes. Below it the main menu offers no E-mail. Mail sent to an account below it still arrives and waits until you raise the account's level. |
 | Cross-post boards | 5 boards | The most message boards one new post may go to with **To boards** on its review screen, the board it was written on included. Each board gets its own copy, so this bounds what one post writes. 1 turns cross-posting off. |
+| Oneliner level | 0 | The lowest level that may add a line to the oneliner wall. Every caller can read it. A guest is an ordinary account: set this above the guest account's level to keep guests read-only. |
 
 ### The guest account
 

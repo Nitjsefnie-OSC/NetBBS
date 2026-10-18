@@ -608,8 +608,8 @@ screens (#1006-#1009) show it; this section says what it contains.
 
 - each board and file area twice, for reading and for posting or uploading;
 - each chat channel (entering it) and each door (playing it);
-- the node-wide gates: the node map, mail, opening new MRC rooms, and the
-  SysOp console at 255.
+- the node-wide gates: the node map, mail, opening new MRC rooms, adding to
+  the oneliner wall, and the SysOp console at 255.
 
 Resources excluded from this node (§9.5) are left out, since nobody reaches
 them.
@@ -656,8 +656,8 @@ that level or above, recounted from the draft as the SysOp types:
   posting needs reading, and says so;
 - a Community's default read and write levels also show how many boards and
   file areas inherit them;
-- channels, doors and the node settings (node map, mail, MRC open rooms) show
-  the count alone.
+- channels, doors and the node settings (node map, mail, MRC open rooms,
+  oneliner wall) show the count alone.
 
 The count is by level only; age and verified-name gates depend on each
 account and are not counted in.

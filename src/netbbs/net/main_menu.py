@@ -280,10 +280,10 @@ def main_menu_entries(
             MenuEntry(label=menu_key("H", "istory"), brief="Your recent sessions"),
             MenuEntry(
                 label=menu_key("R", "ecent callers"),
-                brief="Who else called this node",
+                brief="Who called, and what they said",
                 detailed=(
-                    "The node's recent callers -- the same roll shown after login, "
-                    "on demand."
+                    "The node's recent callers and its oneliner wall -- the same panel "
+                    "shown after login, on demand."
                 ),
             ),
     ]

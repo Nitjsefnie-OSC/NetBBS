@@ -85,6 +85,13 @@ async def bot_menu(session, lane, actor):
         await _delete_bot(session, lane, actor, bot.id)
         return await refresh()
 
+    async def try_one(bot):
+        # The saved instance, on a scratch node: nothing to confirm (§3.5).
+        from netbbs.bots.trial import TrialSpec
+        from netbbs.net.bot_try_flow import try_bot
+        await try_bot(session, lane, actor, TrialSpec.of_bot(await lane.run(get_bot, bot.id)), chrome)
+        return await refresh()
+
     async def create():
         return await bot_editor(session, lane, actor, chrome)
 
@@ -114,9 +121,10 @@ async def bot_menu(session, lane, actor):
             column_values_of=lambda b: [_state_cell(b, statuses), str(len(b.channels)), _error_cell(b, statuses)],
             description_of=description, title="Chat bots", own=True,
             empty_message="No bots installed. Create an instance of Baud to get started.",
-            refresh=refresh, on_create=create, live_keys={"s": stop_all, "m": model_settings, "u": model_usage}, item_keys={"k": stop_one, "d": delete_one},
+            refresh=refresh, on_create=create, live_keys={"s": stop_all, "m": model_settings, "u": model_usage}, item_keys={"k": stop_one, "d": delete_one, "t": try_one},
             live_nav=(MenuEntry(label=menu_key("K", "ill selected"), brief="Stop this bot persistently"),
                       MenuEntry(label=menu_key("D", "elete selected"), brief="Delete a stopped bot and its state"),
+                      MenuEntry(label=menu_key("T", "ry selected"), brief="Run it on a scratch node"),
                       MenuEntry(label=menu_key("S", "top all"), brief="Stop every bot persistently"),
                       MenuEntry(label=menu_key("M", "odel settings"), brief="Provider, privacy and budgets"),
                       MenuEntry(label=menu_key("U", "sage"), brief="Spending, callers and limits")),
@@ -179,12 +187,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             draft[f"phrase_{key}"] = overrides.get(key, "")
 
         async def save(values):
-            try:
-                command = json.loads(values["command"])
-            except ValueError as exc:
-                raise BotError('Command must be a JSON argument array, for example ["/usr/local/bin/mybot"].') from exc
-            if not isinstance(command, list):
-                raise BotError("Command must be a JSON array; [] selects bundled Baud.")
+            command = _parse_command(values["command"])
             linked = values["linked"]
             reading = values["reading"]
             added = set(linked) - set(bot.linked_channels if bot else ())
@@ -220,6 +223,17 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 model_conversation=values["model"],
                 phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS},
             )
+
+        async def try_prompt(session, lane, values):
+            # Issue #1374: the draft as it stands, unsaved, on a scratch node.
+            from netbbs.bots.trial import TrialSpec
+            from netbbs.net.bot_try_flow import try_bot
+            try:
+                spec = _draft_spec(values)
+            except BotError as exc:
+                announce(session, f"Try not started: {exc}", tone="error")
+                return
+            await try_bot(session, lane, actor, spec, chrome)
 
         def text_spec(key, label, help, section):
             return FieldSpec(key, label, lambda d: sanitize_text(d[key]) or "(none)", text_field(key), help=help, section=section)
@@ -341,6 +355,12 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             phrase_spec("busy", "Busy message", "The reply while Baud is saving reminders and its queue is full."),
             phrase_spec("limit", "Reminder-limit message", "The reply when a caller or the bot has reached the "
                         "reminder limit (8 per caller, 48 per bot)."),
+            # Last, so every other field keeps its number.
+            FieldSpec("try", "Try", lambda d: "Run this draft on a scratch node", try_prompt, section="Try",
+                      help="Runs this draft, unsaved, against a scratch database, state and channel; type lines "
+                           "as a caller and see each host event, bot action and result, the chat lines and the "
+                           "program's stderr. Nothing reaches your node or its callers, and model requests are "
+                           "rehearsed, never sent."),
         ]
         saved = await edit_resource_draft(
             session, lane, title="Edit chat bot" if bot else "Create chat bot", own=True,
@@ -355,6 +375,30 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             announce(session, f"{saved.label} saved." + (" It starts within a second." if saved.enabled and not (
                 bot and bot.enabled) else ""))
         return saved
+
+
+def _parse_command(raw):
+    try:
+        command = json.loads(raw)
+    except ValueError as exc:
+        raise BotError('Command must be a JSON argument array, for example ["/usr/local/bin/mybot"].') from exc
+    if not isinstance(command, list):
+        raise BotError("Command must be a JSON array; [] selects bundled Baud.")
+    return command
+
+
+def _draft_spec(values):
+    from netbbs.bots.trial import TrialSpec
+    return TrialSpec(
+        name=values["name"].strip(), command=_parse_command(values["command"]), temperament=values["temperament"],
+        phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS}, channels=list(values["channels"]),
+        defaults=list(values["defaults"]), lines_per_hour=values["rate"],
+        queries=[key for key in ("stats", "seen") if values[key]], reading_channels=list(values["reading"]),
+        event_channels=list(values["events"]), greetings=values["greetings"], board_sources=list(values["boards"]),
+        file_sources=list(values["files"]), announcement_channel=values["announcement_channel"].strip() or None,
+        announce_posts=values["announce_posts"], announce_files=values["announce_files"],
+        model_conversation=values["model"],
+    )
 
 
 def _linked_names(db):

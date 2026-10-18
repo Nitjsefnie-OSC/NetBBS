@@ -1,0 +1,403 @@
+"""The bot developer kit (issue #1374): botkit, Baud and Tally on it, and Try."""
+
+import asyncio
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+import netbbs.bots
+from netbbs.bots import BOT_API_VERSION, botkit
+from netbbs.bots.baud import Baud
+from netbbs.bots.registry import save_bot
+from netbbs.bots.runtime import BotRuntime
+from netbbs.bots.state import read_state, state_root
+from netbbs.bots.tally import Tally
+from netbbs.bots.trial import STDERR_LIMIT, Trial, TrialSpec
+from netbbs.chat.hub import ParticipantId
+from netbbs.chat.scrollback import get_scrollback, record_message
+from netbbs.net import bot_flow
+from netbbs.net.admin_ui import _load_chrome
+from tests.test_bot_runtime import (  # noqa: F401
+    db, lane, hub, sysop, alice, channel, eventually, install, next_line,
+)
+from tests.test_bot_settings_ui import Screen
+
+BOTS = Path(netbbs.bots.__file__).parent
+
+
+def message(text, request="r", name="alice", channel="general"):
+    return {"type": "message", "request": request, "caller": {"id": 7, "name": name}, "channel": channel, "text": text}
+
+
+def test_helper_speaks_the_packages_one_api_version():
+    assert botkit.API_VERSION == BOT_API_VERSION
+
+
+@pytest.mark.parametrize("version, ready", [(BOT_API_VERSION, True), (BOT_API_VERSION + 1, False)])
+def test_handshake_answers_only_its_own_version(version, ready, tmp_path):
+    # By filename and without PYTHONPATH, as the host starts Baud.
+    hello = json.dumps({"type": "hello", "version": version, "name": "Baud.bot", "state": {}}) + "\n"
+    done = subprocess.run([sys.executable, "-u", str(BOTS / "baud.py")], input=hello, capture_output=True,
+                          text=True, timeout=30, cwd=tmp_path, env={"PATH": "", "SYSTEMROOT": "C:\\Windows"})
+    if ready:
+        assert json.loads(done.stdout) == {"type": "ready", "version": BOT_API_VERSION}
+    else:
+        assert done.stdout == "" and done.returncode == 1
+        assert f"botkit speaks BOT API version {BOT_API_VERSION}" in done.stderr
+        assert f"offered version {version}" in done.stderr
+
+
+def test_results_reach_their_own_callbacks_in_any_order():
+    sent, answers = [], []
+
+    class Asker(botkit.Bot):
+        def on_message(self, msg):
+            msg.query("stats", then=lambda result: msg.reply(result.text))
+
+    bot = Asker({"queries": ["stats"]}, sent.append)
+    bot.handle(message("one", request="r1", name="alice"))
+    bot.handle(message("two", request="r2", name="bob"))
+    first, second = sent
+    assert first["id"] != second["id"]
+    bot.handle({"type": "result", "id": second["id"], "ok": True, "value": {"text": "for bob"}})
+    bot.handle({"type": "result", "id": first["id"], "ok": False, "error": "refused"})
+    answers = [(a["request"], a["text"]) for a in sent[2:]]
+    assert answers == [("r2", "bob: for bob"), ("r1", "alice: refused")]
+    # A result nobody waits for, and an unknown event type, are ignored.
+    bot.handle({"type": "result", "id": "999", "ok": True})
+    bot.handle({"type": "door", "text": "a future event type"})
+    assert len(sent) == 4
+
+
+def test_reply_names_the_caller_and_keeps_to_the_line_limit():
+    sent = []
+
+    class Long(botkit.Bot):
+        def on_message(self, msg):
+            msg.reply("x" * 900)
+
+    Long({}, sent.append).handle(message("hi"))
+    assert sent[0]["text"].startswith("alice: x") and len(sent[0]["text"]) == botkit.LINE_LIMIT
+
+
+def test_capabilities_come_from_the_grant_lists_not_scope():
+    bot = botkit.Bot({"scope": "addressed", "reading_channels": ["lobby"], "queries": ["seen"],
+                      "event_channels": ["lobby"], "model_conversation": True}, lambda value: None)
+    assert bot.reading_channels == ["lobby"] and bot.queries == {"seen"}
+    assert bot.event_channels == ["lobby"] and bot.model_conversation
+
+
+def test_state_cache_changes_wait_for_saves_in_order():
+    sent, seen = [], []
+    bot = botkit.Bot({"state": {"n": 0}}, sent.append)
+    bot.save({"n": 1})
+    assert bot.saving and bot.state == {"n": 0}
+    assert bot.change(lambda: seen.append(dict(bot.state)))
+    assert not seen
+    for _ in range(botkit.MAX_CHANGES - 1):
+        bot.change(lambda: None)
+    assert not bot.change(lambda: seen.append("refused"))
+    bot.handle({"type": "result", "id": sent[0]["id"], "ok": True})
+    assert seen == [{"n": 1}] and not bot.saving
+    # A refused save leaves the cache as it was.
+    bot.save({"n": 2})
+    bot.handle({"type": "result", "id": sent[-1]["id"], "ok": False, "error": "16 KiB"})
+    assert bot.state == {"n": 1}
+
+
+def test_baud_reminders_sent_during_a_save_both_survive():
+    # The helper's ordered writes replace Baud's own waiting slot: a second
+    # remind while the first is saving builds on the saved first one.
+    sent = []
+    baud = Baud({}, sent.append)
+    baud.handle(message("remind 1h first"))
+    first = sent[-1]
+    baud.handle(message("remind 1h second"))
+    assert sent[-1] is first
+    baud.handle({"type": "result", "id": first["id"], "ok": True})
+    assert sent[-2]["text"] == "alice: Saved reminder #1; it will appear publicly here."
+    assert sent[-1]["action"] == "state.set"
+    baud.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
+    assert [r["text"] for r in baud.state["reminders"]] == ["first", "second"]
+
+
+def test_baud_answers_queries_while_another_is_outstanding():
+    sent = []
+    baud = Baud({"queries": ["stats"]}, sent.append)
+    baud.handle(message("stats", request="a"))
+    baud.handle(message("help", request="b"))
+    assert sent[-1]["action"] == "reply" and sent[-1]["request"] == "b"
+    baud.handle({"type": "result", "id": sent[0]["id"], "ok": True, "value": {"text": "3 online"}})
+    assert sent[-1] == {"id": sent[-1]["id"], "action": "reply", "request": "a", "text": "alice: 3 online"}
+
+
+def channel_line(text, name="alice", kind="message", channel="general"):
+    return {"type": "channel", "kind": kind, "channel": channel, "caller": {"id": 7, "name": name}, "text": text}
+
+
+def test_tally_counts_whole_channel_lines_and_says_them():
+    sent = []
+    tally = Tally({"reading_channels": ["general"]}, sent.append)
+    tally.handle(channel_line("thanks bob++ and carol++ for the fix; alice++ c++ x--"))
+    assert sent[-1]["action"] == "state.set"
+    assert sent[-1]["value"]["karma"] == {"bob": ["bob", 1], "carol": ["carol", 1]}
+    tally.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
+    # An observation has no request token: Tally says, it does not reply.
+    assert sent[-1] == {"id": sent[-1]["id"], "action": "say", "channel": "general",
+                        "text": "bob now has 1 karma; carol now has 1 karma."}
+    tally.handle(channel_line("bob-- oops", name="dave"))
+    tally.handle({"type": "result", "id": sent[-1]["id"], "ok": True})
+    tally.handle(message("!karma Bob", name="carol"))
+    assert sent[-1]["text"] == "carol: bob has 0 karma (top: carol 1, bob 0)."
+    tally.handle(message("karma", name="erin"))
+    assert sent[-1]["text"] == "erin: erin has 0 karma (top: carol 1, bob 0)."
+
+
+def test_tally_says_nothing_when_the_save_is_refused(capsys):
+    sent = []
+    tally = Tally({"reading_channels": ["general"]}, sent.append)
+    tally.handle(channel_line("bob++"))
+    tally.handle({"type": "result", "id": sent[-1]["id"], "ok": False, "error": "Bot state exceeds 16 KiB."})
+    assert sent[-1]["action"] == "state.set" and tally.state == {"karma": {}}
+    assert "could not save karma: Bot state exceeds 16 KiB." in capsys.readouterr().err
+
+
+def test_real_tally_reads_the_channel_and_answers_karma(db, lane, hub, sysop, alice, channel):
+    bot = install(db, sysop, channel, name="Tally", command=[sys.executable, "-u", str(BOTS / "tally.py")],
+                  reading_channels=[channel.name])
+
+    async def run():
+        pid = ParticipantId(alice.username, 1)
+        queue = hub.join(channel.name, pid)
+        runtime = BotRuntime(lane, hub, poll_seconds=.03)
+        runtime.start()
+        try:
+            await eventually(lambda: bot.id in runtime.running_ids)
+            line = record_message(db, channel, kind="message", author_label=alice.username, body="thanks bob++")
+            await runtime.observe(channel, line, caller={"id": alice.id, "name": alice.username})
+            await next_line(queue, "bob now has 1 karma.")
+            assert read_state(db, bot.storage_name) == {"karma": {"bob": ["bob", 1]}}
+            ask = record_message(db, channel, kind="message", author_label=alice.username, body="!karma bob")
+            assert await runtime.addressed(channel, alice, ask, pid) is None
+            await next_line(queue, "alice: bob has 1 karma (top: bob 1).")
+        finally:
+            await runtime.close()
+            hub.leave(channel.name, pid)
+
+    asyncio.run(run())
+
+
+def test_live_runtime_keeps_no_trace_and_no_stderr(db, lane, hub, sysop, channel):
+    code = ("import json, sys; sys.stdin.readline(); sys.stderr.write(('SECRET' + '-STDERR ') * 50); sys.stderr.flush(); "
+            "print(json.dumps({'type': 'ready', 'version': 1}), flush=True); sys.stdin.read()")
+    bot = install(db, sysop, channel, command=[sys.executable, "-u", "-c", code])
+
+    async def run():
+        runtime = BotRuntime(lane, hub, poll_seconds=.03)
+        runtime.start()
+        try:
+            await eventually(lambda: bot.id in runtime.running_ids)
+            await asyncio.sleep(.3)
+            assert runtime.trial is None
+            worker = runtime.workers[bot.id]
+            assert "SECRET-STDERR" not in repr(vars(worker)) and "SECRET-STDERR" not in repr(vars(runtime))
+        finally:
+            await runtime.close()
+
+    asyncio.run(run())
+
+
+def test_trial_runs_the_real_runtime_on_a_scratch_node(db, sysop, channel):
+    # A live node with its own Baud: the trial must leave all of it alone.
+    install(db, sysop, channel)
+    root = state_root(db.path)
+
+    async def run():
+        trial = Trial(TrialSpec(), caller="sysop")
+        await trial.start()
+        try:
+            directory = Path(trial.directory.name)
+            await trial.wait_ready()
+            await trial.line("!help")
+            await eventually(lambda: any(e.kind == "chat" and "No language model" in getattr(e.value, "body", "")
+                                         for e in trial.log.entries))
+            await trial.line("!remind 1h water the plants")
+            await eventually(lambda: any(e.kind == "chat" and "Saved reminder #1" in getattr(e.value, "body", "")
+                                         for e in trial.log.entries))
+            assert any(e.kind == "bot" and e.value.get("action") == "state.set" for e in trial.log.entries)
+            kinds = {(e.kind, e.value.get("type") or e.value.get("action")) for e in trial.log.entries
+                     if e.kind in {"host", "bot"}}
+            assert {("host", "hello"), ("bot", "ready"), ("host", "message"), ("bot", "reply"),
+                    ("host", "result")} <= kinds
+            # Addressed exactly as in a channel: plain chat reaches nobody.
+            before = trial.log.count
+            await trial.line("just chatting")
+            await asyncio.sleep(.3)
+            assert not [e for e in trial.log.since(before) if e.kind in {"host", "bot"}]
+        finally:
+            await trial.close()
+        return directory
+
+    directory = asyncio.run(run())
+    assert not directory.exists()
+    assert get_scrollback(db, channel) == []
+    assert not (root / "Baud" / "state.json").exists()
+
+
+def test_trial_rehearses_model_actions_and_keeps_a_bounded_stderr():
+    code = ("import json, sys\n"
+            "sys.stdin.readline()\n"
+            "sys.stderr.write('A' * 9000 + 'TAIL')\n"
+            "sys.stderr.flush()\n"
+            "print(json.dumps({'type': 'ready', 'version': 1}), flush=True)\n"
+            "for line in sys.stdin:\n"
+            "    event = json.loads(line)\n"
+            "    if event['type'] == 'message':\n"
+            "        print(json.dumps({'id': 'm', 'action': 'model', 'request': event['request']}), flush=True)\n")
+    spec = TrialSpec(name="Asker", command=[sys.executable, "-u", "-c", code], model_conversation=True)
+
+    async def run():
+        trial = Trial(spec, caller="sysop", model_enabled=True)
+        await trial.start()
+        try:
+            await trial.wait_ready()
+            await trial.line("Asker.bot: what is a modem?")
+            await eventually(lambda: any(e.kind == "host" and e.value.get("type") == "result"
+                                         for e in trial.log.entries))
+            result = next(e.value for e in trial.log.entries if e.kind == "host" and e.value.get("type") == "result")
+            assert result["ok"] and "would ask the model" in result["value"]["rehearsal"]
+            await eventually(lambda: any(e.kind == "chat" and "Rehearsal" in str(e.value) for e in trial.log.entries))
+            excerpt = trial.log.stderr_since(0)
+            assert len(excerpt) == STDERR_LIMIT and excerpt.endswith("TAIL")
+        finally:
+            await trial.close()
+
+    asyncio.run(run())
+
+
+def test_try_selected_and_the_editors_try_run_without_a_question(db, lane, sysop, channel):
+    save_bot(db, actor=sysop, name="Baud", channels=[channel.name], defaults=[channel.name])
+    session = Screen(["t", "b"], lines=["01", "!help", "/quit"])
+    asyncio.run(bot_flow.bot_menu(session, lane, sysop))
+    plain = session.plain
+    assert "Try Baud.bot" in plain and "scratch #lobby" in plain
+    assert "bot   > reply" in plain and "No language model is enabled." in plain
+    assert "Try of Baud.bot ended. Nothing it did was kept." in plain
+    assert get_scrollback(db, channel) == []
+
+    # The editor's Try field is last, so every other field keeps its number.
+    async def edit():
+        chrome = await _load_chrome(lane, sysop)
+        screen = Screen(["2", "4", "b", "y"], lines=["/join bob", "/quit"])
+        await bot_flow.bot_editor(screen, lane, sysop, chrome)
+        return screen.plain
+    plain = asyncio.run(edit())
+    assert "24 Try" in plain or "Try:" in plain
+    assert "Try Baud.bot" in plain and "presence join bob" not in plain
+
+
+def test_baud_reminder_saved_during_a_delivery_is_not_lost():
+    # #1419 review: removing a delivered reminder waits for a save in flight,
+    # or it builds on the state before that save and drops the new reminder.
+    sent = []
+    baud = Baud({"state": {"next": 2, "reminders": [{"id": 1, "user": 7, "name": "alice", "channel": "general",
+                                                    "due": 0, "text": "due now"}]}}, sent.append)
+    baud.handle({"type": "tick", "time": 1})
+    say = sent[-1]
+    assert say["action"] == "say"
+    baud.handle(message("remind 1h keep me"))
+    remind_save = sent[-1]
+    assert remind_save["action"] == "state.set"
+    baud.handle({"type": "result", "id": say["id"], "ok": True})
+    # The removal waits behind the remind's save, and no tick re-says it.
+    assert sent[-1] is remind_save
+    baud.handle({"type": "tick", "time": 2})
+    assert sent[-1] is remind_save
+    baud.handle({"type": "result", "id": remind_save["id"], "ok": True})
+    removal = sent[-1]
+    assert removal["action"] == "state.set"
+    assert [r["text"] for r in removal["value"]["reminders"]] == ["keep me"]
+    baud.handle({"type": "result", "id": removal["id"], "ok": True})
+    assert [r["text"] for r in baud.state["reminders"]] == ["keep me"]
+
+
+def test_try_descriptions_sanitize_every_field():
+    from netbbs.net.bot_try_flow import describe_bot, describe_host
+    evil = "x\x1b[2J\x1b]0;spoof\x07"
+    lines = [
+        describe_bot({"action": "say", "channel": evil, "text": "hi"}),
+        describe_bot({"action": "query", "query": evil}),
+        describe_bot({"type": "ready", "version": evil}),
+        describe_host({"type": "result", "id": evil, "ok": True}),
+        describe_host({"type": "presence", "kind": evil, "caller": {"name": evil}, "channel": evil}),
+        describe_host({"type": "hello", "version": evil, "channels": [evil]}),
+    ]
+    assert all("\x1b" not in line and "\x07" not in line for line in lines)
+
+
+def test_try_flush_keeps_entries_added_while_it_renders():
+    # #1419 review: the watermark is the snapshot's, so a line logged during
+    # the render's awaits is shown on the next flush, never skipped.
+    from netbbs.bots.trial import TrialLog
+    from netbbs.net import bot_try_flow
+
+    class Session:
+        def __init__(self):
+            self.written = []
+
+        async def write_line(self, text):
+            self.written.append(text)
+            if len(self.written) == 1:
+                log.add("status", ("restarting", "late arrival"))
+                log.stderr(b"late stderr")
+
+    class FakeTrial:
+        pass
+
+    log = TrialLog(model_enabled=False)
+    trial = FakeTrial()
+    trial.log = log
+    log.add("status", ("running", ""))
+    session = Session()
+
+    async def run():
+        shown, err = await bot_try_flow._flush(session, trial, 0, 0)
+        await bot_try_flow._flush(session, trial, shown, err)
+    asyncio.run(run())
+    text = "".join(session.written)
+    assert "late arrival" in text and "late stderr" in text
+
+
+def test_trial_start_failure_leaves_nothing_behind(monkeypatch):
+    # #1419 review: a failure after the scratch node is built, a
+    # cancellation included, closes the lane, the listener and the directory.
+    import netbbs.bots.runtime as runtime_module
+
+    def refuse(self):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(runtime_module.BotRuntime, "start", refuse)
+
+    seen = {}
+
+    class Watched(Trial):
+        async def close(self):
+            if self.directory is not None:
+                seen["directory"] = Path(self.directory.name)
+                seen["lane"] = self.lane
+                seen["listen"] = self._listen
+            await super().close()
+
+    async def run():
+        trial = Watched(TrialSpec(), caller="sysop")
+        with pytest.raises(asyncio.CancelledError):
+            await trial.start()
+        return trial
+
+    trial = asyncio.run(run())
+    assert trial.directory is None and trial.lane is None and trial._listen is None
+    assert seen["lane"] is not None and seen["listen"].done()
+    assert not seen["directory"].exists()

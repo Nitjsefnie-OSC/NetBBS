@@ -4742,6 +4742,30 @@ MIGRATIONS = [
     ),
     Migration(
         description=(
+            "Issue #1391 (design doc §3.3, the oneliner wall): `oneliners`, the short lines callers "
+            "leave under Recent callers, newest first. The author is kept by label beside "
+            "`author_user_id ON DELETE SET NULL`, so a line outlives its account as a post does. "
+            "`oneliner_additions` logs each line added for a day, so the per-account daily limit "
+            "counts lines added rather than lines still on the wall: deleting one's own line gives "
+            "no quota back. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE oneliners (
+            id              INTEGER PRIMARY KEY,
+            author_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            author_label    TEXT NOT NULL,
+            text            TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        );
+        CREATE TABLE oneliner_additions (
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX idx_oneliner_additions_user ON oneliner_additions(user_id, created_at);
+        """,
+    ),
+    Migration(
+        description=(
             "Issue #1372 (design doc §16, private bot replies, Decision 4): "
             "`bot_private_history`, one row per private answer a bot instance gave one caller, "
             "for the fixed limit of 30 private answers per caller per hour per bot. A caller is "

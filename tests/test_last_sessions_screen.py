@@ -332,7 +332,7 @@ def test_previous_callers_menu_screen_shows_another_caller(tmp_path):
     bob = create_user(database, "bob", password="hunter2", user_level=10)
     record_session_start(database, bob)
 
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     asyncio.run(_run_main_menu(session, database, alice))
 
     text = _visible(session)
@@ -358,7 +358,7 @@ def test_previous_callers_menu_screen_says_so_when_empty(tmp_path):
     it -- but this screen was asked for."""
     database = db_(tmp_path)
     alice = create_user(database, "alice", password="hunter2", user_level=10)
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
 
     asyncio.run(_run_main_menu(session, database, alice))
 
@@ -377,7 +377,7 @@ def test_previous_callers_menu_screen_ignores_the_post_login_toggle(tmp_path):
     record_session_start(database, bob)
     set_previous_callers_enabled(database, False)
 
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     asyncio.run(_run_main_menu(session, database, alice))
 
     assert "bob" in _visible(session)
@@ -395,7 +395,7 @@ def test_previous_callers_menu_screen_excludes_the_viewers_own_session(tmp_path)
     record_session_end(database, record_session_start(database, bob))
     history_id = record_session_start(database, alice)
 
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     asyncio.run(
         _run_main_menu(session, database, alice, current_history_id=history_id)
     )
@@ -451,7 +451,7 @@ def test_previous_callers_screen_hides_name_when_target_opted_out(tmp_path):
     set_session_history_name_visible(database, bob, False)
     record_session_start(database, bob)
 
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     asyncio.run(_run_main_menu(session, database, alice))
 
     text = _written_text(session)
@@ -471,7 +471,7 @@ def test_previous_callers_screen_sysop_always_sees_real_names(tmp_path):
     set_session_history_name_visible(database, bob, False)
     record_session_start(database, bob)
 
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     asyncio.run(_run_main_menu(session, database, sysop))
 
     text = _written_text(session)
@@ -495,7 +495,7 @@ def test_previous_callers_screen_shows_denormalized_label_for_a_deleted_account(
     record_session_start(database, bob)
     delete_user(database, bob, deleted_by=sysop)
 
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     asyncio.run(_run_main_menu(session, database, alice))
 
     assert "bob" in _written_text(session)
@@ -518,7 +518,7 @@ def test_previous_callers_screen_keeps_a_deleted_accounts_opted_out_name_hidden(
     record_session_start(database, bob)
     delete_user(database, bob, deleted_by=sysop)
 
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     asyncio.run(_run_main_menu(session, database, alice))
 
     text = _written_text(session)
@@ -541,7 +541,7 @@ def test_previous_callers_screen_sysop_sees_real_name_even_for_a_deleted_opted_o
     record_session_start(database, bob)
     delete_user(database, bob, deleted_by=sysop)
 
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     asyncio.run(_run_main_menu(session, database, sysop))
 
     text = _written_text(session)
@@ -665,7 +665,7 @@ def test_previous_callers_menu_screen_says_a_too_narrow_terminal_is_why(tmp_path
     alice = create_user(database, "alice", password="hunter2", user_level=10)
     bob = create_user(database, "bob", password="hunter2", user_level=10)
     record_session_start(database, bob)
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     session.terminal_width = 3
 
     asyncio.run(_run_main_menu(session, database, alice))
@@ -681,7 +681,7 @@ def test_previous_callers_menu_screen_keeps_one_row_on_a_short_terminal(tmp_path
     alice = create_user(database, "alice", password="hunter2", user_level=10)
     bob = create_user(database, "bob", password="hunter2", user_level=10)
     record_session_start(database, bob)
-    session = FakeSession(["r", " ", "l", "y"])
+    session = FakeSession(["r", "b", "l", "y"])
     session.terminal_height = 8
 
     asyncio.run(_run_main_menu(session, database, alice))
