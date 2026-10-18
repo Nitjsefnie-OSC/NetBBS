@@ -96,6 +96,11 @@ class ChannelMessage:
     # author could not be told apart from a later holder of the name, which
     # resolves to nobody (`netbbs.net.chat_flow._resolve_message_author`).
     author_user_id: int | None = None
+    # Issue #1380: a SysOp's scheduled announcement carried as a signed line
+    # -- this node's own in a channel approved for announcements, or one
+    # received with the event's `announcement` marker. Drawn as an
+    # announcement, never as the SysOp chatting, and not unread activity.
+    announcement: bool = False
 
 
 def get_scrollback_limit(db: Database) -> int:
@@ -144,6 +149,7 @@ def record_message(
     mrc_nick_color: int | None = None,
     mrc_handle: str | None = None,
     author_user_id: int | None = None,
+    announcement: bool = False,
 ) -> ChannelMessage:
     """
     Append an event to `channel`'s scrollback and trim it back down to the
@@ -209,6 +215,8 @@ def record_message(
         db.connection.execute(
             "UPDATE channel_messages SET author_user_id = ? WHERE id = ?", (author_user_id, message_id),
         )
+    if announcement:
+        db.connection.execute("UPDATE channel_messages SET announcement = 1 WHERE id = ?", (message_id,))
     # Capture *this* row now, inside the transaction and before the trim:
     # never "the channel's newest row" (a background writer -- issue
     # #275's MRC bridge on the background lane -- can land another row
@@ -300,4 +308,5 @@ def _row_to_message(row: sqlite3.Row) -> ChannelMessage:
         mrc_handle=row["mrc_handle"] if "mrc_handle" in columns else None,
         author_kind=row["author_kind"] if "author_kind" in columns else "user",
         author_user_id=row["author_user_id"] if "author_user_id" in columns else None,
+        announcement=bool(row["announcement"]) if "announcement" in columns else False,
     )

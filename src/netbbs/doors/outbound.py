@@ -334,6 +334,44 @@ def set_rate_ceiling(db: Database, door, ceiling: int, *, changed_by: User) -> O
     return outbound_config(db, door.id)
 
 
+def door_not_public(db: Database, door) -> str | None:
+    """Why `door` may not post or speak anywhere right now, or `None`.
+
+    A door's audience is whoever may play it, and what it posts or says can
+    name that game and its players to everyone who reads the board or
+    channel (issue #1401). So the hook carries anything only while every
+    caller may play the door: `min_play_level` 0. That is the only gate a
+    door has -- it inherits nothing from its Community, unlike a board -- so
+    this is the door's version of the bot announcement rule (`bots.sources.
+    _public`), and the same check door events make (#1378).
+
+    This is a read gate, not a write gate: it says nothing about who may
+    post, which stays the SysOp's allowlist alone (design doc §15). Checked
+    when a target is allowed and again for every request, read fresh from
+    the registry rather than from the launch's snapshot, because a SysOp can
+    raise the level after allowing a target or while the door runs.
+    """
+    from netbbs.doors.registry import get_door
+
+    current = get_door(db, door.id)
+    if current is None:
+        return "this door is no longer registered"
+    if current.min_play_level != 0:
+        return (f"this door is limited to callers at level {current.min_play_level} or above, and a door "
+                "posts and chats only while every caller may play it")
+    return None
+
+
+def not_public_message(problem: str) -> str:
+    """`door_not_public`'s reason as the SysOp is told it, with what to do."""
+    return f"{problem[0].upper()}{problem[1:]}. Set its minimum play level to 0 first."
+
+
+def _require_public(db: Database, door) -> None:
+    if problem := door_not_public(db, door):
+        raise OutboundError(not_public_message(problem))
+
+
 def targets(db: Database, door_id: int) -> list[Board]:
     """Every board this door may post to, in the order they were allowed."""
     rows = db.connection.execute(
@@ -349,9 +387,10 @@ def targets(db: Database, door_id: int) -> list[Board]:
 
 
 def allow_target(db: Database, door, board: Board, *, allowed_by: User) -> None:
-    """Add one board to this door's allowlist."""
+    """Add one board to this door's allowlist, while the door is public (`door_not_public`)."""
     if outbound_config(db, door.id) is None:
         raise OutboundError("this door's outbound hook is not switched on")
+    _require_public(db, door)
     db.connection.execute(
         "INSERT OR IGNORE INTO door_outbound_targets (door_id, board_id, created_at) VALUES (?, ?, ?)",
         (door.id, board.id, utc_now_iso()),
@@ -447,10 +486,11 @@ def allow_channel(db: Database, door, channel: Channel, *, allowed_by: User) -> 
 
     Whether the SysOp was told that a Linked channel's lines reach every
     peer and cannot be taken back is the screen's job; this refuses only
-    what can never be allowed.
+    what can never be allowed, and a door that is not public (`door_not_public`).
     """
     if outbound_config(db, door.id) is None:
         raise OutboundError("this door's outbound hook is not switched on")
+    _require_public(db, door)
     if problem := channel_not_allowable(db, channel):
         raise OutboundError(f"#{channel.name} {problem}")
     db.connection.execute(
@@ -1216,6 +1256,12 @@ def _handle_one(db: Database, door, config: OutboundConfig, actor: User, launch:
     if not isinstance(payload, dict):
         answer({"status": "rejected", "reason": "request must be a JSON object"})
         return "malformed request"
+    # Before either path, so a board post and a chat line are held to the
+    # same audience rule, and at publication rather than only at the grant:
+    # a SysOp can raise the door's level after allowing its targets.
+    if gated := door_not_public(db, door):
+        answer({"status": "rejected", "reason": gated})
+        return gated
     if "event" in payload or "standings" in payload:
         # Door API 5 (issue #1408): a game event or a standings snapshot.
         # Neither publishes anything here; a bot announces an event later,
