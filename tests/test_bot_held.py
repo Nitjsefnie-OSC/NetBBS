@@ -205,9 +205,18 @@ def test_line_bounds_and_cancel(db, sysop, alice, channel):
         held.hold_line(db, bot.id, channel.name, alice.id, "one more", WEEK)
     # A Link caller is a separate caller.
     held.hold_line(db, bot.id, channel.name, "link:abc123:bob", "for bob", WEEK)
+    # An expired line frees its place but stays for the sweep, which tells
+    # the bot it expired (review of #1421).
+    db.connection.execute("UPDATE bot_held_lines SET expires_at = '2000-01-01T00:00:00.000000Z' WHERE id = ?",
+                          (ids[-1],))
+    db.connection.commit()
+    replacement = held.hold_line(db, bot.id, channel.name, alice.id, "replacement", WEEK)["held_id"]
+    assert (bot.id, ids[-1], "line") in held.prune_expired(db)
+    held.cancel_line(db, bot.id, replacement)
     assert held.cancel_line(db, bot.id, ids[0]) == {"cancelled": True}
     assert held.cancel_line(db, bot.id, ids[0]) == {"cancelled": False}
-    assert len(held.list_lines(db, bot.id)) == held.LINES_PER_CALLER
+    # Alice: 8 less the expired one and the cancelled one; Bob: 1.
+    assert len(held.list_lines(db, bot.id)) == held.LINES_PER_CALLER - 2 + 1
 
 
 def test_linked_caller_line_waits_for_their_linked_join(db, lane, hub, sysop, channel):
@@ -317,7 +326,7 @@ def test_tell_refusals_at_creation(db, lane, hub, sysop, alice, nib, channel):
         tell("ghost")
     with pytest.raises(BotError, match="1-160"):
         tell("nib", "x" * 161)
-    with pytest.raises(BotError, match="cannot enter this channel"):
+    with pytest.raises(BotError, match="can't reach nib in this channel"):
         tell("nib", where=secret)
     assert tell("nib", present=frozenset({"nib"})) == {"held": False, "present": True, "name": "nib"}
     assert held_rows(db) == []
@@ -350,9 +359,11 @@ def test_tell_caps(db, sysop, alice, nib, channel):
         held.hold_tell(db, bot.id, channel.name, {"id": s.id, "name": s.username}, u.username, "hi")
     with pytest.raises(BotError, match="holding 32 tells"):
         held.hold_tell(db, bot.id, channel.name, {"id": alice.id, "name": "alice"}, "s1", "hi")
-    # Expired tells free their places, silently.
+    # Expired tells free their places at once; the sweep deletes them.
     expire_all(db)
     held.hold_tell(db, bot.id, channel.name, callers[0], "alice", "fresh")
+    assert len(held_rows(db)) == held.TELLS_PER_BOT + 1
+    held.prune_expired(db)
     assert len(held_rows(db)) == 1
 
 

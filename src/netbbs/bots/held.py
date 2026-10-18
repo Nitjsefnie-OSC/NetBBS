@@ -106,11 +106,12 @@ def hold_line(db: Database, bot_id: int, channel_name: str, caller, text, second
     now = _now()
     db.connection.execute("BEGIN IMMEDIATE")
     try:
-        _prune(db, now)
+        # Expired rows do not count, but only the sweep (`prune_expired`)
+        # deletes them, so the bot is told each one expired (review of #1421).
         total, mine = db.connection.execute(
             "SELECT COUNT(*), COALESCE(SUM(caller_user_id IS ? AND caller_link IS ?), 0) "
-            "FROM bot_held_lines WHERE bot_id = ? AND kind = 'line'",
-            (user_id, link, bot_id),
+            "FROM bot_held_lines WHERE bot_id = ? AND kind = 'line' AND expires_at > ?",
+            (user_id, link, bot_id, utc_iso(now)),
         ).fetchone()
         if total >= LINES_PER_BOT:
             raise BotError(f"This bot already holds {LINES_PER_BOT} lines.")
@@ -218,17 +219,20 @@ def hold_tell(db: Database, bot_id: int, channel_name: str, sender: dict, to, te
     if recipient.username in present:
         return {"held": False, "present": True, "name": name}
     if not may_enter(db, channel, recipient):
-        raise BotError(f"{name} cannot enter this channel, so a tell here would never reach them.")
+        # One neutral answer for every entry gate: which one failed (a ban,
+        # a level, an age or name check, membership) is not the sender's to
+        # learn (review of #1421).
+        raise BotError(f"I can't reach {name} in this channel.")
     if _sender_refusal(db, recipient, sender_user_id, sender_link):
         raise BotError(LIVE_BLOCK_REFUSAL.format(name=name))
     now = _now()
     db.connection.execute("BEGIN IMMEDIATE")
     try:
-        _prune(db, now)
         total, mine, theirs = db.connection.execute(
             "SELECT COUNT(*), COALESCE(SUM(sender_user_id IS ? AND sender_link IS ?), 0), "
-            "COALESCE(SUM(caller_user_id = ?), 0) FROM bot_held_lines WHERE bot_id = ? AND kind = 'tell'",
-            (sender_user_id, sender_link, recipient.id, bot_id),
+            "COALESCE(SUM(caller_user_id = ?), 0) FROM bot_held_lines WHERE bot_id = ? AND kind = 'tell' "
+            "AND expires_at > ?",
+            (sender_user_id, sender_link, recipient.id, bot_id, utc_iso(now)),
         ).fetchone()
         if mine >= TELLS_PER_SENDER:
             raise BotError(f"You have {TELLS_PER_SENDER} tells waiting already; cancel one first.")
