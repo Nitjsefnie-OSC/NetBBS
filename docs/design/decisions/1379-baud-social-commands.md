@@ -114,6 +114,12 @@ refused with "Baud's memory is full; ask the SysOp." Keyed state slots, if
 ever wanted, belong to the bot API, not here.
 
 **Implementation notes.** One migration: the two switch columns on
-`chat_bots`. The new fixed lines join the temperament phrase table (#1381).
+`chat_bots`. The memory-full line joins the temperament phrase table (#1381)
+as the `full` phrase. Besides `linked_channels`, the `hello` carries `node`,
+this node's display name, which the opening line puts after `Baud.bot@`. An
+early close is `poll close`. A poll's question is up to 100 characters and
+each answer up to 30, so the opening line with the Linked address still fits
+one line. A voter is kept as a short digest of the caller id, so 100 Link
+voters do not fill the state.
 Dice spam can use up the channel's hourly lines and delay a close or a
 reminder; `/mute` and `/bots none` are the remedy, and the handbook says so.

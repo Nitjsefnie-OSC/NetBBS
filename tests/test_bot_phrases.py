@@ -102,7 +102,7 @@ def test_the_longest_help_opening_never_cuts_the_command_list():
     baud = Baud({"queries": ["stats", "seen"], "model_conversation": True, "phrases": {"help": longest}}, sent.append)
     baud.handle(message("help", name="n" * 32))
     assert len(sent[-1]["text"]) <= 500
-    assert sent[-1]["text"].endswith("reset clears your temporary context here. Replies are public.")
+    assert sent[-1]["text"].endswith("reset clears your context. Replies are public.")
     # The private help names how to ask privately; with the longest bot
     # name and a Link caller's "@Node", it still fits (issue #1372).
     baud = Baud({"name": "B" * 24 + ".bot", "queries": ["stats", "seen"], "model_conversation": True,

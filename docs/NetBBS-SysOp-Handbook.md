@@ -2465,8 +2465,8 @@ drawn like `/who`: one row per command, the help opening first.
 Each instance can say its own words, in any language. Under **Phrases** in
 the instance's editor:
 
-1. Pick **Greeting**, **Help opening**, **Busy message** or
-   **Reminder-limit message**. A blank one shows the temperament's text as
+1. Pick **Greeting**, **Help opening**, **Busy message**,
+   **Reminder-limit message** or **Memory-full message**. A blank one shows the temperament's text as
    `(preset)`.
 2. Type the phrase. `{name}` is replaced by the caller's name; write `{{` or
    `}}` for a literal brace.
@@ -2476,6 +2476,29 @@ the instance's editor:
 > Save refuses any other placeholder, an unmatched brace, terminal controls,
 > or a phrase over 400 characters (200 for the help opening, a row of Baud's
 > help block; each `{name}` counts as 32), and keeps your draft. Clear a phrase to go back to the preset.
+
+#### Dice, quotes and quick polls
+
+Baud's `!roll` and `!coin` are always on: they store nothing and only answer
+the caller. Quotes and quick polls keep callers' words and post later, so each
+has its own switch under **Social** in the instance's editor, off by default:
+
+| Switch | What callers get |
+| --- | --- |
+| **Baud quotes** | Per-channel quotes with `!quote add`, 30 per instance and 10 per caller. The adder or a channel moderator deletes one, and a moderator's deletion is said in the channel. |
+| **Baud quick polls** | `!poll` and `!vote`: one open poll per channel and 4 per instance, 2-6 answers, 10 minutes by default and 24 hours at most. Results are said once, at close. |
+
+- Guests can vote but cannot add quotes or open polls. A caller from another
+  BBS is never a channel moderator here.
+- Quotes and polls share Baud's 16 KiB of saved state with reminders. When it
+  is full, Baud answers "Baud's memory is full; ask the SysOp."; deleting old
+  quotes frees room.
+
+> [!TIP]
+> Dice and poll results spend the channel's **Lines per hour** like any reply.
+> A caller who rolls dice all evening can use them up and delay a reminder or
+> a poll's results. `/mute Baud.bot` in the channel, or `/bots none`, is the
+> remedy; the moderator's `/mute` on the caller works too.
 
 Everything else is a separate grant in the editor, off until you set it:
 
@@ -2488,7 +2511,7 @@ Everything else is a separate grant in the editor, off until you set it:
 
 The [bot API guide](NetBBS-bot-api.md) describes each. The editor groups its
 fields under Bot, Channels, Greetings and announcements, Queries and
-conversation, Behaviour and program, Phrases, and Try.
+conversation, Behaviour and program, Phrases, Social, and Try.
 
 ### Manage running bots
 

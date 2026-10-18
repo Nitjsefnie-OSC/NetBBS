@@ -178,6 +178,8 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             "announce_posts": bot.announce_posts if bot else False,
             "announce_files": bot.announce_files if bot else False,
             "model": bot.model_conversation if bot else False,
+            "quotes": bot.quotes if bot else False,
+            "polls": bot.polls if bot else False,
             "command": json.dumps(list(bot.command if bot else HOUSE_BOT_COMMAND)),
             "temperament": bot.temperament if bot else DEFAULT_TEMPERAMENT,
             "rate": bot.lines_per_hour if bot else DEFAULT_LINES_PER_HOUR,
@@ -222,6 +224,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 announce_posts=values["announce_posts"], announce_files=values["announce_files"],
                 model_conversation=values["model"],
                 phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS},
+                quotes=values["quotes"], polls=values["polls"],
             )
 
         async def try_prompt(session, lane, values):
@@ -355,7 +358,16 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             phrase_spec("busy", "Busy message", "The reply while Baud is saving reminders and its queue is full."),
             phrase_spec("limit", "Reminder-limit message", "The reply when a caller or the bot has reached the "
                         "reminder limit (8 per caller, 48 per bot)."),
-            # Last, so every other field keeps its number.
+            phrase_spec("full", "Memory-full message", "The reply when a quote, poll or vote cannot be saved "
+                        "because Baud's 16 KiB of saved state is full."),
+            # Issue #1379: dice and the coin are always on; these two are not.
+            switch("quotes", "Baud quotes", "Off by default. Per-channel quotes, added with !quote add (not by "
+                   "guests), 30 per bot and 10 per caller. The adder or a channel moderator can delete one; a "
+                   "moderator's deletion is said in the channel. !roll and !coin are always on.", "Social"),
+            switch("polls", "Baud quick polls", "Off by default. One open poll per channel, 2-6 answers, 10 minutes "
+                   "unless the opener says up to 24 hours; votes are public and results are said at close. Results "
+                   "and dice spend the channel's lines per hour; /mute and /bots none are the remedy.", "Social"),
+            # Last, so the fields before it keep their numbers.
             FieldSpec("try", "Try", lambda d: "Run this draft on a scratch node", try_prompt, section="Try",
                       help="Runs this draft, unsaved, against a scratch database, state and channel; type lines "
                            "as a caller and see each host event, bot action and result, the chat lines and the "
@@ -397,7 +409,7 @@ def _draft_spec(values):
         event_channels=list(values["events"]), greetings=values["greetings"], board_sources=list(values["boards"]),
         file_sources=list(values["files"]), announcement_channel=values["announcement_channel"].strip() or None,
         announce_posts=values["announce_posts"], announce_files=values["announce_files"],
-        model_conversation=values["model"],
+        model_conversation=values["model"], quotes=values["quotes"], polls=values["polls"],
     )
 
 

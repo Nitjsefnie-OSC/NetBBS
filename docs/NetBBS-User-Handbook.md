@@ -998,6 +998,8 @@ default, prefix the commands with `Baud.bot:` instead of `!`.
 | Leave someone a note | `!tell Nib check the Retro board` | `Baud.bot: tell Nib check the Retro board` |
 | List your notes | `!tells` | `Baud.bot: tells` |
 | Cancel a note | `!cancel tell 4` | `Baud.bot: cancel tell 4` |
+| Roll dice | `!roll 2d6+1` | `Baud.bot: roll 2d6+1` |
+| Flip a coin | `!coin` | `Baud.bot: coin` |
 
 To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 [Getting help from the SysOp](#getting-help-from-the-sysop).
@@ -1063,6 +1065,38 @@ Asked privately, with `/msg Baud.bot` or in `/private Baud.bot`, it can also
 name the boards and file areas you can see; in the channel it names only the
 ones everyone can read. A model can be wrong, so check what it says against
 **Help** (<kbd>?</kbd>) on the main menu or ask the SysOp.
+
+#### Dice, quotes and quick polls
+
+`!roll` rolls one six-sided die; `!roll 3d20`, `!roll d8` and `!roll 2d6+1`
+roll up to 20 dice of 2 to 1,000 sides, with a bonus or penalty of up to
+1,000. Baud says each die and the total, so everyone in the channel sees the
+same roll. `!coin` flips a coin.
+
+If your SysOp has switched them on, Baud also keeps quotes and runs quick
+polls in the channel:
+
+| To | Type |
+| --- | --- |
+| Save a quote | `!quote add <Quill> the modem is on fire again` |
+| Show a random quote, or quote 4 | `!quote`, `!quote 4` |
+| Delete quote 4 | `!quote del 4` |
+| Open a poll for 10 minutes | `!poll Best door? \| Voidrunner \| War Dialer` |
+| Open one for an hour | `!poll 1h Best door? \| Voidrunner \| War Dialer` |
+| Vote for answer 2, or change your vote | `!vote 2` |
+| See the question and how many voted | `!poll` |
+| Close your poll early | `!poll close` |
+
+- A quote shows who added it, `(added by Nib)`, and stays in its channel. You
+  can delete the quotes you added; a channel moderator can delete any.
+- A poll has 2 to 6 answers and lasts up to 24 hours. Baud says the results
+  once, when it closes. Your `!vote` line is public chat, and Baud confirms
+  it to you alone.
+- In a Linked channel, a poll opened on another BBS takes that BBS's address:
+  type what its opening line shows, for example
+  `Baud.bot@Roanoke: vote 2`. A plain `!vote` asks your own BBS's Baud, which
+  tells you so.
+- Guests can vote, but cannot add quotes or open polls.
 
 #### Ask a bot privately
 
