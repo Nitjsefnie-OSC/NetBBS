@@ -25,6 +25,7 @@ from tests.test_bot_runtime import (  # noqa: F401
     db, lane, hub, sysop, alice, channel, eventually, install, next_line,
 )
 from tests.test_bot_settings_ui import Screen
+from tests.bounded import run_bounded
 
 BOTS = Path(netbbs.bots.__file__).parent
 
@@ -243,7 +244,7 @@ def test_trial_runs_the_real_runtime_on_a_scratch_node(db, sysop, channel):
             await trial.close()
         return directory
 
-    directory = asyncio.run(run())
+    directory = run_bounded(run())
     assert not directory.exists()
     assert get_scrollback(db, channel) == []
     assert not (root / "Baud" / "state.json").exists()
@@ -277,13 +278,13 @@ def test_trial_rehearses_model_actions_and_keeps_a_bounded_stderr():
         finally:
             await trial.close()
 
-    asyncio.run(run())
+    run_bounded(run())
 
 
 def test_try_selected_and_the_editors_try_run_without_a_question(db, lane, sysop, channel):
     save_bot(db, actor=sysop, name="Baud", channels=[channel.name], defaults=[channel.name])
     session = Screen(["t", "b"], lines=["01", "!help", "/quit"])
-    asyncio.run(bot_flow.bot_menu(session, lane, sysop))
+    run_bounded(bot_flow.bot_menu(session, lane, sysop))
     plain = session.plain
     assert "Try Baud.bot" in plain and "scratch #lobby" in plain
     assert "bot   > reply" in plain and "No language model is enabled." in plain
@@ -296,7 +297,7 @@ def test_try_selected_and_the_editors_try_run_without_a_question(db, lane, sysop
         screen = Screen(["2", "7", "b", "y"], lines=["/join bob", "/quit"])
         await bot_flow.bot_editor(screen, lane, sysop, chrome)
         return screen.plain
-    plain = asyncio.run(edit())
+    plain = run_bounded(edit())
     assert "27 Try" in plain or "Try:" in plain
     assert "Try Baud.bot" in plain and "presence join bob" not in plain
 
@@ -403,6 +404,76 @@ def test_trial_start_failure_leaves_nothing_behind(monkeypatch):
     assert trial.directory is None and trial.lane is None and trial._listen is None
     assert seen["lane"] is not None and seen["listen"].done()
     assert not seen["directory"].exists()
+
+
+def _late_exits(monkeypatch, seconds):
+    """The bot process's exit reaches the event loop `seconds` late once
+    armed, as it can on a loaded machine (a full suite beside other suites)."""
+    import asyncio.base_subprocess as base_subprocess
+    real = base_subprocess.BaseSubprocessTransport._process_exited
+    state = {"armed": False, "pending": 0}
+
+    def late(transport, returncode):
+        if not state["armed"]:
+            return real(transport, returncode)
+        state["pending"] += 1
+
+        def arrive():
+            state["pending"] -= 1
+            real(transport, returncode)
+        transport._loop.call_later(seconds, arrive)
+
+    monkeypatch.setattr(base_subprocess.BaseSubprocessTransport, "_process_exited", late)
+    return state
+
+
+def test_try_quit_ends_although_the_bot_exit_is_seen_late(monkeypatch):
+    # The Try test once hung a loaded suite for over 10 minutes in /quit:
+    # the exit came after _reap's two 2-second waits, _reap raised
+    # TimeoutError in place of the stop's CancelledError, and the worker
+    # restarted the bot instead of stopping, so close() waited forever.
+    late = _late_exits(monkeypatch, 5)
+
+    async def run():
+        trial = Trial(TrialSpec(), caller="sysop")
+        await trial.start()
+        runtime = trial.runtime
+        await trial.wait_ready()
+        assert trial.bot.id in runtime.running_ids
+        workers = list(runtime.workers.values())
+        late["armed"] = True
+        await trial.close()
+        assert workers and all(w.task.done() for w in workers) and not runtime.workers
+        # Let the late exits arrive before the loop closes.
+        await eventually(lambda: late["pending"] == 0)
+
+    run_bounded(run(), timeout=60)
+
+
+def test_a_failing_session_cleanup_does_not_turn_a_stop_into_a_restart(monkeypatch):
+    # The class behind the hang above: whatever cleanup raises on the way
+    # out of a cancelled session, the stop still ends the worker.
+    import netbbs.bots.runtime as runtime_module
+    real_reap = runtime_module._Worker._reap
+
+    async def failing_reap(self):
+        await real_reap(self)
+        if asyncio.current_task().cancelling():
+            raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(runtime_module._Worker, "_reap", failing_reap)
+
+    async def run():
+        trial = Trial(TrialSpec(), caller="sysop")
+        await trial.start()
+        runtime = trial.runtime
+        await trial.wait_ready()
+        assert trial.bot.id in runtime.running_ids
+        workers = list(runtime.workers.values())
+        await trial.close()
+        assert workers and all(w.task.cancelled() for w in workers)
+
+    run_bounded(run(), timeout=60)
 
 
 # -- private answers (issue #1372)
