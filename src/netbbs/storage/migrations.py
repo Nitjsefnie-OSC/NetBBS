@@ -4856,4 +4856,16 @@ MIGRATIONS = [
         CREATE INDEX idx_bot_held_expiry ON bot_held_lines(expires_at);
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1373 (design doc §16, titled block replies for bots): `channel_messages.block_json`, "
+            "a bot's titled block as JSON (its title and up to 12 rows of an optional label and a "
+            "text). A block is one row: `body` holds the host-built fallback line, which search, older "
+            "nodes and the hourly limit use, and this column the block a newer renderer draws. NULL "
+            "for every other line, and for every existing row on upgrade."
+        ),
+        sql="""
+        ALTER TABLE channel_messages ADD COLUMN block_json TEXT;
+        """,
+    ),
 ]

@@ -284,6 +284,8 @@ class Baud(botkit.Bot):
                       "gets your tells.")
         elif command in {"", "help"}:
             opening = self.phrase("help", msg.name).strip()
+            if self.blocks:
+                return self._help_block(msg, opening)
             msg.reply((opening + " " if opening else "") + "help; remind <when> <text>; reminders; cancel <id>; "
                       "tell <name> <text>; tells; cancel tell <id>. "
                       + ("stats; " if "stats" in self.queries else "")
@@ -328,6 +330,26 @@ class Baud(botkit.Bot):
         else:
             known = ["help", "remind", "reminders", "cancel", "tell", "tells", *sorted(self.queries & {"seen", "stats"})]
             msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
+
+    def _help_block(self, msg, opening):
+        # Issue #1373: the command list as a titled block; the opening
+        # phrase heads it, and the line form above is for an older host.
+        # At most 12 rows: the opening, seven commands, two queries, /sysop
+        # and the model line.
+        rows = [opening] if opening else []
+        rows += [("help", "this list; help remind or help tell for more"),
+                 ("remind <when> <text>", "a reminder here, shown publicly"),
+                 ("reminders", "your reminders here"), ("cancel <id>", "cancel one of yours"),
+                 ("tell <name> <text>", "a note for someone's next join here"),
+                 ("tells", "your waiting tells"), ("cancel tell <id>", "withdraw one")]
+        if "stats" in self.queries:
+            rows.append(("stats", "who is on, uptime"))
+        if "seen" in self.queries:
+            rows.append(("seen <name>", "when someone was last on"))
+        rows.append(("/sysop <reason>", "page staff"))
+        rows.append("Conversation is enabled; reset clears your temporary context here." if self.model_conversation
+                    else "No language model is enabled.")
+        msg.reply_block("Commands", rows)
 
     def _own(self, msg):
         return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]

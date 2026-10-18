@@ -2454,7 +2454,8 @@ here like any other instance.
 
 Baud reads only messages addressed to it. Its replies and reminders are
 public in the channel. Friendly, terse and retro temperaments change its
-fixed phrases.
+fixed phrases. Its `help` is a titled block, drawn like `/who`: one row per
+command, the help opening first.
 
 #### Baud's phrases
 
@@ -2470,8 +2471,8 @@ the instance's editor:
 
 > [!NOTE]
 > Save refuses any other placeholder, an unmatched brace, terminal controls,
-> or a phrase over 400 characters (200 for the help opening, which Baud's
-> command list follows; each `{name}` counts as 32), and keeps your draft. Clear a phrase to go back to the preset.
+> or a phrase over 400 characters (200 for the help opening, a row of Baud's
+> help block; each `{name}` counts as 32), and keeps your draft. Clear a phrase to go back to the preset.
 
 Everything else is a separate grant in the editor, off until you set it:
 
@@ -2516,6 +2517,11 @@ In channels:
   caller's channel, and mutes and the channel's `/bots` setting apply. They
   have a fixed limit of 30 an hour per caller per bot instead of the
   channel's output limit.
+- A bot may answer with a titled block of up to 12 rows instead of a line
+  (Baud's `help` does). It counts as one line against the output limit, and
+  your node keeps and searches a plain one-line version of it, which is also
+  what nodes running an older NetBBS show in a Linked channel. Mutes and
+  `/bots` hide a block like any bot line.
 - `/who`, `/names` and the status line distinguish bots from people.
 
 ### Try a bot

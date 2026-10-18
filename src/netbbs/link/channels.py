@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 
 from netbbs.age_requirement import carried_age_requirement, row_age_requirement
+from netbbs.chat.blocks import block_from_json, block_from_wire
 from netbbs.chat.channels import OPEN_ROOM_NAME_PREFIX, Channel
 from netbbs.chat.scrollback import ChannelMessage as LocalChannelMessage, get_scrollback_limit
 from netbbs.link.events import (
@@ -334,6 +335,7 @@ def _channel_message_from_row(row) -> LocalChannelMessage:
         author_fingerprint=row["author_fingerprint"], body=row["body"], created_at=row["created_at"],
         link_content_id=row["link_content_id"],
         author_kind=row["author_kind"] if "author_kind" in row.keys() else "user",
+        block=block_from_json(row["block_json"]) if "block_json" in row.keys() else None,
         announcement=bool(row["announcement"]) if "announcement" in row.keys() else False,
     )
 
@@ -422,6 +424,10 @@ def materialize_carried_channel_message(
         return None
     from netbbs.auth.users import BOT_LABEL_SUFFIX
     author_kind = "bot" if author["local_user_id"].lower().endswith(BOT_LABEL_SUFFIX) else "user"
+    # Issue #1373: only a bot's line is drawn as a block, and a malformed
+    # block is dropped here so its fallback `body` shows (the poll
+    # precedent); the signed event keeps it either way.
+    block = block_from_wire(payload.get("block")) if author_kind == "bot" else None
 
     db.connection.execute(
         """
@@ -446,6 +452,11 @@ def materialize_carried_channel_message(
          # claiming it) is shown as the plain line it also is.
          1 if announcement_claimed(payload.get("announcement"), author["local_user_id"]) else None),
     )
+    if block is not None:
+        db.connection.execute(
+            "UPDATE channel_messages SET block_json = ? WHERE link_content_id = ?",
+            (block.to_json(), message.content_id),
+        )
     limit = get_scrollback_limit(db)
     db.connection.execute(
         """
@@ -521,6 +532,7 @@ def queue_channel_message_if_linked(
         channel_id=channel.channel_id,
         body=message.body or "",
         created_at=message.created_at,
+        block=message.block.to_wire() if message.block is not None else None,
         announcement=message.announcement,
     )
 

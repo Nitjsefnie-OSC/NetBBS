@@ -1003,6 +1003,20 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 [Getting help from the SysOp](#getting-help-from-the-sysop).
 
 - Reminders and replies are public in that channel.
+- A longer answer, such as `help`, comes as a titled block, its rows lined
+  up the way `/who` lines up its own:
+
+  ```
+  ── [BOT] Baud.bot · Commands ──────────────── 20:14 ──
+   Happy to help!
+   help                  this list; help remind or help tell for more
+   remind <when> <text>  a reminder here, shown publicly
+  ```
+
+  `[BOT] Baud.bot` is put there by your BBS, so a block always says which bot
+  it is from. One taller than your screen is shown a page at a time:
+  <kbd>PgDn</kbd> (or <kbd>Enter</kbd> on an empty line) for the next,
+  <kbd>Esc</kbd> to skip the rest.
 - Reminders survive restarts, though mutes or limits can delay them.
 - A reminder takes a duration (`10m`, `2h`, up to `30d`) or a time on this
   board's clock: `20:00`, `tomorrow 09:00`, `mon` to `sun` with a time, or a
@@ -1058,6 +1072,7 @@ where only you see the question and its answer:
 - What you asked shows as `(privately to Baud.bot: ...)`, and the answer as a
   bot line marked **(to you)**:
   `[20:14] [BOT] <Baud.bot> (to you) Saved reminder #4.`
+  A private titled block says **to you** at the right of its title.
 - Nobody else sees either, and neither is kept in the channel's history or
   search. Like `/msg`, the answer stays among your own lines, so
   <kbd>PgUp</kbd> shows it, and it never rings your bell.
