@@ -77,7 +77,7 @@ _ordinal = iter(range(1_000_000))
 def _drop(workdir, payload):
     directory = workdir / OUTBOUND_DIRNAME
     directory.mkdir(exist_ok=True)
-    name = f"req{next(_ordinal)}"
+    name = f"req{next(_ordinal):07d}"  # Zero-padded: a drain answers in name order (#1429).
     (directory / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
     return name
 

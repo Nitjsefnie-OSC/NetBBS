@@ -359,7 +359,11 @@ be content to leave standing.
 
 Requests are picked up while the door runs -- up to 16 every two seconds, so
 a single request is answered within about two seconds and a burst of 100 takes
-about 13 seconds -- and once more when it exits. For each one, NetBBS
+about 13 seconds -- and once more when it exits. A pick-up answers requests
+in the order of their names, so a door that numbers its requests should
+zero-pad the numbers (`say0009` before `say0010`); otherwise `say10` is
+answered before `say9`, and when a ceiling is reached it is the later line
+that gets through. For each one, NetBBS
 removes the request and writes a result into the directory named by
 `outbound.results` -- an absolute path outside the working directory, because
 the working directory is deleted the moment the run ends and a result left

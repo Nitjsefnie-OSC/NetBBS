@@ -52,6 +52,11 @@ WALL_TIME_LIMIT_SECONDS = 3600
 #: never waits this long, because the wait ends the moment it does; the only
 #: doors that pay for a longer grace are the ones that need it.
 DOOR_STOP_GRACE_SECONDS = 5
+#: How long a stop waits to *see* a door's exit after the SIGKILL (issue
+#: #1428). The kill itself is immediate; on a loaded machine the exit can
+#: reach the event loop seconds later, and nothing the caller is waiting on
+#: should wait for that without a bound.
+_KILLED_EXIT_SECONDS = 2.0
 _DIAGNOSTIC_BYTES = 8192
 # A human dragging a window edge; fine-grained enough to feel immediate
 # without waking the event loop for a size which almost never changes.
@@ -796,6 +801,26 @@ async def _discard_output(reader):
         pass
 
 
+async def _finish_drains(drains, seconds=_KILLED_EXIT_SECONDS):
+    """Let the output drains reach end of file, for a bounded time after the stop.
+
+    A pipe ends when the last process holding it does. The door's group is
+    dead by now, but a descendant outside it -- on Windows, which has no group
+    kill, any descendant; on POSIX, one that started its own session -- can
+    hold the door's stdout open for as long as it runs. Waiting for that
+    would hang the caller's session as an unseen exit would (issue #1428).
+    """
+    if not drains:
+        return
+    done, pending = await asyncio.wait(drains, timeout=seconds)
+    if pending:
+        _logger.warning("door output was still open %g seconds after the stop; no longer draining it.", seconds)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+    await asyncio.gather(*done)
+
+
 async def _finish_owned(task):
     """Retrieve an owned operation even under repeated shutdown cancellation."""
     cancelled = False
@@ -807,28 +832,44 @@ async def _finish_owned(task):
     return task.result(), cancelled
 
 
-async def _stop_process(proc, grace=DOOR_STOP_GRACE_SECONDS):
-    if os.name == "posix":
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    elif proc.returncode is None:
-        proc.terminate()
+def _signal_door(proc, *, kill):
     try:
-        await asyncio.wait_for(proc.wait(), timeout=grace)
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGKILL if kill else signal.SIGTERM)
+        elif proc.returncode is None:
+            proc.kill() if kill else proc.terminate()
+    except ProcessLookupError:
+        pass  # Already gone; the wait that follows sees its exit.
+
+
+async def _seen_exit(proc, seconds):
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=seconds)
+        return True
     except asyncio.TimeoutError:
-        pass
+        return False
+
+
+async def _stop_process(proc, grace=DOOR_STOP_GRACE_SECONDS):
+    # Bounded, and it raises nothing of its own: it runs in the door's
+    # cleanup, where the caller's session, or node shutdown, waits on it.
+    # A wait that runs out after the kill is logged and left there; asyncio
+    # still collects the process when its exit arrives.
+    _signal_door(proc, kill=False)
+    try:
+        await _seen_exit(proc, grace)
     finally:
         # A reaped leader does not mean that its descendants have exited.
-        if os.name == "posix":
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        elif proc.returncode is None:
-            proc.kill()
-        await proc.wait()
+        _signal_door(proc, kill=True)
+        # Process.wait() also waits for the door's pipes to close, which a
+        # descendant can hold open after the door itself has gone.
+        if not await _seen_exit(proc, _KILLED_EXIT_SECONDS):
+            if proc.returncode is None:
+                _logger.warning("door process %s had not reported its exit %g seconds after a kill; "
+                                "no longer waiting for it.", proc.pid, _KILLED_EXIT_SECONDS)
+            else:
+                _logger.warning("door process %s exited, but its output was still held open %g seconds "
+                                "after a kill; no longer waiting for it.", proc.pid, _KILLED_EXIT_SECONDS)
 
 
 def _record_door_session(db, *, actor, door, duration_seconds, reason, exit_code, diagnostic=""):
@@ -1155,7 +1196,7 @@ async def run_door(session, lane, door, player, *, wall_time_limit_seconds=None,
                 # power-down used is not granted again after SIGTERM.
                 kill_grace = max(1, stop_grace - (time.monotonic() - began))
             for operation in (lambda: _stop_process(proc, kill_grace) if proc is not None else None,
-                              lambda: asyncio.gather(*drains),
+                              lambda: _finish_drains(drains),
                               lambda: endpoint.close() if endpoint is not None else None):
                 try:
                     pending = operation()
