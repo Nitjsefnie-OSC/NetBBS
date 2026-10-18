@@ -297,3 +297,107 @@ def test_try_selected_and_the_editors_try_run_without_a_question(db, lane, sysop
     plain = asyncio.run(edit())
     assert "24 Try" in plain or "Try:" in plain
     assert "Try Baud.bot" in plain and "presence join bob" not in plain
+
+
+def test_baud_reminder_saved_during_a_delivery_is_not_lost():
+    # #1419 review: removing a delivered reminder waits for a save in flight,
+    # or it builds on the state before that save and drops the new reminder.
+    sent = []
+    baud = Baud({"state": {"next": 2, "reminders": [{"id": 1, "user": 7, "name": "alice", "channel": "general",
+                                                    "due": 0, "text": "due now"}]}}, sent.append)
+    baud.handle({"type": "tick", "time": 1})
+    say = sent[-1]
+    assert say["action"] == "say"
+    baud.handle(message("remind 1h keep me"))
+    remind_save = sent[-1]
+    assert remind_save["action"] == "state.set"
+    baud.handle({"type": "result", "id": say["id"], "ok": True})
+    # The removal waits behind the remind's save, and no tick re-says it.
+    assert sent[-1] is remind_save
+    baud.handle({"type": "tick", "time": 2})
+    assert sent[-1] is remind_save
+    baud.handle({"type": "result", "id": remind_save["id"], "ok": True})
+    removal = sent[-1]
+    assert removal["action"] == "state.set"
+    assert [r["text"] for r in removal["value"]["reminders"]] == ["keep me"]
+    baud.handle({"type": "result", "id": removal["id"], "ok": True})
+    assert [r["text"] for r in baud.state["reminders"]] == ["keep me"]
+
+
+def test_try_descriptions_sanitize_every_field():
+    from netbbs.net.bot_try_flow import describe_bot, describe_host
+    evil = "x\x1b[2J\x1b]0;spoof\x07"
+    lines = [
+        describe_bot({"action": "say", "channel": evil, "text": "hi"}),
+        describe_bot({"action": "query", "query": evil}),
+        describe_bot({"type": "ready", "version": evil}),
+        describe_host({"type": "result", "id": evil, "ok": True}),
+        describe_host({"type": "presence", "kind": evil, "caller": {"name": evil}, "channel": evil}),
+        describe_host({"type": "hello", "version": evil, "channels": [evil]}),
+    ]
+    assert all("\x1b" not in line and "\x07" not in line for line in lines)
+
+
+def test_try_flush_keeps_entries_added_while_it_renders():
+    # #1419 review: the watermark is the snapshot's, so a line logged during
+    # the render's awaits is shown on the next flush, never skipped.
+    from netbbs.bots.trial import TrialLog
+    from netbbs.net import bot_try_flow
+
+    class Session:
+        def __init__(self):
+            self.written = []
+
+        async def write_line(self, text):
+            self.written.append(text)
+            if len(self.written) == 1:
+                log.add("status", ("restarting", "late arrival"))
+                log.stderr(b"late stderr")
+
+    class FakeTrial:
+        pass
+
+    log = TrialLog(model_enabled=False)
+    trial = FakeTrial()
+    trial.log = log
+    log.add("status", ("running", ""))
+    session = Session()
+
+    async def run():
+        shown, err = await bot_try_flow._flush(session, trial, 0, 0)
+        await bot_try_flow._flush(session, trial, shown, err)
+    asyncio.run(run())
+    text = "".join(session.written)
+    assert "late arrival" in text and "late stderr" in text
+
+
+def test_trial_start_failure_leaves_nothing_behind(monkeypatch):
+    # #1419 review: a failure after the scratch node is built, a
+    # cancellation included, closes the lane, the listener and the directory.
+    import netbbs.bots.runtime as runtime_module
+
+    def refuse(self):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(runtime_module.BotRuntime, "start", refuse)
+
+    seen = {}
+
+    class Watched(Trial):
+        async def close(self):
+            if self.directory is not None:
+                seen["directory"] = Path(self.directory.name)
+                seen["lane"] = self.lane
+                seen["listen"] = self._listen
+            await super().close()
+
+    async def run():
+        trial = Watched(TrialSpec(), caller="sysop")
+        with pytest.raises(asyncio.CancelledError):
+            await trial.start()
+        return trial
+
+    trial = asyncio.run(run())
+    assert trial.directory is None and trial.lane is None and trial._listen is None
+    assert seen["lane"] is not None and seen["listen"].done()
+    assert not seen["directory"].exists()

@@ -56,6 +56,7 @@ class Baud(botkit.Bot):
         # The reminder whose delivery is waiting for its result: one at a
         # time, so a slow result never delivers the same reminder twice.
         self.delivering = None
+        self.forgetting = None
 
     def phrase(self, key, name):
         # The host validates every phrase on Save; a hand-edited or older
@@ -75,15 +76,27 @@ class Baud(botkit.Bot):
         self.save(state, then=saved)
 
     def delivered(self, reminder_id, ok):
-        self.delivering = None
         attempts = self.failures.pop(reminder_id, (0, 0))[0] + (0 if ok else 1)
         if not ok and attempts < MAX_DELIVERY_ATTEMPTS:
             self.failures[reminder_id] = (attempts, time.time() + min(3600, 60 * 2 ** (attempts - 1)))
+            self.delivering = None
             return
-        # Forget it in memory first: if the store fails, the next tick must
-        # not deliver it again, and the next successful store omits it.
-        self.state = {**self.state, "reminders": [r for r in self.state["reminders"] if r["id"] != reminder_id]}
-        self.store(self.state)
+        self.forget(reminder_id)
+
+    def forget(self, reminder_id):
+        # A reminder saved while this one was being said is still in flight:
+        # removing it waits for that save, or it would build on the state
+        # before it and lose it (#1419 review). Until then `delivering` stays
+        # set, so no tick says this reminder again.
+        def step():
+            self.delivering = None
+            self.forgetting = None
+            # Forget it in memory first: if the store fails, the next tick must
+            # not deliver it again, and the next successful store omits it.
+            self.state = {**self.state, "reminders": [r for r in self.state["reminders"] if r["id"] != reminder_id]}
+            self.store(self.state)
+        if not self.change(step):
+            self.forgetting = reminder_id  # the queue is full: retried on the next tick
 
     def on_post(self, event):
         if self.announce_posts:
@@ -98,6 +111,9 @@ class Baud(botkit.Bot):
             self.say(event.channel, self.phrase("greeting", event.caller["name"]))
 
     def on_tick(self, event):
+        if self.forgetting is not None and not self.saving:
+            self.forget(self.forgetting)
+            return
         if self.delivering is not None or self.saving:
             return
         for reminder in self.state["reminders"]:

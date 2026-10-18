@@ -41,6 +41,18 @@ def _compact(value):
     return _cut(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
 
 
+def _plain(describe):
+    # Every field here is untrusted JSON from the bot or echoed from it
+    # (ids, channels, versions): the whole description is sanitized before
+    # it is styled, not only the fields that look like text (#1419 review).
+    def described(value):
+        return sanitize_text(describe(value))
+    described.__name__ = describe.__name__
+    described.__doc__ = describe.__doc__
+    return described
+
+
+@_plain
 def describe_host(event):
     kind = event.get("type")
     caller = (event.get("caller") or {}).get("name", "")
@@ -63,6 +75,7 @@ def describe_host(event):
     return _compact(event)
 
 
+@_plain
 def describe_bot(action):
     if action.get("type") == "ready":
         return f"ready version {action.get('version')}"
@@ -105,16 +118,19 @@ async def _flush(session, trial, shown, stderr_shown):
         return await trial.lane.run(_render_channel_message, trial.channel, trial.user, message,
                                     self_message=message.author_label == trial.user.username)
 
-    for entry in trial.log.since(shown):
+    # The watermark is the one this snapshot was taken at: entries added
+    # while it renders (the awaits below) are shown next time, not skipped.
+    entries, count = trial.log.since(shown), trial.log.count
+    errors, stderr_total = trial.log.stderr_since(stderr_shown), trial.log.stderr_total
+    for entry in entries:
         line = await _render(session, render_chat, trial, entry)
         if line:
             await session.write_line(line)
-    errors = trial.log.stderr_since(stderr_shown)
     if errors:
         await session.write_line(colored(f"stderr (last {STDERR_LIMIT // 1024} KiB kept):", fg_color=LABEL_COLOR))
         for row in errors.rstrip("\n").splitlines():
             await session.write_line(colored("  " + sanitize_text(row), fg_color=WARNING_COLOR))
-    return trial.log.count, trial.log.stderr_total
+    return count, stderr_total
 
 
 async def try_bot(session, lane, actor, spec: TrialSpec, chrome):
@@ -124,12 +140,12 @@ async def try_bot(session, lane, actor, spec: TrialSpec, chrome):
         model_enabled = spec.model_conversation and (await lane.run(model_settings)).enabled
         trial = Trial(spec, caller=actor.username, model_enabled=model_enabled)
         try:
-            await trial.start()
-        except (BotError, AuthError, ValueError, OSError) as exc:
-            # Carried into the draft's or list's redraw (§3.5).
-            announce(session, f"Try could not start {label}: {exc}", tone="error")
-            return
-        try:
+            try:
+                await trial.start()
+            except (BotError, AuthError, ValueError, OSError) as exc:
+                # Carried into the draft's or list's redraw (§3.5).
+                announce(session, f"Try could not start {label}: {exc}", tone="error")
+                return
             dot = " · " if chrome.unicode_style else " - "
             await session.write_line("\r\n" + screen_title(
                 f"Try {label}{dot}scratch #{trial.channel.name}", breadcrumb=crumbs(session, own=True),

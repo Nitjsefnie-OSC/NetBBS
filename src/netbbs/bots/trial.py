@@ -155,21 +155,23 @@ class Trial:
         from netbbs.chat.presence import PresenceRegistry
         from netbbs.storage.execution import DatabaseLane
 
-        self.directory = tempfile.TemporaryDirectory(prefix="netbbs-bot-trial-", ignore_cleanup_errors=True)
+        # Every exit path, a cancellation included, takes down whatever was
+        # already made: the listener task, the lane's thread, the directory.
         try:
+            self.directory = tempfile.TemporaryDirectory(prefix="netbbs-bot-trial-", ignore_cleanup_errors=True)
             await asyncio.to_thread(self._build, Path(self.directory.name))
+            self.lane = DatabaseLane(self.db_path)
+            self.hub = ChatHub()
+            self.presence = PresenceRegistry()
+            self.participant = ParticipantId(self.user.username, 1)
+            queue = self.hub.join(self.channel.name, self.participant)
+            self._listen = asyncio.create_task(self._chat(queue), name="bot-trial-chat")
+            self.runtime = BotRuntime(self.lane, self.hub, presence=self.presence, poll_seconds=.2,
+                                      restart_seconds=1, trial=self.log)
+            self.runtime.start()
         except BaseException:
             await self.close()
             raise
-        self.lane = DatabaseLane(self.db_path)
-        self.hub = ChatHub()
-        self.presence = PresenceRegistry()
-        self.participant = ParticipantId(self.user.username, 1)
-        queue = self.hub.join(self.channel.name, self.participant)
-        self._listen = asyncio.create_task(self._chat(queue), name="bot-trial-chat")
-        self.runtime = BotRuntime(self.lane, self.hub, presence=self.presence, poll_seconds=.2,
-                                  restart_seconds=1, trial=self.log)
-        self.runtime.start()
 
     def _build(self, root: Path) -> None:
         from netbbs.storage.database import Database
