@@ -478,8 +478,19 @@ Compatibility extension (issues #296/#297):
   like a handle because it federates as `local_user_id`, and chat resolves a
   stored author by username where boards resolve by id, so a collision would
   let a door speak in a real account's presentation. The SysOp's allowlist is
-  the only gate on this path; level is deliberately not a second one, because
-  two gates can disagree where only one is visible to the SysOp. Transport is
+  the only gate on who may *post* on this path; level is deliberately not a
+  second one, because two gates can disagree where only one is visible to the
+  SysOp. Who may *read* what a door sends is a separate question, with one
+  answer (issue #1401): a door posts and chats only while every caller may
+  play it, `min_play_level` 0, the only gate a door has. A gated door would
+  otherwise announce itself, and name its players, to callers who cannot see
+  it -- the bot announcement rule (§16, "Issue #1208 — chat bots") applied to
+  doors, as door events also apply it. Allowing a board or a channel is
+  refused while the door is gated, and every request is refused again at
+  publication, with the level read fresh, because a SysOp can raise it after
+  allowing targets; the allowlist is kept, so lowering the level again is all
+  it takes, and the door's `[O]utbound` screen says why nothing it sends
+  reaches anyone. Transport is
   a file drop rather than a socket, chosen so a DOS door can use it at all,
   and a refusal is always returned to the door and never queued -- a held post
   would publish after the allowlist was revoked. Posting is rate-limited per

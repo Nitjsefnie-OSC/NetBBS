@@ -273,7 +273,10 @@ distinct door label. The playing caller does not lend their account or level
 to the request. The SysOp chooses permitted boards and chat channels, and two
 per-door hourly ceilings: six board posts and thirty chat lines by default.
 Normal board moderation still applies, and a channel's moderators can mute a
-door in their channel.
+door in their channel. A door posts and chats only while every caller may play
+it (its minimum play level is 0): while it is gated, every request is refused
+with a reason saying so, even though `outbound.boards` and `outbound.channels`
+still list its allowed targets.
 
 A live node with Link identity can queue a successful linked-board post for
 federation. A standalone admin launch has no live Link context. SysOp
