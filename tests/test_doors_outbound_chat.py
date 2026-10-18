@@ -287,6 +287,69 @@ def test_a_channel_bridged_after_it_was_allowed_refuses_the_door(db, door, sysop
     assert _lines(db, channel) == []
 
 
+# -- a gated door reaches no one (issue #1401) --------------------------------
+
+
+def _set_play_level(db, door, level):
+    db.connection.execute("UPDATE doors SET min_play_level = ? WHERE id = ?", (level, door.id))
+    db.connection.commit()
+
+
+def test_a_gated_door_can_be_allowed_no_channel_and_no_board(db, door, sysop, channel):
+    """A door only some callers may play must not announce itself, or name
+    its players, where every caller reads."""
+    board = create_board(db, "Chronicle", creator=sysop)
+    _enable(db, door, sysop)
+    _set_play_level(db, door, 10)
+
+    with pytest.raises(OutboundError, match="level 10 or above.*minimum play level to 0"):
+        allow_channel(db, door, channel, allowed_by=sysop)
+    with pytest.raises(OutboundError, match="level 10 or above"):
+        allow_target(db, door, board, allowed_by=sysop)
+    assert channel_targets(db, door.id) == []
+
+
+def test_a_door_gated_after_its_targets_were_allowed_is_refused_at_publication(
+        db, door, sysop, channel, tmp_path):
+    """The door object a session holds is its launch snapshot, so the level
+    is read fresh: the SysOp may raise it after allowing the targets."""
+    board = create_board(db, "Chronicle", creator=sysop)
+    _enable(db, door, sysop, channel)
+    allow_target(db, door, board, allowed_by=sysop)
+    _set_play_level(db, door, 10)
+    line = _say(tmp_path, channel="lobby", body="Bob took Sector 7.")
+    post = _say(tmp_path, subject="Season 1", body="Bob won.")
+    published = []
+
+    assert drain(db, door, tmp_path, published=published) == (0, 2)
+    assert _lines(db, channel) == []
+    assert published == []
+    assert "level 10 or above" in _receipt(db, door, line)["reason"]
+    assert "level 10 or above" in _receipt(db, door, post)["reason"]
+    assert db.connection.execute("SELECT COUNT(*) FROM posts WHERE board_id = ?", (board.id,)).fetchone()[0] == 0
+
+
+def test_a_rehearsal_of_a_gated_door_says_it_would_be_refused(db, door, sysop, channel, tmp_path):
+    _enable(db, door, sysop, channel)
+    _set_play_level(db, door, 10)
+    name = _say(tmp_path, channel="lobby", body="hello")
+
+    drain(db, door, tmp_path, rehearsal=True)
+
+    assert _receipt(db, door, name)["would"] == "rejected"
+
+
+def test_lowering_the_level_again_lets_the_door_speak(db, door, sysop, channel, tmp_path):
+    """The allowlist is kept while the door is gated, so opening the door
+    back up needs no reconfiguration."""
+    _enable(db, door, sysop, channel)
+    _set_play_level(db, door, 10)
+    _set_play_level(db, door, 0)
+    _say(tmp_path, channel="lobby", body="hello")
+
+    assert drain(db, door, tmp_path) == (1, 0)
+
+
 # -- a channel's moderators -------------------------------------------------
 
 
