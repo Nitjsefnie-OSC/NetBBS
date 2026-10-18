@@ -2,8 +2,9 @@
 
 import json
 
+from netbbs.bots.baud import PHRASE_KEYS
 from netbbs.bots.registry import (
-    BotError, TEMPERAMENTS, get_bot, list_bots, require_sysop, runtime_status, save_bot, stop_bots,
+    BotError, MAX_PHRASE, NAME_ALLOWANCE, TEMPERAMENTS, get_bot, preset_phrase, list_bots, require_sysop, runtime_status, save_bot, stop_bots,
     deletable_bot, delete_bot,
     local_channel,
 )
@@ -170,6 +171,9 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             "command": json.dumps(bot.command) if bot else "[]",
             "temperament": bot.temperament if bot else "friendly", "rate": bot.lines_per_hour if bot else 60,
         }
+        overrides = bot.phrase_overrides if bot else {}
+        for key in PHRASE_KEYS:
+            draft[f"phrase_{key}"] = overrides.get(key, "")
 
         async def save(values):
             try:
@@ -211,6 +215,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 announcement_channel=values["announcement_channel"].strip() or None,
                 announce_posts=values["announce_posts"], announce_files=values["announce_files"],
                 model_conversation=values["model"],
+                phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS},
             )
 
         def text_spec(key, label, help, section):
@@ -280,6 +285,19 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             )
             return FieldSpec(key, label, render, prompt, help=help, section=section)
 
+        def phrase_spec(key, label, help):
+            # Issue #1381: blank is the temperament's preset, shown as such,
+            # so the SysOp sees what Baud will say either way.
+            def render(d):
+                if d[f"phrase_{key}"]:
+                    return sanitize_text(d[f"phrase_{key}"])
+                text = preset_phrase(key, d["temperament"])
+                return f"(preset) {text}" if text else "(preset: none)"
+            return FieldSpec(f"phrase_{key}", label, render, text_field(f"phrase_{key}"), section="Phrases",
+                             help=help + " {name} is the caller's name; write {{ or }} for a literal brace. "
+                             f"Up to {MAX_PHRASE} characters, each {{name}} counting as {NAME_ALLOWANCE}. "
+                             "Blank uses the temperament's preset.")
+
         def switch(key, label, help, section):
             return FieldSpec(key, label, lambda d: _yes_no(d[key]), bool_field(key), step=bool_step(key),
                              help=help, section=section)
@@ -307,13 +325,19 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             switch("model", "Grant model conversation", "Off by default. Also requires the node's Model settings to be enabled. Only the caller's addressed input and isolated temporary context go to the configured provider, after disclosure. Public replies; reset clears context.", "Queries and conversation"),
             FieldSpec("temperament", "Temperament", lambda d: d["temperament"], choice_field("temperament", list(TEMPERAMENTS)),
                       step=choice_step("temperament", list(TEMPERAMENTS)), section="Behaviour and program",
-                      help="Shapes Baud's fixed phrases: friendly, terse or retro. No language model is involved."),
+                      help="Picks the preset for Baud's fixed phrases: friendly, terse or retro. Override any "
+                           "phrase under Phrases. No language model is involved."),
             FieldSpec("rate", "Lines per hour per channel", lambda d: str(d["rate"]), choice_field("rate", [10, 30, 60, 120]),
                       step=choice_step("rate", [10, 30, 60, 120]), section="Behaviour and program",
                       help="The most lines this bot may post in one channel in an hour, replies and reminders "
                            "included. NetBBS enforces it; the bot cannot opt out."),
             text_spec("command", "Program arguments", "[] runs Baud. An external program is a JSON argument array; no shell expansion. "
                       "Install trusted programs only: they run as the NetBBS OS user, not in a security sandbox.", "Behaviour and program"),
+            phrase_spec("greeting", "Greeting", "Said when a caller joins a channel where Baud greetings are on."),
+            phrase_spec("help", "Help opening", "Opens Baud's reply to help, before its list of commands."),
+            phrase_spec("busy", "Busy message", "The reply while Baud is saving reminders and its queue is full."),
+            phrase_spec("limit", "Reminder-limit message", "The reply when a caller or the bot has reached the "
+                        "reminder limit (8 per caller, 48 per bot)."),
         ]
         saved = await edit_resource_draft(
             session, lane, title="Edit chat bot" if bot else "Create chat bot", own=True,

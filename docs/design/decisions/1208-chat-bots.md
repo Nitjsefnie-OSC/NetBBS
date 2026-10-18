@@ -184,8 +184,15 @@ program arguments, provider details and numeric budgets remain editable text.
 - **Off by default.** The SysOp switches it on, chooses its channels and may
   rename it. A node can run several instances, each with its own name,
   channels, temperament, limits and memory.
-- **Temperament.** A few presets shape its fixed phrases. They need no
-  language model.
+- **Temperament.** A few presets (friendly, terse, retro) shape its fixed
+  phrases: the greeting, the help opening, and the busy and reminder-limit
+  messages. They need no language model. The presets are starting points:
+  the SysOp may override each phrase per instance (issue #1381), so a node's
+  Baud can speak in its own words or another language. Overrides are
+  validated on Save -- plain one-line text, `{name}` the only placeholder,
+  and short enough that `<caller>: <phrase>` fits the 500-character line --
+  and reach the bot in the `hello`'s `phrases`, next to `temperament`; an
+  empty one falls back to the preset.
 - **Abilities:**
   - `!help`;
   - `!seen`;
