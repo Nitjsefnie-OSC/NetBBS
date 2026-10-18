@@ -34,7 +34,7 @@ a BBS. A door does not need to implement Link merely to publish game results;
 use the outbound hook. NetBBS has no general external plugin API granting
 arbitrary access to accounts, private mail, or administration.
 
-Current compatibility identifiers are **door API 3**, durable **Link envelope
+Current compatibility identifiers are **door API 4**, durable **Link envelope
 version 1**, and **real-time Link protocol version 4**. They version different
 contracts; none is interchangeable with the package version. Link v1 is still
 a pre-freeze protocol. Independent interoperability is unclaimed pending

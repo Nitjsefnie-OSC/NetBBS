@@ -454,7 +454,19 @@ minus the fields above:
   `board_post` uses — only `node_vouched_user` has a real build/verify
   path today, for the same reason), `body`, `created_at`, `nonce`. No
   `subject` (channel messages don't have one) and no
-  `parent_post_id`/reply structure (scrollback is flat).
+  `parent_post_id`/reply structure (scrollback is flat). Two optional,
+  bounded fields extend it, each with its own size check, and an older node
+  keeps a field it does not know and shows `body` (the poll precedent, §16,
+  issue #1299):
+  - `block`: a bot's titled block (a title and up to 12 rows of an optional
+    label and a text), beside the plain fallback `body` the bot's host built
+    from it. A malformed block is shown as its fallback and an oversized one
+    is refused (§16, issue #1373).
+  - `announcement`: marks a SysOp's scheduled announcement, authored by the
+    SysOp who saved the rule and sent only into a channel that node's SysOp
+    approved for announcements. A newer node draws it as an announcement
+    naming its node; an older one shows an ordinary line from that SysOp
+    (§16, issue #1380).
 
 Canonical encoding, event-identity, and verification follow §7.2-§7.4
 exactly as already specified for every other event family — no new rule
