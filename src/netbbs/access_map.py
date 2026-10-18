@@ -36,7 +36,7 @@ from netbbs.communities import (
     meets_resource_age,
 )
 from netbbs.age_requirement import describe_age_gate
-from netbbs.config import get_mail_min_level, get_node_map_min_level
+from netbbs.config import get_mail_min_level, get_node_map_min_level, get_oneliner_min_level
 from netbbs.doors.registry import list_doors
 from netbbs.files.areas import FileArea, list_file_areas
 from netbbs.ftn.networks import list_networks
@@ -52,6 +52,7 @@ class GateKind(str, Enum):
     DOOR = "door"
     NODE_MAP = "node_map"
     MAIL = "mail"
+    ONELINERS = "oneliners"
     MRC_OPEN_ROOM = "mrc_open_room"
     NETMAIL = "netmail"
     SYSOP = "sysop"
@@ -235,6 +236,7 @@ def _node_gates(db: Database) -> list[Gate]:
     link_off = configured != "unknown" and not resolve_link_enabled(configured, db)
     map_level = get_node_map_min_level(db)
     mail_level = get_mail_min_level(db)
+    oneliner_level = get_oneliner_min_level(db)
     rooms = load_open_room_settings(db)
     if not load_mrc_settings(db).enabled:
         rooms_off = "MRC is off"
@@ -250,6 +252,10 @@ def _node_gates(db: Database) -> list[Gate]:
         Gate(
             GateKind.MAIL, None, "Mail", mail_level, LevelSource.SETTING, mail_level,
             note="not the guest account",
+        ),
+        # Issue #1391: adding a line; reading the wall is open to all.
+        Gate(
+            GateKind.ONELINERS, None, "Oneliner wall", oneliner_level, LevelSource.SETTING, oneliner_level,
         ),
         Gate(
             GateKind.MRC_OPEN_ROOM, None, "Open MRC rooms", rooms.min_level, LevelSource.SETTING, rooms.min_level,
@@ -476,6 +482,7 @@ GATE_WORDS: dict[GateKind, tuple[str, str]] = {
     GateKind.DOOR: ("play", "door"),
     GateKind.NODE_MAP: ("open", "node-wide"),
     GateKind.MAIL: ("use", "node-wide"),
+    GateKind.ONELINERS: ("write", "node-wide"),
     GateKind.MRC_OPEN_ROOM: ("open", "node-wide"),
     GateKind.NETMAIL: ("send", "node-wide"),
     GateKind.SYSOP: ("use", "node-wide"),
