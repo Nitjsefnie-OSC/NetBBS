@@ -147,7 +147,8 @@ def test_baud_help_is_a_block_on_a_host_that_takes_them():
     block = check_block(sent[-1]["block"])  # the host would take it as sent
     assert sent[-1]["action"] == "reply" and "text" not in sent[-1]
     assert block.title == "Commands" and block.rows[0] == ("", "Hallo alice.")
-    assert ("stats", "who is on, uptime") in block.rows and ("help", "this list") in block.rows
+    assert ("stats", "who is on, uptime") in block.rows
+    assert {"help", "tell <name> <text>", "tells", "cancel tell <id>"} <= {label for label, _ in block.rows}
     assert block.rows[-1] == ("", "No language model is enabled.")
     # An older host gets the one line it always did.
     baud = Baud({}, sent.append)
@@ -441,3 +442,14 @@ def test_a_line_is_a_block_or_an_announcement_never_both(db, sysop, channel):
         record_message(db, channel, kind="message", author_label="Peer.bot", body="x", block=block,
                        announcement=True)
     assert get_scrollback(db, channel) == []
+
+
+@pytest.mark.parametrize("model", [False, True])
+def test_baud_help_block_stays_in_bounds_with_every_grant_and_the_longest_opening(model):
+    sent = []
+    longest = "x" * 168 + "{name}"  # the longest help opening the editor saves
+    Baud({"blocks": True, "queries": ["stats", "seen"], "model_conversation": model,
+          "phrases": {"help": longest}}, sent.append).handle(
+        {"type": "message", "request": "r", "caller": {"id": 7, "name": "n" * 32}, "channel": "c", "text": "help"})
+    block = check_block(sent[-1]["block"])
+    assert len(block.rows) == 12 and len(block.fallback()) <= MAX_FALLBACK

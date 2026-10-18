@@ -273,6 +273,9 @@ LEVEL_CHECK_SITES: dict[tuple[str, str], GateKind | str] = {
     ("netbbs/communities.py", "meets_read_gate"): GateKind.BOARD_READ,
     ("netbbs/communities.py", "meets_write_gate"): GateKind.BOARD_WRITE,
     ("netbbs/net/chat_flow.py", "_visible_channels_for"): GateKind.CHANNEL,
+    # Issue #1376: a tell's recipient must be able to enter the channel it
+    # waits in -- the channel's own gates, read without accepting an invite.
+    ("netbbs/bots/held.py", "may_enter"): GateKind.CHANNEL,
     ("netbbs/net/chat_flow.py", "_may_enter_quietly"): GateKind.CHANNEL,
     ("netbbs/net/chat_flow.py", "_authorize_channel_entry"): GateKind.CHANNEL,
     ("netbbs/net/chat_flow.py", "_open_room_gate_denial"): GateKind.MRC_OPEN_ROOM,

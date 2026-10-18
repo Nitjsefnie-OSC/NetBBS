@@ -176,8 +176,8 @@ def test_real_baud_receives_phrases_in_its_hello(db, lane, hub, sysop, alice, ch
             assert await runtime.addressed(channel, alice, sent, pid) is None
             # Issue #1373: the help is a titled block, the opening its first row.
             answer = await next_line(queue, "Befehle:")
-            assert answer.body.startswith("Commands: Befehle:; help this list;")
-            assert answer.block.rows[:2] == (("", "Befehle:"), ("help", "this list"))
+            assert answer.body.startswith("Commands: Befehle:; help this list; help remind or help tell")
+            assert answer.block.rows[:2] == (("", "Befehle:"), ("help", "this list; help remind or help tell for more"))
         finally:
             await runtime.close()
             hub.leave(channel.name, pid)

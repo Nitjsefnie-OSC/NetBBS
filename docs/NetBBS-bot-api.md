@@ -40,12 +40,19 @@ Each line is one UTF-8 JSON object, at most 32 KiB including the newline.
 `BOT_API_VERSION = 1`. The host sends:
 
 ```json
-{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"model_conversation":false,"blocks":true}
+{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"model_conversation":false,"timezone":"Europe/Berlin","blocks":true}
 ```
+
+`timezone` is the IANA name of the node's display clock (§6.3: one clock for
+the node, no per-caller zone), for a bot that reads or shows wall-clock times.
+When the SysOp changes the display zone, running instances restart, as they do
+when the model-service switch changes.
 
 `blocks` is true when the host takes a reply's titled block (see
 [Titled blocks](#titled-blocks)); an older host sends no `blocks` and refuses
-a reply that carries one. `temperament` is `friendly`, `terse` or `retro`. `phrases` holds the SysOp's
+a reply that carries one.
+
+`temperament` is `friendly`, `terse` or `retro`. `phrases` holds the SysOp's
 overrides of the temperament's fixed phrases, keyed `greeting`, `help`, `busy`
 and `limit`; a key is present only when the SysOp wrote that phrase, so an
 absent key means "use your preset". The host checks each phrase on Save: plain
@@ -179,6 +186,66 @@ events and live delivery; MRC never receives it. A remote request's public
 reply is also delivered directly to its requesting node, so it can arrive
 while the channel origin is offline. Normal live-message deduplication hides
 any second copy through the origin. Reminders use the ordinary channel route.
+
+### Lines held for a caller
+
+`say.for` says a line for one caller (issue #1375). If that caller is in the
+channel now, on this node or in a Linked channel's live roster, the host
+publishes `text` at once. Otherwise it holds `held_text` (default `text`) and
+publishes it in that channel, and only there, on the caller's next join of it:
+once per join of the account, not once per session, and whether the caller is
+away or not. `expires` is 60 seconds to 7 days.
+
+```json
+{"id":"9","action":"say.for","channel":"lobby","caller":7,"text":"alice: reminder #3: tea","held_text":"alice: reminder #3 (due 18:00, held until you came back): tea","expires":604800}
+{"type":"result","id":"9","ok":true,"value":{"held":true,"held_id":12,"expires_at":"2026-10-25T16:00:00.000000Z"}}
+{"type":"held","held_id":12,"outcome":"delivered","message_id":57}
+```
+
+A line published at once returns `{"delivered": true, "message_id": ...}`
+instead. A held line's outcome arrives later as a `held` event, `delivered` or
+`expired`, if the instance is running then; `held.list` returns the instance's
+waiting lines (`held_id`, `channel`, `caller`, `created_at`, `expires_at`),
+so a restarted bot can tell which were delivered meanwhile, and
+`held.cancel` with a `held_id` withdraws one. A held publication obeys the
+same grant, policy, mute and hourly-output checks as `say` when it is
+delivered; a refused one stays held until it expires, and an expired one is
+dropped without a line. An instance holds at most 48 lines, 8 per caller.
+With `"private": true` the line is shown to that local caller alone, as a
+`(to you)` answer in each of their sessions in the channel, and debits their
+private-answer limit instead of the channel's hourly output (issue #1372); a
+private line for a Link caller is refused. The `held` event then carries
+`"private": true` instead of a `message_id`. Baud's reminders and tells are
+delivered publicly.
+The caller is any caller id the bot has seen; held lines live in the node
+database, not in the bot's state, and survive restarts.
+
+`tell` is the token-bound form (issue #1376): a note from the request's caller
+to a local account, delivered publicly in the request's channel on that
+account's next join of it:
+
+```json
+{"id":"10","action":"tell","request":"opaque-token","to":"Nib","text":"check the Retro board"}
+{"type":"result","id":"10","ok":true,"value":{"held":true,"tell_id":4,"name":"Nib","expires_at":"..."}}
+```
+
+The host takes the sender from its pending request, never from the action, and
+publishes the line itself: `Nib: Quill asked me to tell you (3h ago): check the
+Retro board`. A recipient already in the channel gets nothing stored and the
+value is `{"held": false, "present": true, "name": "Nib"}`. Recipients are
+local accounts only, keyed by account, so a rename before delivery changes
+nothing; `@` names are refused, and so is a recipient who could not enter the
+channel. The recipient's direct-message opt-out and §6.4 block list apply,
+for a local sender or a Link sender as `user@<fingerprint>`, when the tell is
+made ("Nib does not accept messages from you") and again at delivery, where a
+refused tell, or one from a Link node no longer allowed to author here, is
+dropped silently. The text is 1-160 characters. At most 3 tells wait per
+sender, 5 per recipient and 32 per instance, for at most 14 days, then are
+dropped silently. A refused `tell` is shown to its caller alone, privately,
+and consumes the token; it is not written to the SysOp's status line.
+`tell.list` returns the request caller's own waiting tells in that channel
+(`tell_id`, `to`, `text`, `created_at`), and `tell.cancel` with a `tell_id`
+withdraws one of them; neither consumes the token.
 
 `announce` consumes this instance's live source-event token. The host chooses
 the destination and public summary; action-supplied text or channel cannot
@@ -400,7 +467,9 @@ from one to 60 seconds. Kill controls disable the instance persistently.
 
 ## Bundled Baud
 
-Commands: `help`, `remind <1s-30d> <text>`, `reminders`, `cancel <id>`.
+Commands: `help`, `remind <when> <text>`, `reminders`, `cancel <id>`,
+`tell <name> <text>`, `tells` and `cancel tell <id>`; `help remind` and
+`help tell` explain the two.
 On a host that takes blocks, `help` answers with a titled block, `Commands`,
 one row per command and the help opening (below) as its first row; an older
 host gets the same list as one line.
@@ -424,6 +493,31 @@ per caller and 48 per instance, also subject to the state byte limit. Listing
 and cancelling work only for the caller's reminders in the current channel,
 so a public query cannot expose a reminder from a private channel.
 
+`<when>` is a duration (`10m`, `2h`, `1s` to `30d`) or a time in the node's
+display clock, from the hello's `timezone`: `HH:MM` (today, or tomorrow once
+it has passed), `tomorrow HH:MM`, `mon` to `sun HH:MM` (the next such day,
+today while the time is ahead) or `YYYY-MM-DD HH:MM` (refused once past).
+Times are 24-hour and dates ISO only: `01.11` could be either order and is
+refused. A time in a spring-forward gap is read at its pre-transition offset
+and a repeated one at its first occurrence, as the backup schedule does; at
+most 30 days ahead. Due times are stored as UTC instants, so a change of the
+display zone never moves a saved reminder. The confirmation names the instant
+in the node clock: `Saved reminder #3 for Fri 20:00 CET.`
+
+A due reminder is said with `say.for` for its owner. If they are not in its
+channel, the host holds it for 7 days and says it on their return, as
+`alice: reminder #3 (due 18:00, held until you came back): net meeting`;
+after that it is dropped silently. `reminders` lists a held one as `waiting
+since 18:00`, cancelling it withdraws the held line, and held reminders still
+count toward the eight and the 48. After a restart Baud asks `held.list` which
+of its held reminders are still waiting.
+
+`tell` sends the host's token-bound `tell` action, so tells live in the node,
+not in Baud's state. Baud confirms publicly where the note will be said, or
+answers `Nib is here now.`; a refusal is shown to the caller alone. `tells`
+lists the caller's own waiting tells in this channel, and `cancel tell <id>`
+withdraws one.
+
 Due reminders wait through shutdowns. A refused reminder backs off on its own
 (one minute, doubling to an hour) while other due reminders are still
 delivered, and is dropped after eight refusals. They are removed after
@@ -442,7 +536,7 @@ the hello's `phrases`):
 | `greeting` | A live join, with greetings on | `Welcome, {name}!` |
 | `help` | The opening of the `help` reply, its block's first row | `Happy to help!` |
 | `busy` | The reply while a full queue waits on a reminder save | `Busy saving reminders; try again shortly.` |
-| `limit` | The reply at the reminder limit | `Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first.` |
+| `limit` | The reply at the reminder limit, held reminders included | `Reminder limit reached (8 per caller, 48 per bot). Cancel an old reminder first.` |
 
 Terse greets with `Welcome, {name}.` and has no help opening; retro says
 `Carrier detected: welcome, {name}!` and `Carrier detected.`. An empty override
@@ -481,7 +575,7 @@ What it does for you:
   with a line on stderr and exit status 1, and no `ready` is sent. Use the
   copy that ships with the node you run on.
 - **Dispatch by event type.** An event calls `on_<type>`: `on_message`,
-  `on_channel`, `on_presence`, `on_tick`, `on_post`, `on_file`. A type without
+  `on_channel`, `on_presence`, `on_tick`, `on_post`, `on_file`, `on_held`. A type without
   a handler, including one a newer host adds, is ignored. Fields read as keys
   or attributes (`event.channel`, `event["channel"]`); a missing one reads as
   `None`.
@@ -494,10 +588,12 @@ What it does for you:
   **fields)`, which gives it an id and, when `then` is given, calls
   `then(result)` when its result arrives. Any number may be outstanding, and
   events still arrive in between. The shortcuts are `bot.say(channel, text)`,
-  `bot.announce(event)`, `bot.load(then)` (`state.get`) and `bot.save(value)`,
-  and on a message `msg.reply(text)`, `msg.reply_block(title, rows)`,
-  `msg.query(name, target)`, `msg.model()` and `msg.model_reset()`. Each takes
-  an optional `then`:
+  `bot.announce(event)`, `bot.say_for(channel, caller, text, held_text,
+  expires)`, `bot.held_lines(then)`, `bot.cancel_held(held_id)`,
+  `bot.load(then)` (`state.get`) and `bot.save(value)`, and on a message
+  `msg.reply(text)`, `msg.reply_block(title, rows)`, `msg.query(name, target)`,
+  `msg.model()`, `msg.model_reset()`, `msg.tell(to, text)`, `msg.tells()` and
+  `msg.cancel_tell(tell_id)`. Each takes an optional `then`:
 
   ```python
   msg.query("stats", then=lambda result: msg.reply(result.text))

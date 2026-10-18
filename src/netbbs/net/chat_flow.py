@@ -6741,6 +6741,7 @@ async def _chat_loop(
         await hub.broadcast(channel.name, recorded_join, exclude={participant_id})
         if hub.bot_runtime is not None:
             await hub.bot_runtime.observe(channel, recorded_join, caller={"id": user.id, "name": user.username})
+            hub.bot_runtime.joined(channel, user.id)  # Lines held for this caller (issue #1375).
         if link_context is not None and link_context.realtime_bridge is not None:
             await link_context.realtime_bridge.broadcast_local_presence_live(
                 channel, change="join", username=user.username
