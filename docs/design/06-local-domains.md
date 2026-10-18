@@ -2258,7 +2258,7 @@ need a signed event kind of its own and is a separate, later issue.
 - **A line** is plain, sanitized text of at most 60 display columns, typed at
   one prompt; Esc or a blank answer cancels, and the outcome is carried into
   the redraw. A caller adds at most one line per call and 3 per account per
-  day. Who may write is a node-wide minimum level, default 0; a guest writes
+  day, counting lines added even if since deleted. Who may write is a node-wide minimum level, default 0; a guest writes
   only if the guest account meets it. `[A]dd a line` is hidden below the
   level and refused with its reason at the rate limit.
 - **Deleting:** the author deletes their own lines, and a SysOp or a staff

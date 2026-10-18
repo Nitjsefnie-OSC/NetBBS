@@ -113,9 +113,13 @@ or a channel event.**
   refusals.
 - Text rules are a reply's: sanitized, 1 to 500 characters, no controls,
   checked by the host.
-- **Model conversation:** a private answer enters the caller, bot and
-  channel context as a published one does; the rule "only successfully
-  published replies enter context" becomes "delivered replies".
+- **Model conversation:** a private exchange enters context as a published
+  one does, but never the context of a public answer: each caller, bot and
+  channel has one context for public requests and another for private ones.
+  A private answer may say what a public one must not (#1382 names a
+  caller's own boards in it), so it must not resurface in the channel
+  through a later public answer. The rule "only successfully published
+  replies enter context" becomes "delivered replies".
 
 **Queries.** No existing query changes: `stats` and `seen` stay safe for
 public replies, and `seen` keeps respecting hidden session history. The host

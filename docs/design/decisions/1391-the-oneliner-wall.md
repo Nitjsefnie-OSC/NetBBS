@@ -54,7 +54,8 @@ logon screen.
 - **Length:** at most 60 display columns, which fits beside a 12-column name
   in the 78-column frame.
 - **Rate:** one line per call, and at most 3 per account per day. The daily
-  cap bounds the shared guest account and a reconnect loop. The numbers are
+  cap bounds the shared guest account and a reconnect loop. It counts lines
+  added, so deleting one's own line gives no quota back. The numbers are
   fixed in code, as the bell's are. A refusal says which limit was reached:
   "You've added a line this call." or "You've added 3 today; the wall takes
   more tomorrow."
@@ -116,6 +117,8 @@ only; `[R]ecent callers` and the full wall ignore it.
   and publishing it would need an opt-in of its own.
 
 **Implementation notes.** One migration (the table) plus node settings for
-the toggle and the level. The rate limit counts the author's rows of the
-last day plus a per-session flag, with no extra table. When both sections
+the toggle and the level. The daily cap counts additions, not surviving
+rows: a deleted or pruned line must still count until a day has passed (a
+deleted row kept hidden until then, or a small bounded log of additions),
+plus a per-session flag for the one line per call. When both sections
 share the frame, its style follows the Previous callers setting.

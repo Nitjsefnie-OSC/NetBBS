@@ -226,8 +226,9 @@ and off by default.**
 - **What the model sees.** Only the caller's message addressed to the bot,
   plus at most N lines of prior context; the SysOp sets N, and it may be 0.
   Context is separate for each authenticated caller, bot instance and
-  channel, and contains only that caller's addressed messages and the bot's
-  delivered replies to them. Ordinary chat and other callers' exchanges
+  channel, and for private and public exchanges (§16, issue #1372), and
+  contains only that caller's addressed messages and the bot's delivered
+  replies to them. Ordinary chat and other callers' exchanges
   never enter it. In help-desk mode, the default, the host also sends
   excerpts of the shipped caller handbook and public node facts, chosen per
   request under a fixed size (§16, issue #1382). A reply is visible in the

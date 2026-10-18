@@ -48,8 +48,9 @@ default.**
   of context. Context keying, the 30-minute expiry and "ordinary chat never
   enters" are unchanged.
 - **The disclosure names it:** "Sends your addressed text, up to N prior
-  lines of only your exchange here, and excerpts of the node handbook and
-  public node facts."
+  lines of only your exchange here, excerpts of the node handbook and node
+  facts, and, when you ask privately, the boards and file areas you can
+  see." The last part is what Decision 4 adds for a private answer.
 - **The ledger needs no new mechanism:** reservations count every message
   byte, so grounding is charged automatically, and the fixed cap keeps it
   predictable. The SysOp help for the token budgets says so.
@@ -85,6 +86,9 @@ private answer may name what that caller can see.**
   caller can see (`visible_boards`, `visible_areas`). Link callers always get
   the public set: there is no local account to scope them by. Hidden
   Communities stay out for non-SysOps.
+- What a private answer named stays private: private and public exchanges
+  keep separate context (#1372), so a members-only board named privately
+  cannot resurface through the same caller's next public answer.
 - Rejected: **the public set always:** a member asking privately would never
   hear of a members-only board. Rejected: **no resource list:** "which board
   is for retro hardware?" could not be answered.
