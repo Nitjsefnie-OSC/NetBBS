@@ -3,7 +3,8 @@
 import json
 
 from netbbs.bots.registry import (
-    BotError, TEMPERAMENTS, get_bot, list_bots, require_sysop, runtime_status, save_bot, stop_bots,
+    BotError, DEFAULT_LINES_PER_HOUR, DEFAULT_TEMPERAMENT, HOUSE_BOT_COMMAND, HOUSE_BOT_NAME, TEMPERAMENTS,
+    get_bot, list_bots, require_sysop, runtime_status, save_bot, stop_bots,
     deletable_bot, delete_bot,
     local_channel,
 )
@@ -152,7 +153,7 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             state, error = (await lane.run(runtime_status)).get(bot.id, ("stopped", ""))
             status = f"Status: {state}. " + (f"Last error: {sanitize_text(error)} " if error else "")
         draft = {
-            "name": bot.name if bot else "Baud", "enabled": bot.enabled if bot else False,
+            "name": bot.name if bot else HOUSE_BOT_NAME, "enabled": bot.enabled if bot else False,
             "channels": list(bot.channels) if bot else [],
             "defaults": list(bot.defaults) if bot else [],
             "linked": list(bot.linked_channels) if bot else [],
@@ -167,8 +168,9 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             "announce_posts": bot.announce_posts if bot else False,
             "announce_files": bot.announce_files if bot else False,
             "model": bot.model_conversation if bot else False,
-            "command": json.dumps(bot.command) if bot else "[]",
-            "temperament": bot.temperament if bot else "friendly", "rate": bot.lines_per_hour if bot else 60,
+            "command": json.dumps(list(bot.command if bot else HOUSE_BOT_COMMAND)),
+            "temperament": bot.temperament if bot else DEFAULT_TEMPERAMENT,
+            "rate": bot.lines_per_hour if bot else DEFAULT_LINES_PER_HOUR,
         }
 
         async def save(values):
