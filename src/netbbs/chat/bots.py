@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from netbbs.auth.users import BOT_LABEL_SUFFIX, AuthError, User, get_user_by_username
+from netbbs.chat.blocks import BotBlock
 from netbbs.chat.channels import Channel
 from netbbs.moderation import ChannelPermission, has_permission, record_action
 from netbbs.storage.database import Database
@@ -53,12 +54,15 @@ class BotPrivateAnswer:
     It is content, not a notice: the chat screen draws it as a timestamped
     bot line marked `(to you)`. It is never a `ChannelMessage`, so it is in
     no history, search or replay, only in the session's own kept lines.
-    `node_fingerprint` is the bot's host for a remote bot, else `None`."""
+    `node_fingerprint` is the bot's host for a remote bot, else `None`.
+    `block` (issue #1373) is a private titled block, drawn in place of
+    `text`, which then holds its fallback line."""
 
     label: str
     text: str
     created_at: str
     node_fingerprint: str | None = None
+    block: BotBlock | None = None
 
 
 def bot_label_origin(db: Database, label: str, *, remote: bool = False) -> BotOrigin | None:

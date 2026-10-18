@@ -430,6 +430,15 @@ refuse the field as a malformed frame, so it is only ever sent to a peer that
 advertises this. The frame may also carry a `content_id`; it is accepted for
 compatibility and ignored, since nothing keys on an unverified id."""
 
+CHAT_BOT_BLOCKS_CAPABILITY = "chat_bot_blocks_v1"
+"""Issue #1373: this node takes a bot's titled block as an optional `block`
+key on a live `channel_message` frame, a `scrollback_snapshot` entry and a
+`bot_result`'s private answer. Those frames are key-strict, so an older node
+would refuse the key as malformed: it goes only to a peer advertising this,
+and every other peer gets the block's fallback line alone. The signed
+`channel_message` event carries its `block` field regardless -- an older node
+keeps a field it does not know and shows the event's `body`."""
+
 PRESENCE_RELAY_CAPABILITY = "presence_relay"
 """Issue #1281: this node reports its callers in a linked channel to the
 channel's origin, and takes a `presence_delta` or presence-snapshot entry's
@@ -471,7 +480,7 @@ LINK_CAPABILITIES: tuple[str, ...] = (
     INVENTORY_NOT_CARRIED_CAPABILITY, INVENTORY_PAGES_CAPABILITY, CHANNEL_RELAY_CAPABILITY, CHAT_BOTS_CAPABILITY,
     SEALED_ATTESTATIONS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY,
     PRESENCE_RELAY_CAPABILITY, LINK_COMMUNITIES_CAPABILITY, LINK_MODERATION_CAPABILITY,
-    DIRECT_CHAT_CAPABILITY, CHAT_BOT_PRIVATE_CAPABILITY,
+    DIRECT_CHAT_CAPABILITY, CHAT_BOT_PRIVATE_CAPABILITY, CHAT_BOT_BLOCKS_CAPABILITY,
 )
 """Every optional behaviour this version advertises in its own descriptor."""
 
@@ -1396,12 +1405,17 @@ def build_channel_message(
     body: str,
     created_at: str,
     nonce: str | None = None,
+    block: dict | None = None,
 ) -> ChannelMessage:
     """
     Build and sign one `channel_message` event, per design doc §9.6.
     Mirrors `build_board_post` minus `subject`/`parent_post_id` -- see
     that function's own docstring for the author-tier and signing-key
     reasoning, unchanged here.
+
+    `block` (issue #1373) is a bot's titled block in its wire shape, beside
+    `body`, the fallback line the host built from it; a node that predates
+    it shows `body`.
     """
     payload = {
         "channel_id": channel_id,
@@ -1414,6 +1428,8 @@ def build_channel_message(
         "created_at": created_at,
         "nonce": nonce if nonce is not None else secrets.token_hex(16),
     }
+    if block is not None:
+        payload["block"] = block
 
     envelope = build_envelope(CHANNEL_MESSAGE_OBJECT_TYPE, payload)
     signature = signing_identity.sign(canonical_bytes(envelope))

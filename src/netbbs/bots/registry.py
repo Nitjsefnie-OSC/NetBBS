@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from netbbs.auth.users import User, get_user_by_id, is_usable_sysop
 from netbbs.bots.baud import PHRASE_KEYS, preset
+from netbbs.chat.blocks import BlockError, BotBlock, parse_block
 from netbbs.chat.bots import channel_bot_policy
 from netbbs.config import get_config, set_config
 from netbbs.chat.channels import Channel, ChannelError, get_channel_by_name as get_channel, list_channels
@@ -512,10 +513,19 @@ def _check_bot_text(body) -> None:
         raise BotError("Bot lines must be plain text without terminal controls.")
 
 
+def check_block(block) -> BotBlock:
+    """A bot's titled block (issue #1373), or the reason it is refused."""
+    try:
+        return parse_block(block)
+    except BlockError as exc:
+        raise BotError(str(exc)) from exc
+
+
 def deliver_private(db: Database, bot_id: int, channel_name: str, body: str, caller: str) -> tuple[Bot, Channel]:
     """Debit one private answer (issue #1372) after the gates a public reply
     passes, but against `caller`'s own hourly limit. Nothing is recorded in
-    the channel: the answer exists only in the requesting session."""
+    the channel: the answer exists only in the requesting session. A private
+    block (issue #1373) passes its fallback line as `body`."""
     _check_bot_text(body)
     db.connection.execute("BEGIN IMMEDIATE")
     try:
@@ -531,7 +541,12 @@ def deliver_private(db: Database, bot_id: int, channel_name: str, body: str, cal
     return bot, channel
 
 
-def publish(db: Database, bot_id: int, channel_name: str, body: str, *, node_identity=None, source_reference=None):
+def publish(db: Database, bot_id: int, channel_name: str, body: str | None, *, node_identity=None,
+            source_reference=None, block: BotBlock | None = None):
+    """One bot line, or with `block` one titled block (issue #1373): its
+    host-built fallback line is the body, and it debits one line."""
+    if block is not None:
+        body = block.fallback()
     _check_bot_text(body)
     db.connection.execute("BEGIN IMMEDIATE")
     try:
@@ -548,7 +563,7 @@ def publish(db: Database, bot_id: int, channel_name: str, body: str, *, node_ide
         db.connection.execute("DELETE FROM bot_output_history WHERE created_at <= ?", (cutoff,))
         db.connection.execute("INSERT INTO bot_output_history(bot_id, channel_id, created_at) VALUES (?, ?, ?)",
                               (bot.id, channel.id, utc_now_iso()))
-        message = record_message(db, channel, kind="message", author_label=bot.label, body=body)
+        message = record_message(db, channel, kind="message", author_label=bot.label, body=body, block=block)
     except BaseException:
         db.connection.rollback()
         raise

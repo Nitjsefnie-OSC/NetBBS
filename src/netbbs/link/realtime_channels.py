@@ -32,6 +32,7 @@ from collections import OrderedDict
 from typing import Awaitable, Callable
 
 from netbbs.link.channel_moderation import restriction_in_force
+from netbbs.chat.blocks import BotBlock, block_from_wire
 from netbbs.chat.channels import Channel
 from netbbs.chat.hub import ChatHub
 from netbbs.chat.presence import PresenceRegistry
@@ -110,12 +111,24 @@ def _bounded_utf8(text: str, max_bytes: int) -> tuple[str, bool]:
     return encoded[:max_bytes].decode("utf-8", errors="ignore"), True
 
 
-def _snapshot_entries(db: Database, channel: Channel) -> list[dict]:
+def _is_bot_user_id(user_id: object) -> bool:
+    return isinstance(user_id, str) and user_id.lower().endswith(".bot")
+
+
+def _received_block(user_id: object, value: object) -> BotBlock | None:
+    """A peer's block (issue #1373), drawn only for a bot's line; a
+    malformed one is `None`, so the fallback body shows."""
+    return block_from_wire(value) if _is_bot_user_id(user_id) else None
+
+
+def _snapshot_entries(db: Database, channel: Channel, *, blocks: bool = False) -> list[dict]:
     """Build origin-attested entries with enough author identity for the
     subscriber to apply its own trust policy. Carried-message identities
     are extracted from the signed event accepted by this node; origin-local
     labels are explicitly qualified so they cannot resolve as subscriber-
-    local accounts with the same username."""
+    local accounts with the same username. `blocks`: the subscriber
+    advertises `CHAT_BOT_BLOCKS_CAPABILITY`, so a bot's block rides its
+    entry (issue #1373)."""
     origin_fingerprint = channel_origin_fingerprint(db, channel)
     if origin_fingerprint is None:
         return []
@@ -162,7 +175,7 @@ def _snapshot_entries(db: Database, channel: Channel) -> list[dict]:
             _bounded_utf8(message.body, _MAX_SCROLLBACK_ENTRY_BODY_BYTES)
             if message.body is not None else (None, False)
         )
-        entries.append({
+        entry = {
             "kind": message.kind,
             "author_label": author_label,
             "author_node_fingerprint": author_node_fingerprint,
@@ -171,7 +184,10 @@ def _snapshot_entries(db: Database, channel: Channel) -> list[dict]:
             "body": body,
             "body_truncated": body_truncated,
             "created_at": message.created_at,
-        })
+        }
+        if blocks and message.block is not None and message.kind == "message":
+            entry["block"] = message.block.to_wire()
+        entries.append(entry)
     return entries
 
 
@@ -204,6 +220,7 @@ def _accept_scrollback_snapshot(
             author_fingerprint=(entry["author_node_fingerprint"] if authored else None),
             body=entry["body"], created_at=entry["created_at"],
             link_content_id=entry["content_id"], body_truncated=entry["body_truncated"],
+            block=_received_block(entry["author_user_id"], entry.get("block")) if authored else None,
         ))
     return channel, messages
 
@@ -287,6 +304,7 @@ class LiveChannelBridge:
         self, *, hub: ChatHub, lane: DatabaseLane, presence: PresenceRegistry, registry: LinkRealtimeSessionRegistry,
         peer_capable: Callable[[str], bool] | None = None,
         presence_capable: Callable[[str], bool] | None = None,
+        blocks_capable: Callable[[str], bool] | None = None,
     ) -> None:
         self._hub = hub
         self._lane = lane
@@ -300,6 +318,9 @@ class LiveChannelBridge:
         # the only peers that report their callers up or are sent a presence
         # frame's optional `node_fingerprint`. None: no peer is.
         self._presence_capable = presence_capable or (lambda fingerprint: False)
+        # Issue #1373: whether a peer advertises `CHAT_BOT_BLOCKS_CAPABILITY`,
+        # the only peers sent a bot's block beside its fallback line.
+        self._blocks_capable = blocks_capable or (lambda fingerprint: False)
         # Content IDs of channel lines already shown live here, oldest first,
         # so the signed event that follows is not shown again.
         self._shown_live: OrderedDict[ShownKey, None] = OrderedDict()
@@ -585,12 +606,16 @@ class LiveChannelBridge:
         subscribing peer or block anything else `_handle_subscribe`
         already did -- the existing async catch-up path is still there
         regardless (design doc §16)."""
-        entries = await self._lane.run(_snapshot_entries, channel)
+        entries = await self._lane.run(
+            _snapshot_entries, channel, blocks=self._blocks_capable(session.remote_fingerprint),
+        )
         if not entries:
             return
         # JSON escaping can make valid per-field values exceed the frame
         # ceiling. Drop oldest catch-up entries until the fully serialized
         # frame fits; never enqueue a frame that will later kill the session.
+        # A bot's block (issue #1373) goes first, oldest first: its entry
+        # still shows, as the fallback line.
         frame = None
         while entries:
             try:
@@ -599,7 +624,11 @@ class LiveChannelBridge:
                 )
                 break
             except LinkProtocolError:
-                entries.pop(0)
+                with_block = next((entry for entry in entries if "block" in entry), None)
+                if with_block is not None:
+                    del with_block["block"]
+                else:
+                    entries.pop(0)
         if frame is None:
             return
         try:
@@ -700,6 +729,10 @@ class LiveChannelBridge:
         ):
             return
         node_label = (await self._lane.run(identity_for_fingerprint, author_node)).label
+        # Issue #1373: a bot's block, kept only from a peer advertising
+        # blocks; anyone else's line shows its body.
+        block = (_received_block(payload["user_id"], payload.get("block"))
+                 if self._blocks_capable(session.remote_fingerprint) else None)
         message = LocalChannelMessage(
             id=-1, channel_id=channel.id, kind="message",
             author_label=link_address_label(payload["user_id"], node_label),
@@ -709,17 +742,18 @@ class LiveChannelBridge:
             # render the friendly label by default.
             author_fingerprint=author_node,
             body=payload["body"], created_at=payload["created_at"],
+            block=block,
         )
         await self._hub.broadcast(channel.name, message)
         if origin == own:
-            await self._relay_to_subscribers(channel, frame, author_node=author_node)
+            await self._relay_to_subscribers(channel, frame, author_node=author_node, block=block)
         if self.bot_link is not None:
             await self.bot_link.runtime.observe(channel, message, caller={
                 "id": f"link:{author_node}:{payload['user_id']}", "name": message.author_label,
             })
 
     async def _relay_to_subscribers(
-        self, channel: Channel, frame: RealtimeFrame, *, author_node: str
+        self, channel: Channel, frame: RealtimeFrame, *, author_node: str, block: BotBlock | None = None,
     ) -> None:
         """The origin passes a subscriber's live line on to its other live
         subscribers (issue #860), so a Linked channel is one room live, not
@@ -732,11 +766,20 @@ class LiveChannelBridge:
             payload["channel_id"], payload["user_id"], payload["display_label"],
             payload["body"], payload["created_at"], author_node_fingerprint=author_node,
         )
+        with_block = None
         for session in await self._live_subscribers(channel):
             if session.remote_fingerprint == author_node or not self._peer_capable(session.remote_fingerprint):
                 continue
+            outgoing = relayed
+            if block is not None and self._blocks_capable(session.remote_fingerprint):
+                with_block = with_block or build_channel_message_frame(
+                    payload["channel_id"], payload["user_id"], payload["display_label"],
+                    payload["body"], payload["created_at"], author_node_fingerprint=author_node,
+                    block=block.to_wire(),
+                )
+                outgoing = with_block
             try:
-                await session.send(relayed)
+                await session.send(outgoing)
             except LinkTransportError:
                 pass
 
@@ -1053,9 +1096,18 @@ class LiveChannelBridge:
             channel.channel_id, message.author_label, message.author_label,
             message.body or "", message.created_at,
         )
+        # Issue #1373: a bot's block, to the peers that take one; everyone
+        # else gets its fallback line, the same body.
+        with_block = None if message.block is None else build_channel_message_frame(
+            channel.channel_id, message.author_label, message.author_label,
+            message.body or "", message.created_at, block=message.block.to_wire(),
+        )
         for session in sessions:
+            outgoing = frame
+            if with_block is not None and self._blocks_capable(session.remote_fingerprint):
+                outgoing = with_block
             try:
-                await session.send(frame)
+                await session.send(outgoing)
             except LinkTransportError:
                 pass
 

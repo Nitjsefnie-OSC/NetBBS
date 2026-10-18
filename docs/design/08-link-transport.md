@@ -809,7 +809,8 @@ lines through async catch-up instead; an older origin still shows a
 subscriber's plain frame to its own callers.
 
 The signed event's optional `block` and `announcement` fields (§9.6) ride the
-live `channel_message` frame and `scrollback_snapshot` entries the same way:
+live `channel_message` frame and `scrollback_snapshot` entries the same way
+(a block also rides a `bot_result`'s private answer):
 as optional keys sent only to peers advertising the capability for each
 (working names `chat_bot_blocks_v1` and `chat_announcements_v1`, issues #1373
 and #1380). Every other peer gets the plain line, with a block's host-built

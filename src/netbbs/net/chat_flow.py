@@ -203,7 +203,10 @@ from netbbs.messaging_preferences import invitation_refusal, live_message_refusa
 from netbbs.moderation import ChannelPermission, has_permission
 from netbbs.net.char_input import Completer, InputHistory, LineViewport, LiveInputBuffer, reject_unhandled_key
 from netbbs.net.char_input import move_cursor as relative_move_cursor
-from netbbs.net.chat_reply import Cell, block_width, footer_rule, paragraph, table_rows, title_rule
+from netbbs.net.chat_reply import (
+    MIN_LAST_COLUMN, Cell, block_width, footer_rule, paragraph, table_rows, title_rule,
+)
+from netbbs.rendering.width import display_width, truncate_to_width
 from netbbs.net.chat_channel_picker_banner import load_chat_channel_picker_banner, load_chat_channel_picker_slot_art
 from netbbs.net.art_pacing import art_speed, art_time_limit
 from netbbs.net.list_art import CHAT_CHANNEL_PICKER, list_slot_fields
@@ -1745,8 +1748,104 @@ def _mention_bell_sender(db: Database, channel: Channel, viewer: User, message: 
     return f"{message.external_source or 'local'}:{message.author_label}"
 
 
+class _BlockLines(str):
+    """A rendered bot block (issue #1373): its fallback line as the string
+    itself, so a writer that only knows lines still shows something whole,
+    and in `lines` the block -- its title rule first, then its rows."""
+
+    lines: tuple[str, ...]
+
+    def __new__(cls, fallback: str, lines: Sequence[str]) -> "_BlockLines":
+        rendered = super().__new__(cls, fallback)
+        rendered.lines = tuple(lines)
+        return rendered
+
+
+def _rendered_lines(rendered: str) -> tuple[str, ...]:
+    """The screen lines of one rendered entry: a block's, or the line."""
+    return rendered.lines if isinstance(rendered, _BlockLines) else (rendered,)
+
+
+def _bot_block_title(
+    db: Database, viewer: User, speaker: str, title: str, created_at: str, width: int, *,
+    private: bool = False, page: str | None = None,
+) -> str:
+    """`── [BOT] Baud.bot · Commands ──── 20:14 ──` (issue #1373): the host's
+    `[BOT]` label and the bot's own title, then the time when `viewer` keeps
+    chat timestamps -- or on a later page which page it is. A private
+    block's tail reads `to you`, the marker of a private line, at the right
+    where a narrow terminal never cuts it."""
+    unicode_style = unicode_style_enabled(db, viewer)
+    dot = " · " if unicode_style else ", "
+    stamp = page
+    if page is None and timestamps_enabled(db, viewer):
+        try:
+            stamp = format_for_display(created_at, db, override_format="%H:%M")
+        except ValueError:
+            stamp = None
+    if private:
+        stamp = "to you" + (f"{dot}{stamp}" if stamp else "")
+    # A narrow title gives way in the bot's own words first: the host's
+    # `[BOT] Name.bot` says who the block is by (title_rule's own room).
+    lead = f"[BOT] {speaker}"
+    room = block_width(width) - 6 - (display_width(stamp) + 4 if stamp else 0)
+    shown = lead + dot + title
+    if display_width(shown) > room:
+        left = room - display_width(lead + dot)
+        shown = lead + dot + truncate_to_width(title, left) if left >= 4 else lead
+    return title_rule(shown, width=block_width(width), unicode_style=unicode_style,
+                      title_color=effective_header_color_256(db), right=stamp)
+
+
+def _bot_block_lines(
+    db: Database, viewer: User, speaker: str, block, created_at: str, width: int, *,
+    private: bool = False, caution: str | None = None,
+) -> list[str]:
+    """A bot's titled block drawn like `/who` (`netbbs.net.chat_reply`): the
+    title, then a row per row, a label in the label colour and aligned and
+    its text wrapping under itself. The bot's text is sanitized here,
+    before any styling, although the host already refused controls."""
+    inner = block_width(width)
+    lines = [_bot_block_title(db, viewer, speaker, sanitize_text(block.title), created_at, width, private=private)]
+    if caution:
+        lines.extend(paragraph(caution, width=inner, color=MUTED_COLOR))
+    # Every label is padded to one width, so labelled rows line up across
+    # the unlabelled ones between them, which read as prose from the edge.
+    # The width is table_rows' own cap, so the text keeps its room.
+    labels = [display_width(sanitize_text(label)) for label, _text in block.rows if label]
+    label_width = min(max(labels, default=0), max(8, inner - 1 - MIN_LAST_COLUMN - 2))
+    group: list[tuple[Cell, Cell]] = []
+    for label, text in block.rows:
+        if label:
+            label = sanitize_text(label)
+            padded = label + " " * max(0, label_width - display_width(label))
+            group.append(((padded, LABEL_COLOR), (sanitize_text(text), VALUE_COLOR)))
+            continue
+        lines.extend(table_rows(group, width=inner))
+        group = []
+        lines.extend(paragraph(sanitize_text(text), width=inner, color=VALUE_COLOR))
+    lines.extend(table_rows(group, width=inner))
+    return lines
+
+
+def _block_speaker(db: Database, message: ChannelMessage) -> str:
+    """The bot a channel block is by, as its chat line names it."""
+    link_speaker = _link_speaker(db, message)
+    if link_speaker is not None:
+        return "@".join(link_address_parts(sanitize_text(link_speaker[0]), sanitize_text(link_speaker[1])))
+    return sanitize_text(message.author_label)
+
+
+def _channel_block_title(
+    db: Database, channel: Channel, viewer: User, message: ChannelMessage, width: int, *, page: str | None = None,
+) -> str:
+    return _bot_block_title(db, viewer, _block_speaker(db, message), sanitize_text(message.block.title),
+                            message.created_at, width, page=page)
+
+
 def _render_channel_message(
-    db: Database, channel: Channel, viewer: User, message: ChannelMessage, *, self_message: bool = False
+    db: Database, channel: Channel, viewer: User, message: ChannelMessage, *, self_message: bool = False,
+    width: int = 80,
 ) -> str:
     """
     Render one `"message"`/`"action"`/`"join"`/`"leave"` `ChannelMessage`
@@ -1771,6 +1870,10 @@ def _render_channel_message(
     See `_colored_around` for how each line safely incorporates
     `_message_author_label`'s output, which may or may not already
     carry its own embedded color.
+
+    A bot's titled block (issue #1373) comes back as `_BlockLines`, drawn
+    at `width`: the same filters, the same identity caution, one renderer
+    for live and replay.
     """
     origin = bot_origin(db, message)
     if not bot_message_visible(db, channel, message):
@@ -1840,19 +1943,24 @@ def _render_channel_message(
         message.author_fingerprint
         or (durable_author[1] if durable_author is not None else None)
     )
+    caution = None
     if author_fingerprint:
         identity_notice = latest_identity_observation(db, author_fingerprint)
         if identity_notice is not None and identity_notice.severity == "security":
-            warning = colored(
-                "Caution: this familiar node name has a different cryptographic identity. ",
-                fg_color=MUTED_COLOR,
-                bold=True,
-            )
+            caution = "Caution: this familiar node name has a different cryptographic identity."
+            warning = colored(caution + " ", fg_color=MUTED_COLOR, bold=True)
             line = warning + line
-    return format_with_preference(db, viewer, line, message.created_at)
+    rendered = format_with_preference(db, viewer, line, message.created_at)
+    if message.block is not None and message.kind == "message" and origin is not None:
+        return _BlockLines(rendered, _bot_block_lines(
+            db, viewer, _block_speaker(db, message), message.block, message.created_at, width, caution=caution,
+        ))
+    return rendered
 
 
-def _render_scrollback_message(db: Database, channel: Channel, user: User, message: ChannelMessage) -> str:
+def _render_scrollback_message(
+    db: Database, channel: Channel, user: User, message: ChannelMessage, *, width: int = 80,
+) -> str:
     """
     Render a persisted `ChannelMessage` for replay on join, matching the
     live formatting `_chat_loop` itself uses for the same kind of event —
@@ -1878,7 +1986,7 @@ def _render_scrollback_message(db: Database, channel: Channel, user: User, messa
     events happen to be timestamped.
     """
     if message.kind in ("message", "action", "join", "leave"):
-        return _render_channel_message(db, channel, user, message, self_message=False)
+        return _render_channel_message(db, channel, user, message, self_message=False, width=width)
     if message.kind == "nick":
         line = colored(
             f"*** {sanitize_text(message.author_label)} {sanitize_text(message.body)}",
@@ -1898,14 +2006,24 @@ def _render_scrollback_message(db: Database, channel: Channel, user: User, messa
     return format_with_preference(db, user, line, message.created_at)
 
 
-def _render_all_scrollback(db: Database, channel: Channel, user: User, messages: list[ChannelMessage]) -> list[str]:
+def _render_all_scrollback(
+    db: Database, channel: Channel, user: User, messages: list[ChannelMessage], *, width: int = 80,
+) -> list[str]:
     """Bundles rendering the whole scrollback replay into one `lane.run`
     call rather than one per message -- the same "one round
-    trip, not N" reasoning as every other bundled loop in this module."""
+    trip, not N" reasoning as every other bundled loop in this module.
+
+    One entry per event: a bot's block is one `_BlockLines` entry, written
+    line by line (`_rendered_lines`) and drawn unpaged, so a replay of
+    several blocks is never a pager inside the history (issue #1373)."""
     rendered = []
     for message in messages:
-        line = _render_scrollback_message(db, channel, user, message)
+        line = _render_scrollback_message(db, channel, user, message, width=width)
         if not line:
+            continue
+        if isinstance(line, _BlockLines):
+            # The block is whole even when its fallback body was cut.
+            rendered.append(line)
             continue
         if message.body_truncated:
             line += colored(" [truncated in join snapshot]", fg_color=MUTED_COLOR)
@@ -1965,15 +2083,16 @@ async def _deliver_remote_scrollback_snapshot(
     ]
     if not messages:
         return
-    rendered = await lane.run(_render_all_scrollback, channel, user, messages)
+    rendered = await lane.run(_render_all_scrollback, channel, user, messages, width=terminal_width)
     if not rendered:
         return
     await deliver(
         f"{badge('HISTORY')} "
         + colored("Recent activity from this channel's origin", fg_color=MUTED_COLOR)
     )
-    for line in rendered:
-        await deliver(line)
+    for entry in rendered:
+        for line in _rendered_lines(entry):
+            await deliver(line)
     await deliver(
         colored(
             f"{len(rendered)} recent event{'s' if len(rendered) != 1 else ''} from the origin",
@@ -4558,10 +4677,30 @@ def _bot_notice_line(notice: BotNotice) -> str:
             + colored(text, fg_color=MUTED_COLOR))
 
 
-def _render_bot_private_answer(db: Database, viewer: User, answer: BotPrivateAnswer) -> str:
+def _answer_speaker(db: Database, answer: BotPrivateAnswer) -> str:
+    if answer.node_fingerprint is None:
+        return sanitize_text(answer.label)
+    return "@".join(link_address_parts(
+        sanitize_text(answer.label), sanitize_text(short_node_name(db, answer.node_fingerprint))
+    ))
+
+
+def _private_block_title(db: Database, viewer: User, answer: BotPrivateAnswer, width: int, *,
+                         page: str | None = None) -> str:
+    return _bot_block_title(db, viewer, _answer_speaker(db, answer), sanitize_text(answer.block.title),
+                            answer.created_at, width, private=True, page=page)
+
+
+def _render_bot_private_answer(db: Database, viewer: User, answer: BotPrivateAnswer, *, width: int = 80) -> str:
     """A bot's private answer (issue #1372): a timestamped bot line, badge
     and speaker as a public bot line has them, then `(to you)` so it is not
-    taken for public speech, then the body in the chat body colour."""
+    taken for public speech, then the body in the chat body colour. A
+    private block (issue #1373) comes back as `_BlockLines`, its title's
+    tail reading `to you`."""
+    if answer.block is not None:
+        return _BlockLines(sanitize_text(answer.text), _bot_block_lines(
+            db, viewer, _answer_speaker(db, answer), answer.block, answer.created_at, width, private=True,
+        ))
     accent = effective_accent_color_256(db)
     if answer.node_fingerprint is not None:
         name, node = link_address_parts(
@@ -6540,11 +6679,14 @@ async def _chat_loop(
             await session.write_line(gates_note)
 
         scrollback = await lane.run(get_scrollback, channel)
-        rendered_scrollback = await lane.run(_render_all_scrollback, channel, user, scrollback)
+        rendered_scrollback = await lane.run(
+            _render_all_scrollback, channel, user, scrollback, width=session.terminal_width,
+        )
         if rendered_scrollback:
             await session.write_line(f"\r\n{badge('HISTORY')} " + colored("Recent channel activity", fg_color=MUTED_COLOR))
-            for line in rendered_scrollback:
-                await session.write_line(line)
+            for entry in rendered_scrollback:
+                for line in _rendered_lines(entry):
+                    await session.write_line(line)
             # Even bounded persistence is a different
             # promise than pure ephemeral chat — worth surfacing explicitly
             # rather than leaving as an internal implementation detail.
@@ -6807,6 +6949,34 @@ async def _chat_loop(
                 return
             await deliver_many(await hub_reply_page(answer))
 
+        async def deliver_block(
+            lines: Sequence[str], later_title: Callable[[int, int, int], Awaitable[str]],
+        ) -> None:
+            """A bot's titled block (issue #1373), paged like a long command
+            reply when taller than the chat area: `later_title(page, pages,
+            width)` titles a later page. Shown whole when the pager is
+            already holding another answer, as `_write_block` does."""
+            if (session.terminal_height < _PINNED_UI_MIN_HEIGHT or len(lines) - 1 <= _hub_reply_capacity(session)
+                    or hub_reply.held is not None or hub_reply.waiting):
+                await deliver_many(lines)
+                return
+
+            async def title(page: int, pages: int, width: int) -> str:
+                return lines[0] if page == 1 else await later_title(page, pages, width)
+
+            async def footer(page: int, pages: int, width: int, waiting: str | None) -> str:
+                return await lane.run(_render_hub_reply_footer, user, page, pages, width, next_label=waiting)
+
+            held = _HeldPages(list(lines[1:]), title, footer)
+            page = await _next_held_page(session, held, waiting=None)
+            if hub_reply.held is not None or hub_reply.waiting:
+                await deliver_many(lines)  # a command reply took the pager meanwhile
+                return
+            hub_reply.retire_frame(session)
+            hub_reply.held = held if held.rows else None
+            hub_reply.frame = held.frame_lines
+            await deliver_many(page)
+
         async def receive_loop() -> None:
             while True:
                 quiet = hub_reply.quiet_in()
@@ -6849,8 +7019,14 @@ async def _chat_loop(
                     # below does for these same event kinds
                     # (design doc) -- join/leave affect the
                     # participant count every repaint shows regardless.
-                    rendered = await lane.run(_render_channel_message, channel, user, message, self_message=False)
+                    rendered = await lane.run(_render_channel_message, channel, user, message, self_message=False,
+                                              width=session.terminal_width)
                     if not rendered:
+                        continue
+                    if isinstance(rendered, _BlockLines):
+                        # Issue #1373: a bot's block; bot lines never ring.
+                        await deliver_block(rendered.lines, lambda page, pages, width, message=message: lane.run(
+                            _channel_block_title, channel, user, message, width, page=f"{page}/{pages}"))
                         continue
                     ring = await lane.run(_mention_bell_sender, channel, user, message)
                     await deliver(rendered, repaint_status=True, ring=ring)
@@ -6912,7 +7088,13 @@ async def _chat_loop(
                     # Issue #1372: content for this session alone. Kept in
                     # its lines like /msg; no bell, as the hub's answer has
                     # none: it answers the caller's own question.
-                    await deliver(await lane.run(_render_bot_private_answer, user, message))
+                    rendered = await lane.run(_render_bot_private_answer, user, message,
+                                              width=session.terminal_width)
+                    if isinstance(rendered, _BlockLines):
+                        await deliver_block(rendered.lines, lambda page, pages, width, answer=message: lane.run(
+                            _private_block_title, user, answer, width, page=f"{page}/{pages}"))
+                    else:
+                        await deliver(rendered)
                     continue
                 await deliver(message)
 

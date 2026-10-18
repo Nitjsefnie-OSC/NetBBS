@@ -33,6 +33,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
+from netbbs.chat.blocks import BotBlock, block_from_json
 from netbbs.chat.channels import Channel
 from netbbs.chat.bots import bot_origin
 from netbbs.config import get_config, set_config
@@ -96,6 +97,10 @@ class ChannelMessage:
     # author could not be told apart from a later holder of the name, which
     # resolves to nobody (`netbbs.net.chat_flow._resolve_message_author`).
     author_user_id: int | None = None
+    # Issue #1373: a bot's titled block, drawn in place of `body`, which
+    # then holds the host-built fallback line. `None` for every other line,
+    # and for a malformed stored or received block (the fallback shows).
+    block: BotBlock | None = None
 
 
 def get_scrollback_limit(db: Database) -> int:
@@ -144,6 +149,7 @@ def record_message(
     mrc_nick_color: int | None = None,
     mrc_handle: str | None = None,
     author_user_id: int | None = None,
+    block: BotBlock | None = None,
 ) -> ChannelMessage:
     """
     Append an event to `channel`'s scrollback and trim it back down to the
@@ -209,6 +215,10 @@ def record_message(
         db.connection.execute(
             "UPDATE channel_messages SET author_user_id = ? WHERE id = ?", (author_user_id, message_id),
         )
+    if block is not None:
+        # Issue #1373: `body` is the block's fallback line, so search and
+        # older nodes see that; the block itself is what is drawn.
+        db.connection.execute("UPDATE channel_messages SET block_json = ? WHERE id = ?", (block.to_json(), message_id))
     # Capture *this* row now, inside the transaction and before the trim:
     # never "the channel's newest row" (a background writer -- issue
     # #275's MRC bridge on the background lane -- can land another row
@@ -300,4 +310,5 @@ def _row_to_message(row: sqlite3.Row) -> ChannelMessage:
         mrc_handle=row["mrc_handle"] if "mrc_handle" in columns else None,
         author_kind=row["author_kind"] if "author_kind" in columns else "user",
         author_user_id=row["author_user_id"] if "author_user_id" in columns else None,
+        block=block_from_json(row["block_json"]) if "block_json" in columns else None,
     )

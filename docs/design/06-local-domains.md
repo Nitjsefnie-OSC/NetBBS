@@ -601,7 +601,8 @@ protocol is `docs/NetBBS-bot-api.md`. What a caller sees of one:
   `[BOT] Name.bot · <title>`, up to 12 rows of an optional label and a text
   of up to 200 characters, costing one line of the channel's hourly limit.
   The host builds a plain fallback line from it, which older nodes show and
-  search matches. A private block's title ends `to you`. Reminders,
+  search matches. A private block's title ends `to you`. A live block taller
+  than the chat area is paged; join replay draws blocks whole, unpaged. Reminders,
   announcements and other unprompted lines stay one line (§16, issue #1373).
 - **Lines held for a caller.** A bot may ask the host to say a line when one
   caller next joins the channel; the host holds it in its own table, with an

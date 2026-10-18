@@ -128,6 +128,8 @@ class Baud(botkit.Bot):
         command = command.lower()
         if command in {"", "help"}:
             opening = self.phrase("help", msg.name).strip()
+            if self.blocks:
+                return self._help_block(msg, opening)
             msg.reply((opening + " " if opening else "") + "help; remind <1s-30d> <text>; reminders; cancel <id>. "
                       + ("stats; " if "stats" in self.queries else "")
                       + ("seen <local-account>; " if "seen" in self.queries else "") +
@@ -158,6 +160,21 @@ class Baud(botkit.Bot):
         else:
             known = ["help", "remind", "reminders", "cancel", *sorted(self.queries & {"seen", "stats"})]
             msg.reply(f"I know {', '.join(known[:-1])} and {known[-1]}. Conversation is not enabled.")
+
+    def _help_block(self, msg, opening):
+        # Issue #1373: the command list as a titled block; the opening
+        # phrase heads it, and the line form above is for an older host.
+        rows = [opening] if opening else []
+        rows += [("help", "this list"), ("remind <1s-30d> <text>", "a reminder here, later, shown publicly"),
+                 ("reminders", "your reminders here"), ("cancel <id>", "cancel one of yours")]
+        if "stats" in self.queries:
+            rows.append(("stats", "who is on, uptime"))
+        if "seen" in self.queries:
+            rows.append(("seen <local-account>", "when someone was last on"))
+        rows.append(("/sysop <reason>", "page staff"))
+        rows.append("Conversation is enabled; reset clears your temporary context here." if self.model_conversation
+                    else "No language model is enabled.")
+        msg.reply_block("Commands", rows)
 
     def _own(self, msg):
         return [r for r in self.state["reminders"] if r["user"] == msg.caller["id"]]

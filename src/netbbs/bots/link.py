@@ -12,11 +12,12 @@ from collections import OrderedDict
 import logging
 
 from netbbs.bots.registry import BotError, active_labels, allowed_channel, bot_for_label, list_bots, channel_readers
+from netbbs.chat.blocks import block_from_wire
 from netbbs.chat.bots import BotNotice, BotPrivateAnswer, remote_bot_visible
 from netbbs.link.channels import channel_origin_fingerprint, is_channel_linked
 from netbbs.link.events import (
     CHAT_BOTS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY, CHAT_BOT_PRIVATE_CAPABILITY,
-    descriptor_has_capability,
+    CHAT_BOT_BLOCKS_CAPABILITY, descriptor_has_capability,
 )
 from netbbs.link.enforcement import LinkPolicyAction, decide_node_action
 from netbbs.link.node_profiles import identity_for_fingerprint, link_address_label
@@ -149,8 +150,13 @@ class BotLink:
                     # Checked again on receipt (issue #1372): a mute or
                     # `/bots local|none` set while the bot worked hides it.
                     if await self.lane.run(remote_bot_visible, channel, label, fingerprint):
+                        # Issue #1373: a private block, kept only from a host
+                        # advertising blocks; a malformed one shows its text.
+                        block = (block_from_wire(private.get("block"))
+                                 if self.capable(fingerprint, CHAT_BOT_BLOCKS_CAPABILITY) else None)
                         await self.hub.send_to(channel.name, participant_id, BotPrivateAnswer(
-                            label, sanitize_text(private), utc_now_iso(), node_fingerprint=fingerprint))
+                            label, sanitize_text(private["text"]), utc_now_iso(), node_fingerprint=fingerprint,
+                            block=block))
         except asyncio.CancelledError:
             reason = "Bot requests stopped before the remote bot replied."
             raise
@@ -176,8 +182,7 @@ class BotLink:
         if frame.type == "bot_result":
             pending = self.pending.get(frame.payload["request_id"])
             if pending and pending[0] == session.remote_fingerprint and not pending[1].done():
-                answer = frame.payload.get("private")
-                pending[1].set_result((frame.payload["error"], answer["text"] if answer else None))
+                pending[1].set_result((frame.payload["error"], frame.payload.get("private")))
         elif frame.type == "bot_request":
             if "access" in frame.payload and not self.capable(session.remote_fingerprint, CHAT_BOT_CALLERS_CAPABILITY):
                 raise LinkProtocolError("Peer has not advertised chat_bot_callers_v1")
@@ -195,20 +200,30 @@ class BotLink:
         asked_privately = frame.payload.get("private") is True
         private_reachable = self.capable(session.remote_fingerprint, CHAT_BOT_PRIVATE_CAPABILITY)
 
+        blocks = self.capable(session.remote_fingerprint, CHAT_BOT_BLOCKS_CAPABILITY)
+
         async def completed(error, message=None, private=None):
             # The requester may reach the bot while the channel origin is
             # offline. Deliver its public reply directly too; the bridge's
             # ordinary author/time/body dedup hides any origin-relayed copy.
+            # A block (issue #1373) rides both copies to a node that takes
+            # one, so whichever arrives first is drawn as the block.
             if message is not None:
                 await self._send(session, build_channel_message_frame(
                     frame.payload["channel_id"], message.author_label, message.author_label,
                     message.body, message.created_at,
+                    block=message.block.to_wire() if blocks and message.block is not None else None,
                 ))
             # A private answer travels only inside the result (issue #1372),
             # never as a direct message or a channel event.
+            answer = None
+            if private is not None:
+                answer = {"text": private.text}
+                if blocks and private.block is not None:
+                    answer["block"] = private.block.to_wire()
             await self._send(session, build_bot_frame("bot_result", {
-                "request_id": frame.message_id, "error": "" if private is not None else error[:120],
-                **({"private": {"text": private}} if private is not None else {}),
+                "request_id": frame.message_id, "error": "" if answer is not None else error[:120],
+                **({"private": answer} if answer is not None else {}),
             }))
 
         def authorize(db):
