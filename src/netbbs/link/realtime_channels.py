@@ -125,8 +125,13 @@ def _snapshot_entries(db: Database, channel: Channel) -> list[dict]:
     # the origin's fingerprint would apply the subscriber's trust policy
     # to the wrong identity. Filtered *before* the cap, so a chatty MRC
     # room cannot consume the whole snapshot budget with nothing to show.
+    # Issue #1380: a `daybreak` line -- the midnight message, or a scheduled
+    # announcement without a Linked approval -- is this node's own local
+    # notice and never crosses Link, so it is not exported either. Older
+    # origins did export the midnight line; subscribers still accept it.
     eligible = [
-        message for message in get_scrollback(db, channel) if message.external_source is None
+        message for message in get_scrollback(db, channel)
+        if message.external_source is None and message.kind != "daybreak"
     ]
     for message in eligible[-_MAX_SCROLLBACK_SNAPSHOT_ENTRIES:]:
         author_node_fingerprint: str | None = None

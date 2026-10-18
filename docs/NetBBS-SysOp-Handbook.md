@@ -1260,7 +1260,7 @@ Creating a resource uses the same screen, empty and without actions.
 | --- | --- |
 | **Message boards** | Set read/write levels, moderation, retention, and gates. Pending posts remain in an approval queue. Edits retain revision identity. |
 | **File areas** | Set access, upload policy, size/retention rules, and moderation. Uploads may include a description extracted from `FILE_ID.DIZ`. A remote catalogue entry is metadata; fetching its bytes is a separate action. |
-| **Chat channels** | Set join gates, visibility, invitations, and moderation. Hidden or invite-only channels need more than a sufficient account level. |
+| **Chat channels** | Set join gates, visibility, invitations, and moderation. Hidden or invite-only channels need more than a sufficient account level. Schedule notices into them with **Announcements** (below). |
 | **Communities** | Group related resources and provide inherited defaults. A Community is not an automatic grant to every resource inside it. |
 | **Doors** | Attach registered games to a Community, or to none. See [Door games](#door-games). |
 
@@ -1287,6 +1287,36 @@ ordinary copy of its own:
 > [!TIP]
 > Inspect effective gates on child resources before changing a Community's
 > shared default.
+
+#### Schedule announcements in chat
+
+The node can say a short notice in a channel on a schedule, with no bot:
+a net meeting every Friday, a tournament on the first Saturday of the month,
+a maintenance window once.
+
+1. Open **Content ▸ Chat channels ▸ Announcements** and press <kbd>C</kbd>
+   **Create**.
+2. Choose the **Channel** and type the **Text** (up to 160 characters). It is
+   shown muted as `Announcement: ` and your text.
+3. Set **Repeat** to once, daily, weekly or monthly, and fill in the fields
+   for it: a **Date** as `2026-10-23`, the **Weekdays**, or the **Week of
+   month** (first to fourth, or last) and **Weekday**.
+4. Set the **Time** as `19:00`, in the node's display timezone. The line
+   above the fields shows when it is next said.
+5. Press <kbd>S</kbd> **Save**.
+
+- It is recorded in the channel even when no one is there, so a caller who
+  arrives later finds it in the scrollback.
+- A channel holds at most 8 announcements, and Save refuses one that would
+  come within an hour of another in the same channel.
+- A slot the node misses (it was not running) is skipped, not said late.
+- <kbd>D</kbd> **Delete selected** removes one. A once announcement already
+  said stays listed as `done` until you delete it.
+
+> [!NOTE]
+> In a Linked channel an announcement stays on this node unless you turn on
+> **Linked approval**. Save then asks you to confirm, and the line goes out
+> to other nodes as a line by your account, like one you typed there.
 
 #### Order boards, file areas and Communities
 

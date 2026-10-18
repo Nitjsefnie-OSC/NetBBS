@@ -485,6 +485,13 @@ Choose a chat channel to join the conversation. Type a line and press
 > newest line, or by sending a line. Your terminal's own scrollback jumps back
 > to the bottom whenever chat redraws, so use these keys instead.
 
+Gray lines with no name in front are the BBS itself speaking: a good-morning
+line at midnight, and announcements the SysOp has scheduled, such as
+`Announcement: Net meeting tonight at 20:00 in #main.` They stay in the
+channel's scrollback, so you see them even if you arrive later. In a channel
+shared with linked BBSes, a SysOp's announcement for every BBS appears as an
+ordinary line by that SysOp instead.
+
 #### Aliases and names from other BBSes
 
 An alias is always shown with the username beside it, as

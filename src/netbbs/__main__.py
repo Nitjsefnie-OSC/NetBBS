@@ -57,6 +57,7 @@ from netbbs.link.trust import maintain_trust_state
 from netbbs.managed_dns.state import (
     ListenerFacts, set_admin_token, set_local_listeners, set_node_fingerprint, set_service_url,
 )
+from netbbs.net.chat_announcements import AnnouncementLink, run_announcement_scheduler
 from netbbs.net.daybreak import run_daybreak_announcer
 from netbbs.net.login_flow import handle_session, handle_ssh_session
 from netbbs.net.maintenance import MaintenanceMode
@@ -802,6 +803,22 @@ async def run(
     # pass would otherwise trust the path a previous start recorded (Codex
     # review).
     backup_schedule_task: asyncio.Task | None = None
+    # Issue #1380: the SysOp's scheduled chat announcements, started beside
+    # the backup scheduler once Link (which a Linked announcement uses) is
+    # built. Graceful degrade, as daybreak: a failure is logged and the
+    # announcements stop for this uptime.
+    announcement_task: asyncio.Task | None = None
+
+    def _log_announcement_failure(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            _logger.error(
+                "announcement scheduler task failed -- scheduled chat announcements will not "
+                "run again this node uptime",
+                exc_info=exc,
+            )
 
     def _log_backup_schedule_failure(task: asyncio.Task) -> None:
         if task.cancelled():
@@ -1419,6 +1436,17 @@ async def run(
         backup_schedule_task = asyncio.create_task(run_backup_scheduler(config.db_path, config.identity_dir))
         backup_schedule_task.add_done_callback(_log_backup_schedule_failure)
 
+        def _announcement_link() -> AnnouncementLink | None:
+            if link_node is None:
+                return None
+            return AnnouncementLink(node_identity=lambda: link_node.identity,
+                                    realtime_bridge=link_realtime_bridge)
+
+        announcement_task = asyncio.create_task(
+            run_announcement_scheduler(background_lane, hub, link=_announcement_link)
+        )
+        announcement_task.add_done_callback(_log_announcement_failure)
+
         # Issue #466: after the listeners are bound, not before. A second
         # NetBBS started against the same state directory fails here, on the
         # port already owned by the running one -- and a `with_node` companion
@@ -1639,6 +1667,7 @@ async def run(
         await _drain_immediately(daybreak_task)
         await _drain_immediately(update_check_task)
         await _drain_immediately(backup_schedule_task)
+        await _drain_immediately(announcement_task)
         # A single heartbeat call is quick, idempotent, and retry-safe
         # (worst case, cutting it off mid-flight just means "this pass's
         # heartbeat didn't complete, the next one retries") -- none of

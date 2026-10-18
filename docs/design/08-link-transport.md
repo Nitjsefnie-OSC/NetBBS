@@ -869,7 +869,10 @@ A freshly-subscribing peer also receives a bounded, ephemeral
 rendered once and never durably stored on the subscribing side (§16,
 issue #194) — a shrunk window before the existing async catch-up path
 below fills in what a live-only subscribe would otherwise miss, not a
-new durability promise. The first vertical still does not offer multiple
+new durability promise. It never carries a `daybreak` line -- the midnight
+message or a scheduled announcement without a Linked approval, both this
+node's own local notices (§6.3, issue #1380); a subscriber still accepts one
+from an older origin. The first vertical still does not offer multiple
 background channel subscriptions per caller (issue #159, closed — decided
 against, not a gap); live private messages and relayed sessions arrived
 with §8.10.3 (issue #168). A disconnect does not queue or replay live

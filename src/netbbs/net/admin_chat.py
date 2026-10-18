@@ -185,11 +185,18 @@ async def _channel_menu(
             await session.write_line("")
             await _list_channels_screen(session, lane, actor, link_context=link_context, mrc_bridge=mrc_bridge, chat_hub=chat_hub)
             await _draw_channel_menu(session, description_level, redraw_in_place, unicode_style, collapsed, header_color)
+        elif choice == "a":
+            # Issue #1380: scheduled announcements, across every channel.
+            from netbbs.net.admin_announcements import announcements_screen
+
+            await session.write_line("")
+            await announcements_screen(session, lane, actor)
+            await _draw_channel_menu(session, description_level, redraw_in_place, unicode_style, collapsed, header_color)
         elif choice == HELP_KEY:
             await show_menu_help(
                 session, "Chat channels help", _CHANNEL_MENU,
                 about="Add chat channels and change or remove existing ones. Pick a channel from the "
-                      "list to edit it.",
+                      "list to edit it. Announcements are notices the node says in a channel on a schedule.",
                 header_color=header_color, unicode_style=unicode_style,
             )
             await _draw_channel_menu(session, description_level, redraw_in_place, unicode_style, collapsed, header_color)
@@ -200,6 +207,7 @@ async def _channel_menu(
 _CHANNEL_MENU = (
     MenuEntry(label=menu_key("C", "reate"), brief="Add a new chat channel"),
     MenuEntry(label=menu_key("L", "ist"), brief="Browse and edit channels"),
+    MenuEntry(label=menu_key("A", "nnouncements"), brief="Scheduled notices in channels"),
     MenuEntry(label=menu_key("B", "ack"), brief="Return to the Content menu"),
 )
 
