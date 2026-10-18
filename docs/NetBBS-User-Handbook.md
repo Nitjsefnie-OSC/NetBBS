@@ -1001,9 +1001,11 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
 - Reminders and replies are public in that channel.
 - Reminders survive restarts, though mutes or limits can delay them.
 - Ordinary conversation is not sent to an addressed-only bot.
-- Depending on what your SysOp allows, Baud may also answer `stats` and
-  `seen <account>`, greet people who join, or announce new posts and files;
-  its `help` lists what it offers here.
+- Depending on what your SysOp allows, Baud may also answer `stats`,
+  `seen <account>` and `top <game>` (a game's top ten, see
+  [Game results in chat](#game-results-in-chat)), greet people who join, or
+  announce new posts, files and game results; its `help` lists what it offers
+  here.
 - In a Linked channel, `Baud.bot@Node: help` asks a bot on another node.
 
 > [!NOTE]
@@ -1190,6 +1192,27 @@ every career: open Pilot Record in the game and press <kbd>A</kbd>.
 > [!TIP]
 > Your SysOp controls the time allowed and can help with a missing or locked
 > save.
+
+### Game results in chat
+
+Your SysOp may let Baud announce what players earn in a game -- a new rank, a
+top achievement, a season's medals, a captured exchange, a perfect round -- in
+a chat channel, and answer `!top <game>` with the game's top ten:
+
+```
+[20:14] [BOT] Baud.bot: Nib reached Merchant Captain in Voidrunner.
+```
+
+Only what you earn while playing is announced, never your earlier play.
+**Profile ▸ Game results announced in chat** decides whether Baud may name you:
+
+1. Open <kbd>P</kbd> **Profile** and choose **Game results announced in chat**.
+2. Pick **no**. None of your results is announced from then on, and `!top`
+   leaves you out. Pick **yes** to be included again.
+
+> [!NOTE]
+> It is on by default. The games themselves, and their own Halls of Fame, are
+> not affected.
 
 ## Preferences and help
 

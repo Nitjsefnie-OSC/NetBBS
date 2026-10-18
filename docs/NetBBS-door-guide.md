@@ -977,11 +977,56 @@ door cannot use up its board posts or the reverse.
   allowlist. The mute is announced in the channel and logged like any other,
   and the door's outbound screen shows it next to the channel.
 
+### Letting it report game events
+
+A door can also report what callers earn in it -- a rank, a top achievement,
+a season's medals, a captured exchange, a perfect round -- and keep a top-ten
+table. A chat bot such as Baud then announces those in a channel, and answers
+`!top <door>` with the table:
+
+```
+[20:14] [BOT] Baud.bot: Nib reached Merchant Captain in Voidrunner.
+[21:05] [BOT] Baud.bot: Season 4 of War Dialer closed: gold Vex,
+        silver Quill, bronze Nib.
+```
+
+1. On the door's `[O]utbound` screen (the hook must be on), press
+   `[E]vents on`. Off by default, and separate from posting: a door needs no
+   board or channel to report events.
+2. `[G]ame events per hour` sets its own ceiling, 12 an hour unless you change
+   it.
+3. Under **Content ▸ Open chat bots** in the SysOp console, edit the bot: add the door under
+   **Door-event sources**, choose an **Announcement channel**, and switch on
+   **Baud door announcements**. For `!top`, switch on **Grant door standings
+   query**.
+
+> [!NOTE]
+> NetBBS words every line; a door supplies only what happened and to whom.
+> A caller who switches **Game results announced in chat** off in their
+> profile is never named and is left out of `!top`. Events are announced only
+> while every caller may play the door (minimum play level 0), and a guest's
+> or a rehearsal's play is never announced.
+
+`[E]vents off` stops announcements and `!top` for the door at once, keeping
+what it reported; `[T]urn off` releases the events and the table with the
+rest of the hook.
+
+**What a door reports (door API 5).** `door_info.json` carries
+`outbound.events` while events are on: the five types, `events_per_hour`,
+`title_max` (80) and `standings_rows` (10). A request in the drop directory is
+`{"event": {"type": ..., "user_id": ..., "title": ...}}`, where `type` is
+`rank`, `achievement`, `medal`, `capture` or `perfect`; a `medal` names up to
+three callers as `user_ids`, gold first. A standings snapshot is
+`{"standings": {"title": ..., "rows": [{"user_id": ..., "value": ...,
+"label": ...}]}}`, at most 10 rows, each replacing the last. The full
+contract, with each type's sentence, the limits and the receipts, is in the
+[developer handbook](NetBBS-Developer-Handbook.md#game-events-and-standings).
+
 ### Writing a door that uses it
 
 See the [developer handbook's outbound posting contract](NetBBS-Developer-Handbook.md#door-outbound-posting)
-for request/result JSON (board posts and chat lines), timing, failure
-behavior, and limits.
+for request/result JSON (board posts, chat lines, game events and standings),
+timing, failure behavior, and limits.
 
 
 ## DOS prerequisites

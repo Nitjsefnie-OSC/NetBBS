@@ -325,10 +325,10 @@ def test_publication_rechecks_consent_the_door_gate_and_the_switch(db, sysop, al
     with pytest.raises(BotError, match="names no caller"):
         publish(db, bot.id, channel.name, "x", source_reference=reference)
     set_game_results_announced(db, alice, True)
-    set_user_disabled(db, alice, True, changed_by=sysop)
+    disabled = set_user_disabled(db, alice, True, changed_by=sysop)
     with pytest.raises(BotError, match="names no caller"):
         source_event(db, bot.id, reference)
-    set_user_disabled(db, alice, False, changed_by=sysop)
+    set_user_disabled(db, disabled, False, changed_by=sysop)
     set_events_enabled(db, door, False, changed_by=sysop)
     with pytest.raises(BotError, match="no longer announced"):
         source_event(db, bot.id, reference)
@@ -391,11 +391,16 @@ def test_a_real_door_reports_and_baud_announces_it(db, lane, hub, presence, syso
         try:
             await eventually(lambda: bot.id in runtime.running_ids)
             assert (await _run(FakeSession(), lane, door, alice)).reason == "exited"
-            await next_line(queue, "alice reached Merchant Captain in Voidrunner.")
-            await next_line(queue, 'alice earned the achievement "Untouched" in Voidrunner.')
-            await next_line(queue, "alice captured the Kowloon exchange in Voidrunner.")
-            await next_line(queue, "alice answered every question in a Voidrunner round (Arcade Classics).")
-            await next_line(queue, "Season 4 of Voidrunner closed: gold alice, silver bob.")
+            # The drain answers requests in name order, so the lines may
+            # come in any order.
+            expected = {"alice reached Merchant Captain in Voidrunner.",
+                        'alice earned the achievement "Untouched" in Voidrunner.',
+                        "alice captured the Kowloon exchange in Voidrunner.",
+                        "alice answered every question in a Voidrunner round (Arcade Classics).",
+                        "Season 4 of Voidrunner closed: gold alice, silver bob."}
+            async with asyncio.timeout(30):
+                while expected:
+                    expected.discard(getattr(await queue.get(), "body", None))
             presence.enter(bob.username)
             message = record_message(db, channel, kind="message", author_label=bob.username, body="!top voidrunner")
             assert await runtime.addressed(channel, bob, message, pid) is None

@@ -33,8 +33,9 @@ TEMPERAMENTS = ("friendly", "terse", "retro")
 QUERIES = ("stats", "seen", "top")
 # Issue #1381: a phrase override is checked as the longest local caller name
 # would expand it, so "<name>: <phrase>" still fits one 500-character line.
-# The help opening shares its line with Baud's fixed command list (up to 226
-# characters with every grant), so it gets less room than a standalone phrase.
+# The help opening shares its line with Baud's fixed command list (up to 266
+# characters with every grant, `top` included: exactly 500 with a 32-character
+# name), so it gets less room than a standalone phrase.
 MAX_PHRASE = 400
 MAX_PHRASE_LENGTHS = {"greeting": MAX_PHRASE, "help": 200, "busy": MAX_PHRASE, "limit": MAX_PHRASE}
 NAME_ALLOWANCE = 32

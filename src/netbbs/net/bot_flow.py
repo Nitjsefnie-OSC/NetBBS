@@ -340,14 +340,11 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             switch("greetings", "Baud greetings", "Greet live joins in explicitly granted presence-event channels. Subject to the ordinary output limit and mutes.", "Greetings and announcements"),
             resource_spec("boards", "Board-event sources", "Select public boards. Grants new approved post titles only; inherited Community restrictions are checked. No post bodies.", section="Greetings and announcements"),
             resource_spec("files", "File-event sources", "Select public file areas. Grants newly approved uploads and carried file names. No file contents.", section="Greetings and announcements"),
-            resource_spec("doors", "Door-event sources", "Select doors every caller may play (minimum play level 0). Grants the game events a door reports: ranks, top achievements, medals, captures, perfect rounds. Each door's own Outbound screen must also switch its game events on; callers who switched game results off are never named.", section="Greetings and announcements"),
             resource_spec("announcement_channel", "Announcement channel", "One allowed channel for these source events; choose (none) to clear. Linked destinations need their existing approval. Sources must be readable by everyone.", multiple=False, section="Greetings and announcements"),
             switch("announce_posts", "Baud post announcements", "Requires explicit board-event sources and an announcement channel. Existing posts are not replayed on startup.", "Greetings and announcements"),
             switch("announce_files", "Baud file announcements", "Requires explicit file-event sources and an announcement channel. Subject to channel policy, mutes and output limits.", "Greetings and announcements"),
-            switch("announce_doors", "Baud door announcements", "Requires explicit door-event sources and an announcement channel. NetBBS words each line; events from before the bot started are not replayed.", "Greetings and announcements"),
             switch("stats", "Grant statistics query", "Allows node name, uptime and online human count. Replies are public; no board, file or channel activity is queried.", "Queries and conversation"),
             switch("seen", "Grant last-seen query", "Allows online status and public login/logout times for this node's accounts. Respects hidden session history and never exposes private-channel activity.", "Queries and conversation"),
-            switch("top", "Grant door standings query", "Allows !top <door>: the top ten a door last reported, for doors every caller may play whose game events are on. Callers who switched game results off are left out.", "Queries and conversation"),
             switch("model", "Grant model conversation", "Off by default. Also requires the node's Model settings to be enabled. Only the caller's addressed input and isolated temporary context go to the configured provider, after disclosure. Public replies; reset clears context.", "Queries and conversation"),
             FieldSpec("temperament", "Temperament", lambda d: d["temperament"], choice_field("temperament", list(TEMPERAMENTS)),
                       step=choice_step("temperament", list(TEMPERAMENTS)), section="Behaviour and program",
@@ -364,6 +361,11 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             phrase_spec("busy", "Busy message", "The reply while Baud is saving reminders and its queue is full."),
             phrase_spec("limit", "Reminder-limit message", "The reply when a caller or the bot has reached the "
                         "reminder limit (8 per caller, 48 per bot)."),
+            # Door games (issue #1408) come after Phrases, so the fields
+            # SysOps already know keep their numbers.
+            resource_spec("doors", "Door-event sources", "Select doors every caller may play (minimum play level 0). Grants the game events a door reports: ranks, top achievements, medals, captures, perfect rounds. Each door's own Outbound screen must also switch its game events on; callers who switched game results off are never named.", section="Door games"),
+            switch("announce_doors", "Baud door announcements", "Requires explicit door-event sources and an announcement channel. NetBBS words each line; events from before the bot started are not replayed.", "Door games"),
+            switch("top", "Grant door standings query", "Allows !top <door>: the top ten a door last reported, for doors every caller may play whose game events are on. Callers who switched game results off are left out.", "Door games"),
             # Last, so every other field keeps its number.
             FieldSpec("try", "Try", lambda d: "Run this draft on a scratch node", try_prompt, section="Try",
                       help="Runs this draft, unsaved, against a scratch database, state and channel; type lines "

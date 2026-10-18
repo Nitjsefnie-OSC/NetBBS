@@ -1531,6 +1531,27 @@ allowlist and posting limit.
 > Allowing a linked board can distribute posts to peers; local deletion
 > cannot retrieve copies already received elsewhere.
 
+### Announce door game results
+
+A door can report ranks, top achievements, season medals, captures and perfect
+rounds, and a top-ten table, for a chat bot to announce and for `!top <door>`.
+
+1. Open the door's <kbd>O</kbd> **Outbound** screen and switch the hook on.
+2. <kbd>E</kbd> **Events on**. <kbd>G</kbd> **Game events per hour** sets its
+   own ceiling (12 by default).
+3. In the bot's editor under **Content ▸ Open chat bots**, add the door to
+   **Door-event sources**, choose an **Announcement channel**, and switch on
+   **Baud door announcements**. **Grant door standings query** enables
+   `!top`.
+
+> [!NOTE]
+> NetBBS words each announcement. Only doors every caller may play (minimum
+> play level 0) can be sources, and a door whose level you raise later stops
+> being announced. Callers who switch **Game results announced in chat** off
+> are never named, and are left out of `!top`. Guests and test launches are
+> never announced. The [door guide](NetBBS-door-guide.md#letting-it-report-game-events)
+> has the details.
+
 ## NetBBS Link
 
 NetBBS Link connects independent NetBBS nodes. It carries selected message
@@ -2477,14 +2498,14 @@ Everything else is a separate grant in the editor, off until you set it:
 
 - reading whole channels;
 - joins and leaves (for greetings);
-- statistics and last-seen queries;
-- board and file-area announcements;
+- statistics, last-seen and door standings (`!top`) queries;
+- board, file-area and door-event announcements;
 - Linked participation;
 - model conversation.
 
 The [bot API guide](NetBBS-bot-api.md) describes each. The editor groups its
 fields under Bot, Channels, Greetings and announcements, Queries and
-conversation, Behaviour and program, Phrases, and Try.
+conversation, Behaviour and program, Phrases, Door games, and Try.
 
 ### Manage running bots
 

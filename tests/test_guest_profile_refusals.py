@@ -119,9 +119,10 @@ _SHARED_ENTRIES = {
     "MRC private messages": ("09", []),
     "MRC last seen": ("10", []),
     "name in the callers roll": ("12", []),
-    "MRC nick color": ("21", []),
-    "SSH keys": ("24", []),
-    "password": ("25", []),
+    "game results in chat": ("13", []),
+    "MRC nick color": ("22", []),
+    "SSH keys": ("25", []),
+    "password": ("26", []),
 }
 
 

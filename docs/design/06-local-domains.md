@@ -603,6 +603,13 @@ protocol is `docs/NetBBS-bot-api.md`. What a caller sees of one:
   The host builds a plain fallback line from it, which older nodes show and
   search matches. A private block's title ends `to you`. Reminders,
   announcements and other unprompted lines stay one line (§16, issue #1373).
+- **Door game results.** A bot granted a door as an event source may announce
+  what callers earn there -- a rank, a top-tier achievement, a season's
+  medals, a capture, a perfect round -- in a line NetBBS words, such as
+  `Nib reached Merchant Captain in Voidrunner.` `!top <door>` answers the
+  door's own top ten. Both name only callers whose profile switch "Game
+  results announced in chat" is on (the default), and only for doors every
+  caller may play (§16, issue #1378).
 - **Lines held for a caller.** A bot may ask the host to say a line when one
   caller next joins the channel; the host holds it in its own table, with an
   expiry, and says it only in that channel, once per join of the account.

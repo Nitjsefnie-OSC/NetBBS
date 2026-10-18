@@ -994,7 +994,7 @@ async def _door_outbound_screen(session: Session, lane: DatabaseLane, actor: Use
                           brief="Let it chat in one more channel"),
                 MenuEntry(label=menu_key("D", "rop a channel"), brief="Stop it speaking in one"),
                 MenuEntry(label=menu_key("H", "ourly chat lines"), brief="Chat lines per hour"),
-                MenuEntry(label=menu_key("E", "vents " + ("off" if config.events_enabled else "on")),
+                MenuEntry(label=menu_key("E", "vents off") if config.events_enabled else menu_key("E", "vents on"),
                           brief="Whether it may report game events"),
                 MenuEntry(label=menu_key("G", "ame events per hour"), brief="Events per hour"),
             ]

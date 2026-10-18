@@ -141,7 +141,7 @@ def test_a_real_door_reads_the_effective_limit_not_the_profile_value(db, lane, p
     result = asyncio.run(_run(session, lane, door, player, wall_time_limit_seconds=30))
 
     assert result.reason == "exited"
-    assert b"API 4 LIMIT 30" in session.written, bytes(session.written)
+    assert b"API 5 LIMIT 30" in session.written, bytes(session.written)
 
 
 def test_a_second_launch_does_not_take_a_write_lock(db, tmp_path, player):

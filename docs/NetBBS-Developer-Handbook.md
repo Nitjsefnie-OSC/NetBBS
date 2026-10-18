@@ -235,7 +235,7 @@ Two kinds of registration deliberately get none of it:
 
 | Field | Meaning |
 | --- | --- |
-| `door_api` | Contract version, currently `4`. Refuse a version you do not understand rather than probing for fields. |
+| `door_api` | Contract version, currently `5`. Refuse a version you do not understand rather than probing for fields. |
 | `handle` | The caller's NetBBS handle. |
 | `user_id` | Their stable numeric id on this node, never reused for another account. |
 | `terminal_width`, `terminal_height` | Current geometry; rewritten mid-run if the caller resizes and the door opted in (see the resize section above). |
@@ -246,7 +246,7 @@ Two kinds of registration deliberately get none of it:
 | `node_name` | The node's display name, which a SysOp may change at any time. |
 | `node_id` | A stable, opaque per-node identifier which survives a rename. Key a door's world on this, not on `node_name`. Not a credential. |
 | `session_limit_seconds` | The effective wall-clock cap for *this* launch — the tighter of the profile's limit and any lower bound the launch itself imposes — so a door can warn before it is cut off. Absent when nothing bounds the run. |
-| `outbound` | Present **only** if a SysOp switched this door's outbound hook on: `label` (the name its posts appear under), `directory` (where to drop a request, relative to the file's own directory), `results` (absolute path where outcomes are kept across launches; for a door in a VM, a copy under `/mnt/node` taken at launch), `boards` (every board it may name), `posts_per_hour`, `channels` (every chat channel it may speak in; since `door_api` 4) and `chat_lines_per_hour`. See [Door outbound posting](#door-outbound-posting). |
+| `outbound` | Present **only** if a SysOp switched this door's outbound hook on: `label` (the name its posts appear under), `directory` (where to drop a request, relative to the file's own directory), `results` (absolute path where outcomes are kept across launches; for a door in a VM, a copy under `/mnt/node` taken at launch), `boards` (every board it may name), `posts_per_hour`, `channels` (every chat channel it may speak in; since `door_api` 4) and `chat_lines_per_hour`, and `events` while the SysOp has game events switched on (since `door_api` 5). See [Door outbound posting](#door-outbound-posting) and [Game events and standings](#game-events-and-standings). |
 
 Treat every field as optional and absence as "unknown": that is how the file
 stays compatible as it grows. Two notes on what is deliberately **not** there.
@@ -442,6 +442,100 @@ Name your requests as ordinary filenames. A receipt is named after the request
 it answers, so a request name holding a path separator — legal on the POSIX
 target — makes a receipt that is one file there and a path on another platform.
 Backups leave those out rather than carry a name that does not travel.
+
+### Game events and standings
+
+Since `door_api` 5 a door can report what a caller earned -- a rank, a
+top-tier achievement, a season's medals, a capture, a perfect round -- and a
+top-ten standings table. Nothing is published when you report it: NetBBS keeps
+the event in a bounded journal, and a chat bot the SysOp granted your door
+announces it, in a sentence NetBBS words, in the channel the SysOp chose.
+`!top <door>` answers your standings. Both go through the same drop directory
+and receipts as a board post.
+
+`outbound.events` is present only while the SysOp has game events switched on
+for your door, a switch of its own beside posting:
+
+```json
+"events": {
+  "types": ["rank", "achievement", "medal", "capture", "perfect"],
+  "events_per_hour": 12,
+  "title_max": 80,
+  "standings_rows": 10
+}
+```
+
+An event names the type, the caller's `user_id` from `door_info.json` and a
+short title:
+
+```json
+{"event": {"type": "rank", "user_id": 12, "title": "Merchant Captain"}}
+{"event": {"type": "medal", "user_ids": [7, 12, 31], "title": "Season 4"}}
+```
+
+| `type` | `title` | What a bot says |
+| --- | --- | --- |
+| `rank` | the rank reached | `Nib reached Merchant Captain in Voidrunner.` |
+| `achievement` | the achievement's name | `Vex earned the achievement "Untouched" in Voidrunner.` |
+| `medal` | the season, with `user_ids` (1-3, gold first) instead of `user_id` | `Season 4 of War Dialer closed: gold Vex, silver Quill, bronze Nib.` |
+| `capture` | what was captured | `Quill captured the Kowloon exchange in War Dialer.` |
+| `perfect` | optional: the round's topic | `Mara answered every question in a Retro Trivia round (Arcade Classics).` |
+
+- The set is fixed: another `type` is refused, and you cannot word the line.
+  The handle is looked up when the bot announces, so a renamed caller shows
+  under their new name.
+- `title` is one plain line of at most 80 characters; control characters and
+  line breaks become spaces.
+- **Report only what was earned live, in this session.** A save upgraded to a
+  new version of your game may unlock past achievements the first time it
+  opens; report none of those, or the channel gets a burst of old news.
+- A caller who switched "Game results announced in chat" off in their profile
+  is left out of the event, and an event left naming nobody is answered
+  `{"status": "dropped"}`: not stored and not counted against the ceiling.
+  The same goes for the guest account, and for a disabled or pending one. A
+  `medal` keeps each remaining caller's place: bronze stays bronze when silver
+  is left out.
+- Events count against `events_per_hour`, never against the board or chat
+  ceilings. A request is at most 2048 bytes as written.
+- A season's close may name callers other than the player. Each is checked on
+  their own.
+
+A standings snapshot is your game's own top ten, as your game ranks it:
+
+```json
+{"standings": {"title": "Hall of Fame", "rows": [
+  {"user_id": 7, "value": "182,400 cr", "label": "Legend of the Frontier"},
+  {"user_id": 12, "value": "96,150 cr"}
+]}}
+```
+
+- `title` is at most 40 characters; `rows` at most 10, each with a `user_id`,
+  a `value` of at most 24 characters and an optional `label` of at most 40. A
+  caller appears once.
+- Each snapshot replaces the last; write a new one when the order changes, or
+  `"rows": []` after a season reset. It is not counted against a ceiling. A
+  request is at most 8192 bytes as written.
+- `!top` leaves out callers who may not be named and numbers the rest from 1,
+  so keep sending your full top ten.
+
+The receipts: `{"status": "accepted", "type": "rank", "named": 1, "event_id": 41}`,
+`{"status": "accepted", "standings": 2}`, `{"status": "dropped", "reason":
+"..."}`, or `"rejected"` with one of these reasons:
+
+| `reason` contains | What happened |
+| --- | --- |
+| `game events are not switched on` | The SysOp has not switched events on. Stop reporting. |
+| `limited to callers at level` | Not every caller may play your door, so nothing is announced. |
+| `must be one of` | An unknown `type`. |
+| `needs 'user_id'`, `needs 'user_ids'` | The subject is missing or not an account id. |
+| `no account has user_id` | That account does not exist on this node. |
+| `rate limit reached` | Over `events_per_hour`. |
+| `at most` | A field or the request was too long. |
+| `one of a board post, a chat line, an event or standings` | A request held more than one of `board`, `channel`, `event`, `standings`. |
+
+In a rehearsal (a guest's call on a bundled door, or a SysOp's test) the
+receipt is `{"status": "rehearsal", "would": "accepted", ...}` and nothing is
+stored.
 
 ## Developing a chat bot
 
