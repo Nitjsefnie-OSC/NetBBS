@@ -404,17 +404,18 @@ def test_previous_callers_refuses_a_superscript_digit_instead_of_crashing(db, la
     assert _sent_rows(db) == []
 
 
-def test_previous_callers_without_mail_is_dismissed_with_any_key(db, lane, alice, bob):
+def test_previous_callers_without_mail_offers_no_mail_key(db, lane, alice, bob):
+    # Issue #1391: the bar always carries [O]neliners now, so the screen is
+    # left with [B]ack rather than any key.
     _called(db, bob)
     set_mail_min_level(db, 50)
-    session = FakeSession(keys=["x"])
-    session.read_any_key = lambda: asyncio.sleep(0)
+    session = FakeSession(keys=["b"])
 
     asyncio.run(_previous_callers_screen(session, db, alice, lane=lane))
 
     text = _visible(session)
     assert "[M]ail a caller" not in text
-    assert "[Enter] Continue" in text
+    assert "[O]neliners" in text and "[B]ack" in text
 
 
 def test_previous_callers_mail_row_fits_the_40x12_floor(db, lane, alice, bob):

@@ -2,9 +2,11 @@
 
 import json
 
+from netbbs.bots.baud import PHRASE_KEYS
 from netbbs.bots.registry import (
-    BotError, DEFAULT_LINES_PER_HOUR, DEFAULT_TEMPERAMENT, HOUSE_BOT_COMMAND, HOUSE_BOT_NAME, TEMPERAMENTS,
-    get_bot, list_bots, require_sysop, runtime_status, save_bot, stop_bots,
+    BotError, DEFAULT_LINES_PER_HOUR, DEFAULT_TEMPERAMENT, HOUSE_BOT_COMMAND, HOUSE_BOT_NAME,
+    MAX_PHRASE_LENGTHS, NAME_ALLOWANCE, TEMPERAMENTS, get_bot, preset_phrase, list_bots, require_sysop,
+    runtime_status, save_bot, stop_bots,
     deletable_bot, delete_bot,
     local_channel,
 )
@@ -83,6 +85,13 @@ async def bot_menu(session, lane, actor):
         await _delete_bot(session, lane, actor, bot.id)
         return await refresh()
 
+    async def try_one(bot):
+        # The saved instance, on a scratch node: nothing to confirm (§3.5).
+        from netbbs.bots.trial import TrialSpec
+        from netbbs.net.bot_try_flow import try_bot
+        await try_bot(session, lane, actor, TrialSpec.of_bot(await lane.run(get_bot, bot.id)), chrome)
+        return await refresh()
+
     async def create():
         return await bot_editor(session, lane, actor, chrome)
 
@@ -112,9 +121,10 @@ async def bot_menu(session, lane, actor):
             column_values_of=lambda b: [_state_cell(b, statuses), str(len(b.channels)), _error_cell(b, statuses)],
             description_of=description, title="Chat bots", own=True,
             empty_message="No bots installed. Create an instance of Baud to get started.",
-            refresh=refresh, on_create=create, live_keys={"s": stop_all, "m": model_settings, "u": model_usage}, item_keys={"k": stop_one, "d": delete_one},
+            refresh=refresh, on_create=create, live_keys={"s": stop_all, "m": model_settings, "u": model_usage}, item_keys={"k": stop_one, "d": delete_one, "t": try_one},
             live_nav=(MenuEntry(label=menu_key("K", "ill selected"), brief="Stop this bot persistently"),
                       MenuEntry(label=menu_key("D", "elete selected"), brief="Delete a stopped bot and its state"),
+                      MenuEntry(label=menu_key("T", "ry selected"), brief="Run it on a scratch node"),
                       MenuEntry(label=menu_key("S", "top all"), brief="Stop every bot persistently"),
                       MenuEntry(label=menu_key("M", "odel settings"), brief="Provider, privacy and budgets"),
                       MenuEntry(label=menu_key("U", "sage"), brief="Spending, callers and limits")),
@@ -172,14 +182,12 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             "temperament": bot.temperament if bot else DEFAULT_TEMPERAMENT,
             "rate": bot.lines_per_hour if bot else DEFAULT_LINES_PER_HOUR,
         }
+        overrides = bot.phrase_overrides if bot else {}
+        for key in PHRASE_KEYS:
+            draft[f"phrase_{key}"] = overrides.get(key, "")
 
         async def save(values):
-            try:
-                command = json.loads(values["command"])
-            except ValueError as exc:
-                raise BotError('Command must be a JSON argument array, for example ["/usr/local/bin/mybot"].') from exc
-            if not isinstance(command, list):
-                raise BotError("Command must be a JSON array; [] selects bundled Baud.")
+            command = _parse_command(values["command"])
             linked = values["linked"]
             reading = values["reading"]
             added = set(linked) - set(bot.linked_channels if bot else ())
@@ -213,7 +221,19 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
                 announcement_channel=values["announcement_channel"].strip() or None,
                 announce_posts=values["announce_posts"], announce_files=values["announce_files"],
                 model_conversation=values["model"],
+                phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS},
             )
+
+        async def try_prompt(session, lane, values):
+            # Issue #1374: the draft as it stands, unsaved, on a scratch node.
+            from netbbs.bots.trial import TrialSpec
+            from netbbs.net.bot_try_flow import try_bot
+            try:
+                spec = _draft_spec(values)
+            except BotError as exc:
+                announce(session, f"Try not started: {exc}", tone="error")
+                return
+            await try_bot(session, lane, actor, spec, chrome)
 
         def text_spec(key, label, help, section):
             return FieldSpec(key, label, lambda d: sanitize_text(d[key]) or "(none)", text_field(key), help=help, section=section)
@@ -282,6 +302,19 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             )
             return FieldSpec(key, label, render, prompt, help=help, section=section)
 
+        def phrase_spec(key, label, help):
+            # Issue #1381: blank is the temperament's preset, shown as such,
+            # so the SysOp sees what Baud will say either way.
+            def render(d):
+                if d[f"phrase_{key}"]:
+                    return sanitize_text(d[f"phrase_{key}"])
+                text = preset_phrase(key, d["temperament"])
+                return f"(preset) {text}" if text else "(preset: none)"
+            return FieldSpec(f"phrase_{key}", label, render, text_field(f"phrase_{key}"), section="Phrases",
+                             help=help + " {name} is the caller's name; write {{ or }} for a literal brace. "
+                             f"Up to {MAX_PHRASE_LENGTHS[key]} characters, each {{name}} counting as {NAME_ALLOWANCE}. "
+                             "Blank uses the temperament's preset.")
+
         def switch(key, label, help, section):
             return FieldSpec(key, label, lambda d: _yes_no(d[key]), bool_field(key), step=bool_step(key),
                              help=help, section=section)
@@ -309,13 +342,25 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             switch("model", "Grant model conversation", "Off by default. Also requires the node's Model settings to be enabled. Only the caller's addressed input and isolated temporary context go to the configured provider, after disclosure. Public replies; reset clears context.", "Queries and conversation"),
             FieldSpec("temperament", "Temperament", lambda d: d["temperament"], choice_field("temperament", list(TEMPERAMENTS)),
                       step=choice_step("temperament", list(TEMPERAMENTS)), section="Behaviour and program",
-                      help="Shapes Baud's fixed phrases: friendly, terse or retro. No language model is involved."),
+                      help="Picks the preset for Baud's fixed phrases: friendly, terse or retro. Override any "
+                           "phrase under Phrases. No language model is involved."),
             FieldSpec("rate", "Lines per hour per channel", lambda d: str(d["rate"]), choice_field("rate", [10, 30, 60, 120]),
                       step=choice_step("rate", [10, 30, 60, 120]), section="Behaviour and program",
                       help="The most lines this bot may post in one channel in an hour, replies and reminders "
                            "included. NetBBS enforces it; the bot cannot opt out."),
             text_spec("command", "Program arguments", "[] runs Baud. An external program is a JSON argument array; no shell expansion. "
                       "Install trusted programs only: they run as the NetBBS OS user, not in a security sandbox.", "Behaviour and program"),
+            phrase_spec("greeting", "Greeting", "Said when a caller joins a channel where Baud greetings are on."),
+            phrase_spec("help", "Help opening", "Opens Baud's reply to help, before its list of commands."),
+            phrase_spec("busy", "Busy message", "The reply while Baud is saving reminders and its queue is full."),
+            phrase_spec("limit", "Reminder-limit message", "The reply when a caller or the bot has reached the "
+                        "reminder limit (8 per caller, 48 per bot)."),
+            # Last, so every other field keeps its number.
+            FieldSpec("try", "Try", lambda d: "Run this draft on a scratch node", try_prompt, section="Try",
+                      help="Runs this draft, unsaved, against a scratch database, state and channel; type lines "
+                           "as a caller and see each host event, bot action and result, the chat lines and the "
+                           "program's stderr. Nothing reaches your node or its callers, and model requests are "
+                           "rehearsed, never sent."),
         ]
         saved = await edit_resource_draft(
             session, lane, title="Edit chat bot" if bot else "Create chat bot", own=True,
@@ -330,6 +375,30 @@ async def bot_editor(session, lane, actor, chrome, *, bot=None):
             announce(session, f"{saved.label} saved." + (" It starts within a second." if saved.enabled and not (
                 bot and bot.enabled) else ""))
         return saved
+
+
+def _parse_command(raw):
+    try:
+        command = json.loads(raw)
+    except ValueError as exc:
+        raise BotError('Command must be a JSON argument array, for example ["/usr/local/bin/mybot"].') from exc
+    if not isinstance(command, list):
+        raise BotError("Command must be a JSON array; [] selects bundled Baud.")
+    return command
+
+
+def _draft_spec(values):
+    from netbbs.bots.trial import TrialSpec
+    return TrialSpec(
+        name=values["name"].strip(), command=_parse_command(values["command"]), temperament=values["temperament"],
+        phrases={key: values[f"phrase_{key}"] for key in PHRASE_KEYS}, channels=list(values["channels"]),
+        defaults=list(values["defaults"]), lines_per_hour=values["rate"],
+        queries=[key for key in ("stats", "seen") if values[key]], reading_channels=list(values["reading"]),
+        event_channels=list(values["events"]), greetings=values["greetings"], board_sources=list(values["boards"]),
+        file_sources=list(values["files"]), announcement_channel=values["announcement_channel"].strip() or None,
+        announce_posts=values["announce_posts"], announce_files=values["announce_files"],
+        model_conversation=values["model"],
+    )
 
 
 def _linked_names(db):

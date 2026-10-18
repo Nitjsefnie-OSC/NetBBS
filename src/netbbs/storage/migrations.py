@@ -4700,6 +4700,90 @@ MIGRATIONS = [
     ),
     Migration(
         description=(
+            "Issue #1381: `chat_bots.phrases_json`, the SysOp's per-instance overrides of the "
+            "temperament's fixed phrases (greeting, help opening, busy and reminder-limit "
+            "messages), passed to the bot in its hello. Only overrides are stored; '{}' on "
+            "upgrade, so every instance keeps its preset."
+        ),
+        sql="""
+        ALTER TABLE chat_bots ADD COLUMN phrases_json TEXT NOT NULL DEFAULT '{}';
+        """,
+    ),
+    Migration(
+        description=(
+            "Issue #1377 (design doc §5.6, Pages): `staff_pages`, the shared queue of callers' "
+            "`/sysop` pages. One open page per member (`guest_session` NULL), a guest's keyed on "
+            "the session it came from; `place` is where the caller was, `channel` the chat channel "
+            "they paged from. `paged_at` moves when a new /sysop replaces the reason. "
+            "Handled pages keep who handled them and how (`done`, `chat`, `mail`). Empty on "
+            "upgrade."
+        ),
+        sql="""
+        CREATE TABLE staff_pages (
+            id                  INTEGER PRIMARY KEY,
+            user_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            caller_label        TEXT NOT NULL,
+            guest_session       TEXT,
+            place               TEXT NOT NULL,
+            channel             TEXT,
+            reason              TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            paged_at            TEXT NOT NULL,
+            handled_by_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            handled_by_label    TEXT,
+            handled_at          TEXT,
+            outcome             TEXT CHECK (outcome IN ('done', 'chat', 'mail')),
+            CHECK ((handled_at IS NULL) = (outcome IS NULL))
+        );
+        CREATE INDEX idx_staff_pages_open ON staff_pages(handled_at, paged_at);
+        CREATE INDEX idx_staff_pages_user ON staff_pages(user_id, paged_at);
+        CREATE INDEX idx_staff_pages_guest ON staff_pages(guest_session, paged_at);
+        """,
+    ),
+    Migration(
+        description=(
+            "Issue #1391 (design doc §3.3, the oneliner wall): `oneliners`, the short lines callers "
+            "leave under Recent callers, newest first. The author is kept by label beside "
+            "`author_user_id ON DELETE SET NULL`, so a line outlives its account as a post does. "
+            "`oneliner_additions` logs each line added for a day, so the per-account daily limit "
+            "counts lines added rather than lines still on the wall: deleting one's own line gives "
+            "no quota back. Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE oneliners (
+            id              INTEGER PRIMARY KEY,
+            author_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            author_label    TEXT NOT NULL,
+            text            TEXT NOT NULL,
+            created_at      TEXT NOT NULL
+        );
+        CREATE TABLE oneliner_additions (
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX idx_oneliner_additions_user ON oneliner_additions(user_id, created_at);
+        """,
+    ),
+    Migration(
+        description=(
+            "Issue #1372 (design doc §16, private bot replies, Decision 4): "
+            "`bot_private_history`, one row per private answer a bot instance gave one caller, "
+            "for the fixed limit of 30 private answers per caller per hour per bot. A caller is "
+            "the bot API's caller id as text: a local account id, or "
+            "`link:<home-fingerprint>:<username>`. Rows older than an hour are pruned on write. "
+            "Empty on upgrade."
+        ),
+        sql="""
+        CREATE TABLE bot_private_history (
+            bot_id INTEGER NOT NULL REFERENCES chat_bots(id) ON DELETE CASCADE,
+            caller TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_bot_private_rate ON bot_private_history(bot_id, caller, created_at);
+        """,
+    ),
+    Migration(
+        description=(
             "Issue #1380 (design doc §16, scheduled SysOp announcements in chat): "
             "`chat_announcements`, the rules a SysOp schedules into a channel -- once on a date, "
             "daily, weekly on a set of weekdays (`weekdays`, a bit mask, Monday = 1), or monthly on "

@@ -344,6 +344,10 @@ class Session(ABC):
     #: made on the first bell and kept across every chat screen.
     chat_bell_limiter: object | None = None
 
+    #: Whether this call has added a line to the oneliner wall (issue
+    #: #1391): one line per call, set by `netbbs.net.oneliner_flow`.
+    oneliner_added: bool = False
+
     #: The lines a chat has written, oldest first, while one is open: every
     #: `write_line` appends its text here when this is set. A resize makes
     #: chat clear the screen to rebuild its pinned rows, and it draws the

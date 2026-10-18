@@ -6,9 +6,11 @@ import datetime as dt
 import json
 import re
 import sqlite3
+import string
 from dataclasses import dataclass
 
 from netbbs.auth.users import User, get_user_by_id, is_usable_sysop
+from netbbs.bots.baud import PHRASE_KEYS, preset
 from netbbs.chat.bots import channel_bot_policy
 from netbbs.config import get_config, set_config
 from netbbs.chat.channels import Channel, ChannelError, get_channel_by_name as get_channel, list_channels
@@ -22,7 +24,19 @@ from netbbs.timeutil import utc_now_iso, utc_iso
 MAX_BOTS = 16
 MAX_CHANNELS = 32
 MAX_BODY = 500
+# Issue #1372 Decision 4: private answers make no noise in the channel, so
+# they have their own fixed limit per caller per bot instead of the channel's.
+PRIVATE_PER_HOUR = 30
 TEMPERAMENTS = ("friendly", "terse", "retro")
+# Issue #1381: a phrase override is checked as the longest local caller name
+# would expand it, so "<name>: <phrase>" still fits one 500-character line.
+# The help opening shares its line with Baud's fixed command list (up to 226
+# characters with every grant), so it gets less room than a standalone phrase.
+MAX_PHRASE = 400
+MAX_PHRASE_LENGTHS = {"greeting": MAX_PHRASE, "help": 200, "busy": MAX_PHRASE, "limit": MAX_PHRASE}
+NAME_ALLOWANCE = 32
+PHRASE_LABELS = {"greeting": "greeting", "help": "help opening", "busy": "busy message",
+                 "limit": "reminder-limit message"}
 
 
 class BotError(ValueError):
@@ -51,6 +65,12 @@ class Bot:
     announce_posts: bool = False
     announce_files: bool = False
     model_conversation: bool = False
+    # (key, text) pairs in PHRASE_KEYS order; only overrides are stored.
+    phrases: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def phrase_overrides(self) -> dict[str, str]:
+        return dict(self.phrases)
 
     @property
     def label(self) -> str:
@@ -83,7 +103,61 @@ def list_bots(db: Database) -> list[Bot]:
                           tuple(g["name"] for g in grants if g["channel_read"]),
                           tuple(g["name"] for g in grants if g["presence_events"]), bool(row["greetings"]),
                           boards, areas, destination[0] if destination else None,
-                          bool(row["announce_posts"]), bool(row["announce_files"]), bool(row["model_conversation"])))
+                          bool(row["announce_posts"]), bool(row["announce_files"]), bool(row["model_conversation"]),
+                          _stored_phrases(row["phrases_json"])))
+    return result
+
+
+def _stored_phrases(raw: str | None) -> tuple[tuple[str, str], ...]:
+    try:
+        value = json.loads(raw or "{}")
+    except ValueError:
+        return ()
+    if not isinstance(value, dict):
+        return ()
+    return tuple((k, value[k]) for k in PHRASE_KEYS if isinstance(value.get(k), str) and value[k])
+
+
+def preset_phrase(key: str, temperament: str) -> str:
+    """The temperament's own text for one phrase: what an empty override means."""
+    return preset(key, temperament)
+
+
+def validate_phrases(phrases: dict[str, str] | None) -> dict[str, str]:
+    """Normalize SysOp phrase overrides, refusing any Baud could not say.
+
+    An empty phrase means the temperament's preset and is not stored. The only
+    placeholder is ``{name}``, the caller's name; ``{{`` and ``}}`` are literal
+    braces. Text must be plain, on one line, and fit the reply limit."""
+    phrases = {} if phrases is None else phrases
+    if not isinstance(phrases, dict) or any(k not in PHRASE_KEYS for k in phrases):
+        raise BotError("Unknown bot phrase.")
+    result = {}
+    for key in PHRASE_KEYS:
+        text = phrases.get(key) or ""
+        if not isinstance(text, str):
+            raise BotError("Unknown bot phrase.")
+        text = text.strip()
+        if not text:
+            continue
+        label = PHRASE_LABELS[key]
+        if any(c in text for c in "\r\n\t") or sanitize_text(text) != text:
+            raise BotError(f"The {label} must be plain text on one line, without terminal controls.")
+        try:
+            fields = list(string.Formatter().parse(text))
+        except ValueError as exc:
+            raise BotError(f"The {label} has an unmatched brace. Write {{{{ or }}}} for a literal brace.") from exc
+        for _literal, field, spec, conversion in fields:
+            if field is None:
+                continue
+            if field != "name" or spec or conversion:
+                shown = "{" + sanitize_text(field) + "}"
+                raise BotError(f"The {label} uses {shown}; the only placeholder is {{name}}, the caller's name.")
+        limit = MAX_PHRASE_LENGTHS[key]
+        if len(text.format(name="x" * NAME_ALLOWANCE)) > limit:
+            raise BotError(f"Keep the {label} to {limit} characters, counting each {{name}} as "
+                           f"{NAME_ALLOWANCE}, so the caller's name and the phrase fit one {MAX_BODY}-character line.")
+        result[key] = text
     return result
 
 
@@ -122,7 +196,7 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
              event_channels: list[str] | None = None, greetings: bool = False,
              board_sources: list[str] | None = None, file_sources: list[str] | None = None,
              announcement_channel: str | None = None, announce_posts: bool = False, announce_files: bool = False,
-             model_conversation: bool = False) -> Bot:
+             model_conversation: bool = False, phrases: dict[str, str] | None = None) -> Bot:
     require_sysop(db, actor)
     name = name.strip()
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,23}", name):
@@ -131,6 +205,7 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
         raise BotError("That label belongs to an existing human account. Choose another name.")
     if temperament not in TEMPERAMENTS:
         raise BotError("Choose friendly, terse or retro.")
+    phrases = validate_phrases(phrases)
     queries = [] if queries is None else queries
     if not isinstance(queries, list) or any(q not in ("stats", "seen") for q in queries):
         raise BotError("Query grants may contain only stats and seen.")
@@ -184,6 +259,7 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
             db.connection.execute("UPDATE chat_bots SET queries_json=? WHERE id=?", (json.dumps(queries), bot_id))
             db.connection.execute("UPDATE chat_bots SET greetings=? WHERE id=?", (int(greetings), bot_id))
             db.connection.execute("UPDATE chat_bots SET model_conversation=? WHERE id=?", (int(model_conversation), bot_id))
+            db.connection.execute("UPDATE chat_bots SET phrases_json=? WHERE id=?", (json.dumps(phrases), bot_id))
             db.connection.execute(
                 "UPDATE chat_bots SET announcement_channel_id=?, announce_posts=?, announce_files=? WHERE id=?",
                 (destination.id if destination else None, int(announce_posts), int(announce_files), bot_id),
@@ -217,7 +293,7 @@ def save_bot(db: Database, *, actor: User, name: str, channels: list[str], defau
                 if row[0] not in keep:
                     db.connection.execute("DELETE FROM bot_channels WHERE bot_id=? AND channel_id=?", (bot_id, row[0]))
             record_action(db, actor=actor, action="bot_configure", object_type="bot", object_id=bot_id,
-                          detail=f"{name}.bot enabled={enabled}; addressed channels={allowed}; defaults={sorted(default_names)}; Linked approvals={sorted(approved)}; queries={queries}; channel reads={sorted(reading)}; presence events={sorted(events)}; greetings={greetings}; post sources={[b.name for b in boards]}; file sources={[a.name for a in areas]}; announcement channel={announcement_channel}; post/file announcements={announce_posts}/{announce_files}")
+                          detail=f"{name}.bot enabled={enabled}; addressed channels={allowed}; defaults={sorted(default_names)}; Linked approvals={sorted(approved)}; queries={queries}; channel reads={sorted(reading)}; presence events={sorted(events)}; greetings={greetings}; post sources={[b.name for b in boards]}; file sources={[a.name for a in areas]}; announcement channel={announcement_channel}; post/file announcements={announce_posts}/{announce_files}; custom phrases={sorted(phrases)}")
     except sqlite3.IntegrityError as exc:
         raise BotError("A bot with that name or state directory already exists.") from exc
     return get_bot(db, bot_id)
@@ -330,7 +406,21 @@ def reset_runtime_status(db: Database) -> None:
     db.connection.commit()
 
 
-def allowed_channel(db: Database, bot_id: int, name: str, *, check_rate: bool = False) -> tuple[Bot, Channel]:
+def _check_private_rate(db: Database, bot: Bot, caller: str) -> None:
+    cutoff = utc_iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
+    count = db.connection.execute(
+        "SELECT COUNT(*) FROM bot_private_history WHERE bot_id=? AND caller=? AND created_at > ?",
+        (bot.id, caller, cutoff),
+    ).fetchone()[0]
+    if count >= PRIVATE_PER_HOUR:
+        raise BotError(f"{bot.label} reached its limit of {PRIVATE_PER_HOUR} private answers per hour for you.")
+
+
+def allowed_channel(db: Database, bot_id: int, name: str, *, check_rate: bool = False,
+                    private_caller: str | None = None) -> tuple[Bot, Channel]:
+    """The bot's gates in one channel. With `check_rate`, the hourly limit
+    that applies: the channel's, or with `private_caller` (issue #1372) that
+    caller's own private-answer limit, which never touches the channel's."""
     bot = get_bot(db, bot_id)
     if not bot.enabled:
         raise BotError("This bot is stopped.")
@@ -344,7 +434,9 @@ def allowed_channel(db: Database, bot_id: int, name: str, *, check_rate: bool = 
         raise BotError(f"{bot.label} is muted here.")
     if channel_bot_policy(db, channel) == "none":
         raise BotError("Bots are disabled by this channel's policy.")
-    if check_rate:
+    if check_rate and private_caller is not None:
+        _check_private_rate(db, bot, private_caller)
+    elif check_rate:
         cutoff = utc_iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
         count = db.connection.execute(
             "SELECT COUNT(*) FROM bot_output_history WHERE bot_id=? AND channel_id=? AND created_at > ?",
@@ -413,11 +505,34 @@ def observation_targets(db: Database, channel_name: str, kind: str) -> list[int]
     return result
 
 
-def publish(db: Database, bot_id: int, channel_name: str, body: str, *, node_identity=None, source_reference=None):
+def _check_bot_text(body) -> None:
     if not isinstance(body, str) or not body.strip() or len(body) > MAX_BODY:
         raise BotError("A bot line must contain 1-500 characters.")
     if any(c in body for c in "\r\n\t") or sanitize_text(body) != body:
         raise BotError("Bot lines must be plain text without terminal controls.")
+
+
+def deliver_private(db: Database, bot_id: int, channel_name: str, body: str, caller: str) -> tuple[Bot, Channel]:
+    """Debit one private answer (issue #1372) after the gates a public reply
+    passes, but against `caller`'s own hourly limit. Nothing is recorded in
+    the channel: the answer exists only in the requesting session."""
+    _check_bot_text(body)
+    db.connection.execute("BEGIN IMMEDIATE")
+    try:
+        bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True, private_caller=caller)
+        cutoff = utc_iso(dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
+        db.connection.execute("DELETE FROM bot_private_history WHERE created_at <= ?", (cutoff,))
+        db.connection.execute("INSERT INTO bot_private_history(bot_id, caller, created_at) VALUES (?, ?, ?)",
+                              (bot.id, caller, utc_now_iso()))
+        db.connection.commit()
+    except BaseException:
+        db.connection.rollback()
+        raise
+    return bot, channel
+
+
+def publish(db: Database, bot_id: int, channel_name: str, body: str, *, node_identity=None, source_reference=None):
+    _check_bot_text(body)
     db.connection.execute("BEGIN IMMEDIATE")
     try:
         bot, channel = allowed_channel(db, bot_id, channel_name, check_rate=True)

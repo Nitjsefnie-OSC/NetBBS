@@ -998,8 +998,12 @@ def _validate_direct_chat_end_payload(payload: dict, *, path: str) -> None:
 
 
 def _validate_bot_request_payload(payload: dict, *, path: str) -> None:
-    if set(payload) not in ({"channel_id", "bot", "caller", "text"}, {"channel_id", "bot", "caller", "text", "access"}):
+    required = {"channel_id", "bot", "caller", "text"}
+    # Optional: `access` (chat_bot_callers_v1), `private` (chat_bot_private_v1).
+    if not required <= set(payload) or not set(payload) - required <= {"access", "private"}:
         raise LinkProtocolError(f"{path} needs channel_id, bot, caller and text")
+    if "private" in payload and payload["private"] is not True:
+        raise LinkProtocolError(f"{path}.private must be true when present")
     if "access" in payload:
         access = payload["access"]
         if (not isinstance(access, dict) or set(access) != {"level", "authenticated"} or
@@ -1018,11 +1022,24 @@ def _validate_bot_label(value: object, *, path: str) -> None:
         raise LinkProtocolError(f"{path} needs a canonical bot label")
 
 
+#: A private answer is bounded like a reply (issue #1372): 500 characters.
+BOT_PRIVATE_ANSWER_MAX_CHARS = 500
+
+
 def _validate_bot_result_payload(payload: dict, *, path: str) -> None:
-    if set(payload) != {"request_id", "error"}:
+    if set(payload) not in ({"request_id", "error"}, {"request_id", "error", "private"}):
         raise LinkProtocolError(f"{path} needs request_id and error")
     _validate_bounded_id(payload["request_id"], path=f"{path}.request_id")
     _validate_bounded_text(payload["error"], path=f"{path}.error", max_bytes=500)
+    if "private" in payload:
+        answer = payload["private"]
+        if not isinstance(answer, dict) or set(answer) != {"text"}:
+            raise LinkProtocolError(f"{path}.private must contain exactly text")
+        _validate_bounded_text(answer["text"], path=f"{path}.private.text", max_bytes=4 * BOT_PRIVATE_ANSWER_MAX_CHARS)
+        if not answer["text"].strip() or len(answer["text"]) > BOT_PRIVATE_ANSWER_MAX_CHARS:
+            raise LinkProtocolError(f"{path}.private.text must contain 1-{BOT_PRIVATE_ANSWER_MAX_CHARS} characters")
+        if payload["error"]:
+            raise LinkProtocolError(f"{path} carries a private answer or an error, not both")
 
 
 def _validate_bot_presence_payload(payload: dict, *, path: str) -> None:

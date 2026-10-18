@@ -119,6 +119,7 @@ from netbbs.staff import (
     sees_staff_list,
     told_of_pending_accounts,
 )
+from netbbs.staff_pages import count_open_pages, is_page_recipient
 from netbbs.storage.database import Database
 from netbbs.storage.execution import DatabaseLane
 from netbbs.timeutil import format_for_display, is_utc_zone_name, resolve_display_preferences, utc_now_iso
@@ -279,10 +280,10 @@ def main_menu_entries(
             MenuEntry(label=menu_key("H", "istory"), brief="Your recent sessions"),
             MenuEntry(
                 label=menu_key("R", "ecent callers"),
-                brief="Who else called this node",
+                brief="Who called, and what they said",
                 detailed=(
-                    "The node's recent callers -- the same roll shown after login, "
-                    "on demand."
+                    "The node's recent callers and its oneliner wall -- the same panel "
+                    "shown after login, on demand."
                 ),
             ),
     ]
@@ -452,6 +453,15 @@ async def _draw_main_menu(
             extra_lines.append(colored(
                 f"{waiting} account{'' if waiting == 1 else 's'} awaiting approval: {where}.",
                 fg_color=WARNING_COLOR,
+            ))
+    if is_page_recipient(user):
+        # Decision 1377: callers' /sysop pages wait in one shared queue.
+        pages = count_open_pages(db)
+        if pages:
+            arrow = "→" if unicode_style else "->"
+            where = f"SysOp {arrow} Pages" if meets_level(user, SYSOP_LEVEL) else f"Staff {arrow} Pages"
+            extra_lines.append(colored(
+                f"{pages} page{'' if pages == 1 else 's'} waiting: {where}.", fg_color=WARNING_COLOR,
             ))
     if notice:
         extra_lines.append(notice)

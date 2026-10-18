@@ -416,6 +416,13 @@ CHANNEL_RELAY_CAPABILITY = "channel_relay"
 CHAT_BOTS_CAPABILITY = "chat_bots_v1"
 CHAT_BOT_READERS_CAPABILITY = "chat_bot_readers_v1"
 CHAT_BOT_CALLERS_CAPABILITY = "chat_bot_callers_v1"
+CHAT_BOT_PRIVATE_CAPABILITY = "chat_bot_private_v1"
+"""Issue #1372: this node takes a `bot_request`'s optional `private` flag (a
+request its caller asked privately) and a `bot_result`'s optional `private`
+answer object, a bot's answer for the requesting caller alone. An older
+`chat_bots_v1` node would refuse either key as a malformed frame, so neither is
+sent to a peer that does not advertise this, and a bot host never gives a
+private answer to a caller whose home node lacks it."""
 """Issue #860: this node understands a live `channel_message` frame's
 optional `author_node_fingerprint`, with which a channel's origin relays a
 subscriber's live line to its other subscribers. A node without it would
@@ -472,7 +479,7 @@ LINK_CAPABILITIES: tuple[str, ...] = (
     INVENTORY_NOT_CARRIED_CAPABILITY, INVENTORY_PAGES_CAPABILITY, CHANNEL_RELAY_CAPABILITY, CHAT_BOTS_CAPABILITY,
     SEALED_ATTESTATIONS_CAPABILITY, CHAT_BOT_READERS_CAPABILITY, CHAT_BOT_CALLERS_CAPABILITY,
     PRESENCE_RELAY_CAPABILITY, LINK_COMMUNITIES_CAPABILITY, LINK_MODERATION_CAPABILITY,
-    DIRECT_CHAT_CAPABILITY, CHAT_ANNOUNCEMENTS_CAPABILITY,
+    DIRECT_CHAT_CAPABILITY, CHAT_BOT_PRIVATE_CAPABILITY, CHAT_ANNOUNCEMENTS_CAPABILITY,
 )
 """Every optional behaviour this version advertises in its own descriptor."""
 
