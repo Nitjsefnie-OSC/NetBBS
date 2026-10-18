@@ -131,6 +131,13 @@ channel; no capture-specific limit is added.
 - The event type names (rank, achievement, medal, capture, perfect round)
   and the host's sentence for each are fixed in the implementation and
   documented in the door guide; a door cannot add a type.
+- Built in #1408. The types are `rank`, `achievement`, `medal` (a season
+  close, naming up to three callers as `user_ids`, gold first), `capture`
+  and `perfect`; the sentences are in the door guide. Door events have their
+  own journal (`door_events`, 1,024 rows) and their own bot cursor, so
+  `bot_source_events` was not rebuilt and rolling back needs no table
+  rebuild. Events ride on the door's outbound hook: switching the hook off
+  releases its journal and standings too.
 - A door can claim any `user_id`. A door is a trusted program, as the
   outbound hook already says, so this is attribution, not security: the
   receipt and the stored row name the door.

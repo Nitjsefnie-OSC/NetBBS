@@ -534,11 +534,17 @@ Compatibility extension (issues #296/#297):
   disposable node directories, exact CRLF classic drop files, native stdio,
   controlling PTYs, private inherited DOOR32 sockets, DOSBox-X COM1 sockets,
   and allowlisted outbound RLogin services. Never pass the caller's socket.
-- Door API 5 adds **door events** (issue #1378): through the same file drop,
-  a door whose SysOp switched events on (a per-door switch, off by default,
-  with its own hourly ceiling, advertised as `outbound.events`) reports an
-  event type, a subject `user_id` and a short title, and may write a
-  standings snapshot of at most 10 rows. NetBBS keeps the events in a bounded
+- Door API 5 adds **door events** (issue #1378, implemented in #1408):
+  through the same file drop, a door whose SysOp switched events on (a
+  per-door switch on its `[O]utbound` screen, off by default, with its own
+  hourly ceiling of 12 by default, advertised as `outbound.events`) reports
+  one of five fixed event types -- `rank`, `achievement`, `medal`,
+  `capture`, `perfect` -- with the subject's `user_id` (a `medal` event
+  names up to three, gold first, as `user_ids`) and a title of at most 80
+  characters, and may write a standings snapshot of at most 10 rows, each
+  replacing the last. A request is refused, with a receipt, while events are
+  off or the door is gated; one naming only callers who may not be named is
+  answered `dropped`, neither stored nor debited. NetBBS keeps the events in a bounded
   journal and offers them to bots granted that door as a third announcement
   source beside boards and file areas; the host composes the chat text and
   serves the snapshot as the `top` node query. A door's events are announced

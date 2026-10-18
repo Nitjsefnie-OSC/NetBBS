@@ -95,15 +95,15 @@ def test_help_lists_only_the_enabled_abilities():
 def test_help_line_fits_whole_with_every_grant_switch_and_the_longest_names(private):
     # The one-line help for an older host, with the longest opening, the
     # longest bot name, a 32-character Link caller, model conversation, both
-    # queries and both switches: whole, never cut, with room for one more
-    # short command (a `top <door>; ` is 12).
+    # queries and both switches: whole, never cut. `top <door>; ` (issue
+    # #1408) used the 12 characters of room this once left.
     from netbbs.bots import botkit
     sent = []
-    baud = Baud({"name": "B" * 24 + ".bot", "queries": ["stats", "seen"], "model_conversation": True,
+    baud = Baud({"name": "B" * 24 + ".bot", "queries": ["stats", "seen", "top"], "model_conversation": True,
                  "quotes": True, "polls": True, "phrases": {"help": "x" * 168 + "{name}"}}, sent.append)
     baud.handle(message("help", caller_id="link:" + "a" * 64 + ":nib", name="n" * 26 + "@Node1", private=private))
     text = sent[-1]["text"]
-    assert len(text) <= botkit.LINE_LIMIT - 12
+    assert len(text) <= botkit.LINE_LIMIT and "top <door>; " in text
     assert "roll|coin; quote; poll; " in text and "Conversation is on; reset clears your context." in text
     assert text.endswith(f"Ask privately: /msg {'B' * 24}.bot@Node <text>." if private else "Replies are public.")
 

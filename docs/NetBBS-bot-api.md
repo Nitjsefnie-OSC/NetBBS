@@ -40,7 +40,7 @@ Each line is one UTF-8 JSON object, at most 32 KiB including the newline.
 `BOT_API_VERSION = 1`. The host sends:
 
 ```json
-{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"model_conversation":false,"timezone":"Europe/Berlin","blocks":true,"quotes":false,"polls":false,"linked_channels":[],"node":"Roanoke"}
+{"type":"hello","version":1,"name":"Baud.bot","scope":"addressed","channels":["lobby"],"temperament":"friendly","phrases":{},"state":{},"queries":["stats","seen"],"reading_channels":[],"event_channels":[],"greetings":false,"board_sources":[],"file_sources":[],"announcement_channel":null,"announce_posts":false,"announce_files":false,"door_sources":[],"announce_doors":false,"model_conversation":false,"timezone":"Europe/Berlin","blocks":true,"quotes":false,"polls":false,"linked_channels":[],"node":"Roanoke"}
 ```
 
 `timezone` is the IANA name of the node's display clock (§6.3: one clock for
@@ -158,6 +158,25 @@ through Link may produce source events while it runs, subject to current trust
 and visibility. Channel catch-up still never produces channel observations or
 addressed requests.
 
+Door source grants supply a door's game events (§16, issue #1378), which a
+door reports through its outbound hook (door API 5; see the
+[developer handbook](NetBBS-Developer-Handbook.md#game-events-and-standings)):
+
+```json
+{"type":"door","event":"opaque-event-token","channel":"lobby","source":"Voidrunner","item_id":"41","kind":"rank","title":"Merchant Captain","subjects":["Nib"],"text":"Nib reached Merchant Captain in Voidrunner."}
+```
+
+`kind` is `rank`, `achievement`, `medal`, `capture` or `perfect`; `subjects`
+are the handles the host may name, in placement order for a `medal`; `text`
+is the host's sentence, and `announce` publishes it. A door is a source only
+while every caller may play it (minimum play level 0). The host leaves out a
+caller who switched "Game results announced in chat" off, or whose account is
+disabled, pending or the guest account, and does not offer an event naming
+nobody; all of this, the door's own events switch and its level are checked
+again at publication. Doors count toward the 32 sources, and their events
+have their own journal of 1,024 references and their own cursor, with the
+same startup skip, per-poll limit and expiry.
+
 The host retains at most 1,024 content-event references, without titles/bodies,
 and dispatches at most 32 per poll per instance. There are at most 32 pending
 source-event tokens per instance, expiring after 60 seconds. Queue/window
@@ -186,6 +205,7 @@ events can arrive between a request and its result. Flush each output line.
 {"id":"4","action":"state.set","value":{"reminders":[]}}
 {"id":"5","action":"query","request":"opaque-token","query":"stats"}
 {"id":"6","action":"query","request":"opaque-token","query":"seen","target":"alice"}
+{"id":"8","action":"query","request":"opaque-token","query":"top","target":"voidrunner"}
 {"id":"7","action":"announce","event":"opaque-event-token"}
 ```
 
@@ -443,6 +463,15 @@ access is exposed.
   the same `available: false` response. Online status is already public node
   presence. Even a SysOp request cannot publish hidden history; private-channel
   names and activity are never returned.
+- `top`: a door's standings, the top ten the door last reported. `target` is
+  a door name, matched without case, or a unique prefix of one. An available
+  result has `available: true`, `door`, `title`, `updated_at` and `rows`, each
+  `{"rank", "name", "value", "label"}`. Rows for callers who switched "Game
+  results announced in chat" off, or whose accounts are disabled, pending or
+  the guest account, are left out and the rest renumbered from 1. Only doors
+  every caller may play, with game events on, answer. An empty or unmatched
+  `target` returns `available: false`, `doors` (the doors with standings) and
+  a `text` naming them.
 
 `state.get` returns the instance's JSON value. `state.set` atomically replaces
 it, up to 16 KiB encoded JSON; success returns `null`. A bot cannot select a
@@ -492,8 +521,9 @@ host gets the same list as one line.
 sees a `!` line it has already gone to the channel, so Baud cannot page anyone
 and says so. `help` mentions `/sysop` too. No bot can page the SysOp: a page
 comes only from a caller's own `/sysop` (decision 1377).
-With the corresponding grants, Baud also offers `stats` and
-`seen <local-account>` and lists them in `help`.
+With the corresponding grants, Baud also offers `stats`,
+`seen <local-account>` and `top <door>` (a door's standings) and lists them in
+`help`.
 
 Baud answers each request the way it was asked: a `!` line or `Baud.bot:`
 line publicly, with the caller's name in front, and `/msg Baud.bot <text>` or
@@ -515,8 +545,8 @@ commands stay local and remain responsive during a provider request.
 The separate **Baud greetings** toggle greets live joins in presence-event
 channels. Greetings obey the same mutes, channel policy and hourly output limit
 as replies and reminders, and require no whole-channel reading grant.
-Post/file announcements likewise need only their explicit source grants and
-destination, with the corresponding Baud ability enabled. They require no
+Post, file and door announcements likewise need only their explicit source
+grants and destination, with the corresponding Baud ability enabled. They require no
 channel reading or presence access.
 Reminder text is capped at 160 characters. Baud holds up to eight reminders
 per caller and 48 per instance, also subject to the state byte limit. A
@@ -649,13 +679,14 @@ What it does for you:
   with a line on stderr and exit status 1, and no `ready` is sent. Use the
   copy that ships with the node you run on.
 - **Dispatch by event type.** An event calls `on_<type>`: `on_message`,
-  `on_channel`, `on_presence`, `on_tick`, `on_post`, `on_file`, `on_held`. A type without
+  `on_channel`, `on_presence`, `on_tick`, `on_post`, `on_file`, `on_held`, `on_door`. A type without
   a handler, including one a newer host adds, is ignored. Fields read as keys
   or attributes (`event.channel`, `event["channel"]`); a missing one reads as
   `None`.
 - **Grants.** The bot's attributes `queries`, `reading_channels`,
-  `event_channels`, `board_sources`, `file_sources`, `announcement_channel`,
-  `greetings`, `announce_posts`, `announce_files` and `model_conversation` are
+  `event_channels`, `board_sources`, `file_sources`, `door_sources`,
+  `announcement_channel`, `greetings`, `announce_posts`, `announce_files`,
+  `announce_doors` and `model_conversation` are
   read from the hello's grant lists. `scope` is always `addressed` and says
   nothing about the other grants.
 - **Actions and results.** Every action goes through `bot.act(action, then,

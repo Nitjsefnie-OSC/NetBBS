@@ -4880,4 +4880,58 @@ MIGRATIONS = [
         ALTER TABLE chat_bots ADD COLUMN polls INTEGER NOT NULL DEFAULT 0;
         """,
     ),
+    Migration(
+        description=(
+            "Issue #1408 (design doc §16, issue #1378: door events as a bot announcement source): "
+            "a door's game events and standings. `door_outbound.events_enabled` is the per-door "
+            "SysOp switch, off by default, with its own hourly ceiling `events_per_hour`, debited "
+            "in `door_event_history` (pruned to the window on every check, as "
+            "`door_outbound_history` is). `door_events` is the bounded journal, 1,024 rows, holding "
+            "references only: the door, a fixed event type and the door's short title; the host "
+            "composes the chat text when a bot announces it. Its subjects are "
+            "`door_event_subjects` rows, one per named caller in placement order, cascading with "
+            "the account. `door_standings` is one snapshot per door for the `top` node query. "
+            "`bot_door_sources` and `chat_bots.announce_doors` are the bot side: a third source kind "
+            "with its own grants and ability, read through its own cursor over `door_events` rather "
+            "than a rebuild of `bot_source_events`. Empty on upgrade; every switch starts off."
+        ),
+        sql="""
+        ALTER TABLE door_outbound ADD COLUMN events_enabled INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE door_outbound ADD COLUMN events_per_hour INTEGER NOT NULL DEFAULT 12;
+        CREATE TABLE door_event_history (
+            id          INTEGER PRIMARY KEY,
+            door_id     INTEGER NOT NULL REFERENCES doors(id) ON DELETE CASCADE,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX idx_door_event_history_door ON door_event_history(door_id, created_at);
+        CREATE TABLE door_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            door_id     INTEGER NOT NULL REFERENCES doors(id) ON DELETE CASCADE,
+            type        TEXT NOT NULL CHECK (type IN ('rank', 'achievement', 'medal', 'capture', 'perfect')),
+            title       TEXT NOT NULL,
+            created_at  TEXT NOT NULL
+        );
+        CREATE TABLE door_event_subjects (
+            event_id  INTEGER NOT NULL REFERENCES door_events(id) ON DELETE CASCADE,
+            position  INTEGER NOT NULL,
+            user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (event_id, position)
+        );
+        CREATE TRIGGER door_events_bound AFTER INSERT ON door_events BEGIN
+            DELETE FROM door_events WHERE id <= NEW.id - 1024;
+        END;
+        CREATE TABLE door_standings (
+            door_id     INTEGER PRIMARY KEY REFERENCES doors(id) ON DELETE CASCADE,
+            title       TEXT NOT NULL,
+            rows_json   TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        ALTER TABLE chat_bots ADD COLUMN announce_doors INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE bot_door_sources (
+            bot_id   INTEGER NOT NULL REFERENCES chat_bots(id) ON DELETE CASCADE,
+            door_id  INTEGER NOT NULL REFERENCES doors(id) ON DELETE CASCADE,
+            PRIMARY KEY (bot_id, door_id)
+        );
+        """,
+    ),
 ]

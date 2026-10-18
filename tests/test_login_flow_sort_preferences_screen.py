@@ -158,8 +158,8 @@ def test_profile_screen_shows_the_saved_preference_count_and_offers_the_menu_opt
     # instead of the very first, pre-navigation one.
     set_sort_preference(db, alice, "channel", "alphabetical")
     set_sort_preference(db, alice, "board", "volume")
-    session = FakeSession(["2", "3", "b", "b"])
+    session = FakeSession(["2", "4", "b", "b"])
     asyncio.run(profile_flow._edit_profile(session, lane, alice))
     text = _visible_text(session)
     assert re.search(r"Sort preferences: +2 saved", text)
-    assert "23 Sort preferences:" in text  # the numbered field itself
+    assert "24 Sort preferences:" in text  # the numbered field itself
