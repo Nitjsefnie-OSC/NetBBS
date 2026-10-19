@@ -6,7 +6,8 @@ moderation commands), and username completion for /msg, /private
 works when typed in full, but *completion suggestions* are narrowed to
 this channel's current roster -- offering every registered account on
 a node with hundreds of users from one typed character is noise, not
-help). The generic word-replacement mechanics themselves are covered
+help). /msg and /private also offer, after the people, the bots that
+would answer the caller in the channel (issue #1372). The generic word-replacement mechanics themselves are covered
 separately in tests/test_char_input_completion.py; this file only
 exercises what `_build_completer`'s closure returns for a given line of
 text. `/query` has been removed as a command.
@@ -15,10 +16,14 @@ text. `/query` has been removed as a command.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from netbbs.auth.users import create_user
+from netbbs.bots import link as bot_link_module
+from netbbs.bots.registry import mute_bot, save_bot
+from netbbs.chat.bots import mute_remote_bot, set_channel_bot_policy
 from netbbs.chat.channels import create_channel
 from netbbs.chat.hub import ChatHub, ParticipantId
 from netbbs.chat.presence import PresenceRegistry
@@ -287,3 +292,122 @@ def test_plain_chat_text_has_no_candidates(db, lane, hub, presence, alice, bob, 
     presence.enter("bob")
     completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
     assert completer("hello bo") == []
+
+
+# -- /msg, /private: the bots that would answer (issue #1372) ------------
+
+LINKED = "a" * 64
+OTHER = "b" * 64
+
+
+@pytest.fixture
+def sysop(db):
+    return create_user(db, "sysop", password="hunter2", user_level=255)
+
+
+def _bot(db, sysop, channel, name, *, enabled=True):
+    return save_bot(db, actor=sysop, name=name, channels=[channel.name], defaults=[], enabled=enabled)
+
+
+def _runtime(*bots, link=None):
+    return SimpleNamespace(running_ids=frozenset(bot.id for bot in bots), link=link)
+
+
+def _link(monkeypatch, channel, roster, *, private=(LINKED, OTHER)):
+    """The real `BotLink.visible_roster` -- with its own mute and policy
+    filters -- over a roster as a live subscription would have filled it;
+    the subscription authorization it also checks is assumed granted."""
+    monkeypatch.setattr(bot_link_module, "_decide_channel_subscribe_authorization", lambda db, **kwargs: None)
+    monkeypatch.setattr(bot_link_module, "_roster_author_allowed", lambda *args, **kwargs: True)
+    monkeypatch.setattr(chat_flow, "short_node_name",
+                        lambda db, fingerprint: {LINKED: "Relay", OTHER: "Cats Den"}[fingerprint])
+    link = object.__new__(bot_link_module.BotLink)
+    source = SimpleNamespace(closed=asyncio.Event(), remote_fingerprint=LINKED)
+    link.remote = {(channel.channel_id, home): (source, labels) for home, labels in roster.items()}
+    link.remote_readers = {}
+    link.capable = lambda fingerprint, capability=None: fingerprint in private
+    return link
+
+
+def test_msg_and_private_offer_a_running_local_bot(db, lane, hub, presence, alice, sysop, channel):
+    hub.bot_runtime = _runtime(_bot(db, sysop, channel, "Baud"))
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    assert completer("/msg ba") == ["Baud.bot"]
+    assert completer("/private BA") == ["Baud.bot"]
+
+
+def test_msg_offers_a_remote_bot_as_name_at_node(monkeypatch, db, lane, hub, presence, alice, sysop, channel):
+    link = _link(monkeypatch, channel, {LINKED: ["Echo.bot"], OTHER: ["Eliza.bot"]})
+    hub.bot_runtime = _runtime(link=link)
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    # A node name with a space is quoted, so /msg reads the address back whole.
+    assert completer("/msg e") == ['Echo.bot@Relay', 'Eliza.bot@"Cats Den"']
+    assert completer("/private echo.bot@") == ["Echo.bot@Relay"]
+
+
+def test_a_remote_bot_whose_node_cannot_answer_privately_is_not_offered(
+    monkeypatch, db, lane, hub, presence, alice, channel
+):
+    link = _link(monkeypatch, channel, {LINKED: ["Echo.bot"], OTHER: ["Eliza.bot"]}, private=(LINKED,))
+    hub.bot_runtime = _runtime(link=link)
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    assert completer("/msg e") == ["Echo.bot@Relay"]
+
+
+def test_muted_bots_are_not_offered(monkeypatch, db, lane, hub, presence, alice, sysop, channel):
+    baud, quill = _bot(db, sysop, channel, "Baud"), _bot(db, sysop, channel, "Quill")
+    mute_bot(db, channel, baud, actor=sysop, mute=True)
+    mute_remote_bot(db, channel, "Echo.bot", LINKED, actor=sysop, mute=True)
+    link = _link(monkeypatch, channel, {LINKED: ["Echo.bot", "Ernie.bot"]})
+    hub.bot_runtime = _runtime(baud, quill, link=link)
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    assert completer("/msg ") == ["Quill.bot", "Ernie.bot@Relay"]
+
+
+@pytest.mark.parametrize("policy, offered", [("local", ["Baud.bot"]), ("none", [])])
+def test_bots_the_channel_policy_hides_are_not_offered(
+    monkeypatch, db, lane, hub, presence, alice, sysop, channel, policy, offered
+):
+    baud = _bot(db, sysop, channel, "Baud")
+    hub.bot_runtime = _runtime(baud, link=_link(monkeypatch, channel, {LINKED: ["Echo.bot"]}))
+    set_channel_bot_policy(db, channel, policy, changed_by=sysop)
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    assert completer("/msg ") == offered
+
+
+def test_a_stopped_bot_is_not_offered(db, lane, hub, presence, alice, sysop, channel):
+    stopped = _bot(db, sysop, channel, "Stopped", enabled=False)
+    not_running = _bot(db, sysop, channel, "Starting")
+    running = _bot(db, sysop, channel, "Baud")
+    hub.bot_runtime = _runtime(stopped, running)
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    assert not_running.label not in completer("/msg ")
+    assert completer("/msg s") == []
+    assert completer("/msg ") == ["Baud.bot"]
+
+
+def test_people_come_before_bots(monkeypatch, db, lane, hub, presence, alice, bob, sysop, channel):
+    create_user(db, "Zed", password="hunter2", user_level=10)
+    presence.enter("bob")
+    presence.enter("Zed")
+    hub.bot_runtime = _runtime(_bot(db, sysop, channel, "Baud"), _bot(db, sysop, channel, "anna"),
+                               link=_link(monkeypatch, channel, {LINKED: ["Echo.bot"]}))
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    assert completer("/msg ") == ["Zed", "bob", "anna.bot", "Baud.bot", "Echo.bot@Relay"]
+    assert completer("/msg b") == ["bob", "Baud.bot"]
+
+
+def test_whois_finger_and_invite_never_offer_bots(monkeypatch, db, lane, hub, presence, alice, sysop, channel):
+    hub.bot_runtime = _runtime(_bot(db, sysop, channel, "Baud"),
+                               link=_link(monkeypatch, channel, {LINKED: ["Echo.bot"]}))
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    for command in ("/whois ", "/finger ", "/invite "):
+        assert not any(".bot" in name for name in completer(command)), command
+
+
+def test_without_a_bot_runtime_msg_offers_people_only(db, lane, hub, presence, alice, bob, sysop, channel):
+    _bot(db, sysop, channel, "Baud")
+    presence.enter("bob")
+    assert hub.bot_runtime is None
+    completer = asyncio.run(chat_flow._build_completer(lane, hub, presence, channel, alice))
+    assert completer("/msg ") == ["bob"]

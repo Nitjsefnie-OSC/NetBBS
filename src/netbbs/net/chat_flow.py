@@ -5583,9 +5583,40 @@ _COMMAND_VISIBILITY: dict[str, Callable[[Database, Channel, User], bool]] = {
 # the status line's own online count uses) -- a user not currently in
 # the channel still works if typed out in full, just without tab
 # assistance for it.
+#
+# /msg and /private also ask a bot privately (issue #1372), so their
+# completion offers, after the people, the bots that would answer this
+# caller here. /whois, /finger and /invite name people only.
 _ONLINE_USER_COMMAND_PREFIXES = ("/msg ", "/private ")
 _ANY_USER_COMMAND_PREFIXES = ("/whois ", "/finger ")
 _INVITE_COMMAND_PREFIX = "/invite "
+
+
+def _private_bot_completions(db: Database, hub: ChatHub, channel: Channel) -> list[str]:
+    """The bots `/msg` and `/private` can ask here (issue #1372), as Tab
+    completion offers them: this node's running bots with an addressed
+    grant in `channel` (`_local_bot_labels`, which `/names` and `/who`
+    list), then the linked bots `channel`'s roster shows
+    (`visible_roster`, which leaves out muted ones and ones the channel's
+    `/bots` policy hides) whose node can answer privately, as
+    `Baud.bot@Node` -- the node named as a private answer names it
+    (`_answer_speaker`), quoted when it holds a space so `/msg` reads it
+    back as one target. Each group is sorted case-insensitively."""
+    local = sorted(_local_bot_labels(db, hub, channel), key=str.lower)
+    runtime = hub.bot_runtime
+    if runtime is None or runtime.link is None:
+        return local
+    from netbbs.link.events import CHAT_BOT_PRIVATE_CAPABILITY
+
+    remote = set()
+    for label, home in runtime.link.visible_roster(db, channel):
+        if _BOT_TARGET.fullmatch(label) is None or not runtime.link.capable(home, CHAT_BOT_PRIVATE_CAPABILITY):
+            continue
+        name, node = link_address_parts(sanitize_text(label), sanitize_text(short_node_name(db, home)))
+        if any(character.isspace() for character in node) and not node.startswith('"'):
+            node = f'"{node}"'
+        remote.add(f"{name}@{node}")
+    return local + sorted(remote, key=str.lower)
 
 
 async def _build_completer(
@@ -5610,7 +5641,8 @@ async def _build_completer(
     same "callback can't await" problem `netbbs.net.picker.pick_item`'s
     `name_of`/`description_of` callbacks had. Fixed the
     same way: everything the completer might need -- which commands are
-    currently visible, the full username list, and current membership --
+    currently visible, the full username list, current membership, and
+    the bots `/msg` and `/private` can ask (`_private_bot_completions`) --
     is fetched once, eagerly, in one bundled `lane.run` call *before*
     the closure is built, and the closure itself only ever reads that
     already-fetched data. `roster_usernames` is the one exception --
@@ -5620,7 +5652,7 @@ async def _build_completer(
     applies to `presence.is_away`.
     """
 
-    def _gather(db: Database) -> tuple[list[str], list[str], set[str]]:
+    def _gather(db: Database) -> tuple[list[str], list[str], set[str], list[str]]:
         visible_commands = sorted(
             f"/{name}"
             for name in _COMMANDS
@@ -5629,9 +5661,9 @@ async def _build_completer(
         all_users = list_users(db)
         all_usernames = [candidate.username for candidate in all_users]
         member_usernames = {candidate.username for candidate in all_users if is_member(db, channel, candidate)}
-        return visible_commands, all_usernames, member_usernames
+        return visible_commands, all_usernames, member_usernames, _private_bot_completions(db, hub, channel)
 
-    visible_commands, all_usernames, member_usernames = await lane.run(_gather)
+    visible_commands, all_usernames, member_usernames, bot_names = await lane.run(_gather)
     roster_usernames = _roster_usernames(hub, channel)
 
     def completer(text: str) -> list[str]:
@@ -5666,9 +5698,9 @@ async def _build_completer(
             rest = text[len(command_prefix) :]
             if text.lower().startswith(command_prefix) and " " not in rest:
                 word = rest.lower()
-                return sorted(
-                    name for name in presence.online_usernames() if name.lower().startswith(word)
-                )
+                # People first, then the bots this caller can ask privately.
+                people = sorted(name for name in presence.online_usernames() if name.lower().startswith(word))
+                return people + [name for name in bot_names if name.lower().startswith(word)]
 
         for command_prefix in _ANY_USER_COMMAND_PREFIXES:
             rest = text[len(command_prefix) :]
