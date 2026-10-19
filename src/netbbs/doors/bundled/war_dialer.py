@@ -2182,7 +2182,7 @@ class _GameEvents:
         self.title_max, self.rows_max = 80, 10
         self.user_id: int | None = None
         self.tier: tuple[int, int] | None = None  # (season, tier) of the session's caller
-        self.standings: tuple | None = None  # the last snapshot sent, or the baseline
+        self.standings: tuple | None = None  # the last snapshot this session sent
         self.pending: list[tuple[str, dict]] = []
         self.staged_tier: tuple[int, int] | None = None
         self.staged_standings: tuple | None = None
@@ -2213,13 +2213,22 @@ class _GameEvents:
         return self.directory is not None
 
     def arm(self, conn: sqlite3.Connection, player: Player) -> None:
-        """The session's baseline: what its caller already holds is not news."""
+        """The session's baseline: what its caller already holds is not news.
+
+        The table is sent as it stands, though, so `!top` agrees with the game
+        from the first session that reports rather than from the first one
+        that happens to reorder it -- unless this session already sent that
+        very table, as a season closed at login does.
+        """
         if not self.active or player.user_id != self.user_id:
             return
         try:
-            self.standings = self._standings(conn)
+            snapshot = self._standings(conn)
         except sqlite3.Error:
             return
+        if snapshot != self.standings:
+            self._drop("standings", self._standings_request(snapshot))
+            self.standings = snapshot
         self.tier = (player.season_number, tier_index(rank_score(player)))
 
     def event(self, kind: str, title: object, *, user_id: int | None = None,
