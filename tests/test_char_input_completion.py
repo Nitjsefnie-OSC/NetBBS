@@ -88,6 +88,17 @@ def test_multiple_candidates_extend_to_the_shared_prefix():
     assert "alicia" in output
 
 
+def test_candidates_differing_only_in_case_never_erase_the_typed_word():
+    # "bob" and "Baud.bot" both match "b" case-insensitively but share no
+    # case-sensitive prefix; the typed "b" stays rather than being wiped.
+    line, output = _run(b"/msg b" + _TAB + _CRLF, completer=_static(["bob", "Baud.bot"]))
+    assert line == "/msg b"
+    assert "Baud.bot" in output
+    # A typed word in another case is still extended to the shared prefix.
+    line, _ = _run(b"AL" + _TAB + _CRLF, completer=_static(["alice", "alicia"]))
+    assert line == "alic"
+
+
 def test_multiple_candidates_with_no_further_shared_prefix_just_lists_them():
     line, output = _run(b"a" + _TAB + _CRLF, completer=_static(["alice", "andy"]))
     assert line == "a"

@@ -931,7 +931,13 @@ async def apply_tab_completion(
         return new_cursor
 
     prefix = list(_common_prefix(candidates))
-    if prefix != line[word_start:cursor]:
+    typed = "".join(line[word_start:cursor])
+    # Matching is case-insensitive, the shared prefix is not: `bob` and
+    # `Baud.bot` share none, and replacing the typed `b` with it would
+    # erase what the caller typed. Only a prefix that still reads as the
+    # typed word (in any case) replaces it.
+    if prefix != line[word_start:cursor] and len(prefix) >= len(typed) and \
+            "".join(prefix).lower().startswith(typed.lower()):
         move_back = display_width("".join(line[word_start:cursor]))
         line[word_start:cursor] = prefix
         cursor = word_start + len(prefix)
