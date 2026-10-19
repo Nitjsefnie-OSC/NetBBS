@@ -2547,6 +2547,46 @@ def draw_final_score(p: Palette, score: int, total: int, info: dict | None = Non
     out_line(f"{p.muted}Thanks for playing. Press any key to leave...{RESET}")
 
 
+def report_perfect_round(info: dict, score: int, total: int) -> bool:
+    """Tell NetBBS (door API 5) that the caller answered every question, so
+    its chat bot can announce it. Only while `outbound.events` is in
+    `door_info.json` -- NetBBS writes it only while the SysOp has game events
+    on for this door -- and never anywhere else: no file, no error, no change
+    in play. NetBBS words the sentence and drops guests and callers who opted
+    out, so the door sends only who and what. Returns True if a request was
+    written."""
+    if total < 1 or score != total:
+        return False
+    info_path = os.environ.get("NETBBS_DOOR_INFO")
+    outbound = info.get("outbound")
+    if not info_path or not isinstance(outbound, dict):
+        return False
+    events = outbound.get("events")
+    if not isinstance(events, dict):
+        return False
+    types = events.get("types")
+    if isinstance(types, list) and "perfect" not in types:
+        return False
+    user_id = info.get("user_id")
+    directory = outbound.get("directory")
+    if (not isinstance(user_id, int) or isinstance(user_id, bool) or user_id < 1
+            or not isinstance(directory, str) or not directory):
+        return False
+    # The rounds mix every topic, so the event carries no title.
+    payload = json.dumps({"event": {"type": "perfect", "user_id": user_id}})
+    # NetBBS answers requests in name order: a zero-padded clock keeps them
+    # in the order they were written.
+    name = f"perfect-{time.time_ns():020d}"
+    try:
+        drop = Path(info_path).parent / directory
+        part = drop / f"{name}.part"
+        part.write_text(payload, encoding="utf-8")
+        part.replace(drop / f"{name}.json")
+    except OSError:
+        return False
+    return True
+
+
 def main(drop_file: str | None = None, *, encoding: str = "auto") -> int:
     global _OUTPUT_ENCODING, _SOCKET_TRANSPORT
 
@@ -2630,6 +2670,7 @@ def _play_round(info: dict) -> int:
                 width=w,
             )
 
+        report_perfect_round(info, score, len(round_questions))
         play_finale(palette, info, score, len(round_questions), _OUTPUT_WIDTH, height)
         draw_final_score(palette, score, len(round_questions), info=info, width=w)
         read_key()
