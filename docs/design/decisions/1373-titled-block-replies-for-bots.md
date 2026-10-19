@@ -80,3 +80,13 @@ unknown action.
 **Implementation notes.** One migration (the block column). Several replayed
 blocks can fill a join replay: count a block's rows against the replay
 budget, or draw replayed blocks unpaged.
+
+A block may mark its labels as command syntax with the optional
+`"labels": "commands"`, the only value: the renderer then draws each label as
+`/help` draws its commands (the first word of each `, `-separated command in
+the accent colour and bold, parameters in the label colour, punctuation and
+separators muted), with the same helpers, so a bot's command list reads like
+the host's. Any bot may use it (#1208 decision 4); Baud's `help` does. The
+key rides inside the block on Link with no capability of its own; a 7.31 node
+refuses the unknown key and shows the block's fallback line, a cost accepted
+for a cosmetic field.

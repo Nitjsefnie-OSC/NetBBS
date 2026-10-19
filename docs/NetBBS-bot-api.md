@@ -343,6 +343,19 @@ a `block`, never both, and `say` and `announce` take no block: reminders and
 announcements stay one line. A refused block is explained to the caller, as
 any refused reply is.
 
+A block may also say `"labels": "commands"`: its labels are command syntax,
+and the host draws them the way `/help` draws its own commands. A label may
+list several commands, separated by `, ` (`reminders, cancel <id>`); each
+command's first word is set in the accent colour and bold, its parameters in
+the label colour and the punctuation `< > [ ] |` and the separators muted.
+`"commands"` is the only value; without the key the labels are plain. A host
+of NetBBS 7.31 or older refuses a block with the key as an unknown shape, so check
+the host's version before sending it to one.
+
+```json
+{"id":"10","action":"reply","request":"opaque-token","block":{"title":"Commands","labels":"commands","rows":[{"label":"remind <when> <text>","text":"a reminder here"},{"label":"reminders, cancel <id>","text":"your reminders; cancel one"}]}}
+```
+
 Callers see the host's label in front of the bot's title, with the time at
 the right when they keep chat timestamps:
 
@@ -432,6 +445,9 @@ The optional capability `chat_bot_blocks_v1` carries the block live: as an
 optional `block` key on the live `channel_message` frame, on a
 `scrollback_snapshot` entry, and on a `bot_result`'s private answer
 (`"private": {"text": "...", "block": {...}}`, its text the fallback line).
+A block's `"labels": "commands"` travels inside the block in all of these. A
+NetBBS 7.31 node takes the block's field and frame but does not know the key,
+so it shows such a block as its fallback line; no capability marks it.
 These frames are key-strict, so the key goes only to a peer advertising the
 capability, and every other peer gets the fallback line alone. The public
 reply to a remote request that goes directly to the caller's node carries the
@@ -515,8 +531,9 @@ Commands: `help`, `remind <when> <text>`, `reminders`, `cancel <id>`,
 `help tell` explain the two. `roll` and `coin`, and, when switched on,
 `quote` and `poll`/`vote` (below).
 On a host that takes blocks, `help` answers with a titled block, `Commands`,
-one row per command and the help opening (below) as its first row; an older
-host gets the same list as one line.
+one row per command and the help opening (below) as its first row, its labels
+marked as command syntax (`"labels": "commands"`); an older host gets the same
+list as one line.
 `sysop` only points to the host's `/sysop <reason>` command: by the time Baud
 sees a `!` line it has already gone to the channel, so Baud cannot page anyone
 and says so. `help` mentions `/sysop` too. No bot can page the SysOp: a page
@@ -729,8 +746,10 @@ What it does for you:
   row is a `(label, text)` pair, or a plain text for a row without a label.
   It cuts the title, the rows, each label and each text to the block's bounds,
   and puts no caller name in front: the host titles the block with the bot's
-  name. `private=True` sends it as a private answer. `bot.blocks` says whether
-  the host takes blocks; answer with `msg.reply` when it does not.
+  name. `private=True` sends it as a private answer. `labels="commands"`
+  marks the labels as command syntax (see [Titled blocks](#titled-blocks)).
+  `bot.blocks` says whether the host takes blocks; answer with `msg.reply`
+  when it does not.
 - **State.** `bot.state` starts as the hello's `state` and becomes a saved
   value once the host has stored it; a refused save leaves it unchanged.
   `bot.change(step)` runs `step()` once every save already sent has its

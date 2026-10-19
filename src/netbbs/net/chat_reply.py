@@ -10,11 +10,14 @@ Everything here takes sanitized plain text and styles it last ("sanitize
 before styling"); a cell is `(text, color)`, never a pre-colored string, so
 wrapping measures what the caller sees. A cell's text may instead be a
 sequence of `(text, color)` segments -- `nick@site` with the site in its own
-colour -- each segment's `None` taking the cell's colour.
+colour -- each segment's `None` taking the cell's colour -- or `Styled`,
+plain text a helper has already styled from its sanitized form (a bot's
+command syntax, drawn by `/help`'s own helpers).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Sequence
 
 from netbbs.rendering import colored
@@ -30,14 +33,30 @@ MAX_BLOCK_WIDTH = 78
 MIN_LAST_COLUMN = 20
 
 Segments = Sequence[tuple[str, "int | None"]]
-Cell = tuple["str | Segments", "int | None"]
 
 
-def _plain(text: "str | Segments") -> str:
+@dataclass(frozen=True)
+class Styled:
+    """A cell's text already styled: `plain` is what is measured and
+    wrapped, `styled` what is drawn. `styled` must be `plain` with styling
+    added and nothing else, built from sanitized text; a last cell too long
+    for its room wraps as `plain`, in the cell's colour."""
+    plain: str
+    styled: str
+
+
+Cell = tuple["str | Segments | Styled", "int | None"]
+
+
+def _plain(text: "str | Segments | Styled") -> str:
+    if isinstance(text, Styled):
+        return text.plain
     return text if isinstance(text, str) else "".join(part for part, _color in text)
 
 
-def _styled(text: "str | Segments", color: int | None) -> str:
+def _styled(text: "str | Segments | Styled", color: int | None) -> str:
+    if isinstance(text, Styled):
+        return text.styled
     if isinstance(text, str):
         return _style(text, color)
     return "".join(_style(part, own if own is not None else color) for part, own in text)

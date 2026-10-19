@@ -103,13 +103,15 @@ class Message(Event):
             text = f"{self.name}: {text}"
         return self.bot.act("reply", then, request=self["request"], text=text[:LINE_LIMIT], **_privacy(private))
 
-    def reply_block(self, title, rows, then=None, private=None):
+    def reply_block(self, title, rows, then=None, private=None, labels=None):
         """Answer with a titled block, drawn like ``/who``: ``rows`` are
         ``(label, text)`` pairs or plain texts, a label of ``""`` meaning
         none. Cut to the block's bounds: a title of 40 characters, 12 rows,
         a label of 24 and a text of 200. The host titles it with the bot's
-        name, so no caller name goes in front. Check ``bot.blocks`` first:
-        a host that does not take blocks refuses the action."""
+        name, so no caller name goes in front. ``labels="commands"`` marks
+        the labels as command syntax, drawn as ``/help`` draws commands.
+        Check ``bot.blocks`` first: a host that does not take blocks
+        refuses the action."""
         shaped = []
         for row in list(rows)[:BLOCK_ROWS_LIMIT]:
             label, text = row if isinstance(row, (tuple, list)) else ("", row)
@@ -118,6 +120,8 @@ class Message(Event):
             shaped.append({"label": label, "text": text} if label else {"text": text})
         fields = {"request": self["request"], "block": {"title": " ".join(str(title).split())[:BLOCK_TITLE_LIMIT],
                                                          "rows": shaped}}
+        if labels is not None:
+            fields["block"]["labels"] = labels
         return self.bot.act("reply", then, **fields, **_privacy(private))
 
     def query(self, query, target="", then=None):
