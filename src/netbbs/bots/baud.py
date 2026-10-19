@@ -428,7 +428,8 @@ class Baud(botkit.Bot):
         rows.append(("/sysop <reason>", "page staff"))
         rows.append(("Conversation is enabled; reset clears your temporary context here. " if self.model_conversation
                      else "No language model is enabled. ") + self._privacy_note(msg))
-        msg.reply_block("Commands", rows, private=msg.private or None)
+        # The labels are command syntax, drawn as /help draws its commands.
+        msg.reply_block("Commands", rows, private=msg.private or None, labels="commands")
 
     def _top(self, msg, result):
         # Issue #1408: a door's standings, as the host filtered them. A

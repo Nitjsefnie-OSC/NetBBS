@@ -149,6 +149,7 @@ from netbbs.chat import (
     unban_user,
     unmute_user,
 )
+from netbbs.chat.blocks import LABELS_COMMANDS
 from netbbs.chat.categories import Category, get_category_by_id, list_subcategories, list_top_level_categories
 from netbbs.chat.bell import (
     BEL,
@@ -204,7 +205,7 @@ from netbbs.moderation import ChannelPermission, has_permission
 from netbbs.net.char_input import Completer, InputHistory, LineViewport, LiveInputBuffer, reject_unhandled_key
 from netbbs.net.char_input import move_cursor as relative_move_cursor
 from netbbs.net.chat_reply import (
-    MIN_LAST_COLUMN, Cell, block_width, footer_rule, paragraph, table_rows, title_rule,
+    MIN_LAST_COLUMN, Cell, Styled, block_width, footer_rule, paragraph, table_rows, title_rule,
 )
 from netbbs.rendering.width import display_width, truncate_to_width
 from netbbs.net.chat_channel_picker_banner import load_chat_channel_picker_banner, load_chat_channel_picker_slot_art
@@ -1797,15 +1798,32 @@ def _bot_block_title(
                       title_color=effective_header_color_256(db), right=stamp)
 
 
+def _command_label(label: str, padded: str, accent: int) -> Styled:
+    """A block label marked as command syntax (`"labels": "commands"`),
+    styled as `/help` styles its own: each command of a `, `-separated list
+    with its first word in the accent colour and bold, its parameters and
+    punctuation by `_styled_help_syntax`, the separators muted. `label` is
+    already sanitized; `padded` is it with the column's padding."""
+    commands = label.split(", ")
+    styled = colored(", ", fg_color=MUTED_COLOR).join(
+        _styled_help_syntax(command, _help_syntax_parts(command)[0], first=True, accent_color=accent)
+        for command in commands
+    )
+    return Styled(padded, styled + padded[len(label):])
+
+
 def _bot_block_lines(
     db: Database, viewer: User, speaker: str, block, created_at: str, width: int, *,
     private: bool = False, caution: str | None = None,
 ) -> list[str]:
     """A bot's titled block drawn like `/who` (`netbbs.net.chat_reply`): the
     title, then a row per row, a label in the label colour and aligned and
-    its text wrapping under itself. The bot's text is sanitized here,
-    before any styling, although the host already refused controls."""
+    its text wrapping under itself. A block whose labels are command syntax
+    (`"labels": "commands"`) draws them as `/help` draws its commands. The
+    bot's text is sanitized here, before any styling, although the host
+    already refused controls."""
     inner = block_width(width)
+    accent = effective_accent_color_256(db) if block.labels == LABELS_COMMANDS else None
     lines = [_bot_block_title(db, viewer, speaker, sanitize_text(block.title), created_at, width, private=private)]
     if caution:
         lines.extend(paragraph(caution, width=inner, color=MUTED_COLOR))
@@ -1819,7 +1837,8 @@ def _bot_block_lines(
         if label:
             label = sanitize_text(label)
             padded = label + " " * max(0, label_width - display_width(label))
-            group.append(((padded, LABEL_COLOR), (sanitize_text(text), VALUE_COLOR)))
+            cell = _command_label(label, padded, accent) if accent is not None else padded
+            group.append(((cell, LABEL_COLOR), (sanitize_text(text), VALUE_COLOR)))
             continue
         lines.extend(table_rows(group, width=inner))
         group = []

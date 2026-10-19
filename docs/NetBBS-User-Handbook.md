@@ -1011,7 +1011,8 @@ To reach the SysOp, use `/sysop <reason>` rather than Baud: see
   and its answer to yourself, [ask privately](#ask-a-bot-privately).
 - A reminder is said publicly in its channel when it is due.
 - A longer answer, such as `help`, comes as a titled block, its rows lined
-  up the way `/who` lines up its own:
+  up the way `/who` lines up its own, and `help` colours its commands the way
+  `/help` does:
 
   ```
   ── [BOT] Baud.bot · Commands ───────── to you · 20:14 ──

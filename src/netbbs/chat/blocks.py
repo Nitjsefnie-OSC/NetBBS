@@ -14,6 +14,10 @@ The bot never supplies a fallback of its own that could disagree.
 This module is the one place the shape is judged: a bot's block through
 `parse_block` (a refusal the bot is told), a stored or peer's block through
 `block_from_wire` (a malformed one is `None`, so the fallback line shows).
+
+A block may mark its labels as command syntax with `"labels": "commands"`,
+so a bot's command list is drawn the way `/help` draws its own; that is the
+only value, and without it the labels are plain.
 """
 
 from __future__ import annotations
@@ -29,6 +33,8 @@ MAX_LABEL = 24
 MAX_TEXT = 200
 #: The fallback line's limit: a bot line's.
 MAX_FALLBACK = 500
+#: What a block's optional `labels` may say: its labels are command syntax.
+LABELS_COMMANDS = "commands"
 
 
 class BlockError(ValueError):
@@ -40,10 +46,15 @@ class BotBlock:
     title: str
     # (label, text) pairs; an empty label is a row without one.
     rows: tuple[tuple[str, str], ...]
+    # `LABELS_COMMANDS` when the labels are command syntax, else None.
+    labels: str | None = None
 
     def to_wire(self) -> dict:
-        return {"title": self.title,
+        wire = {"title": self.title,
                 "rows": [{"label": label, "text": text} if label else {"text": text} for label, text in self.rows]}
+        if self.labels is not None:
+            wire["labels"] = self.labels
+        return wire
 
     def to_json(self) -> str:
         return json.dumps(self.to_wire(), ensure_ascii=False, separators=(",", ":"))
@@ -72,9 +83,12 @@ def _plain(value, what: str, limit: int, *, optional: bool = False) -> str:
 def parse_block(value) -> BotBlock:
     """A bot's block, checked: `{"title": ..., "rows": [{"label": ..., "text": ...}]}`,
     a title of 1-40 characters and 1-12 rows of an optional label of up to
-    24 characters and a text of 1-200, plain text only."""
-    if not isinstance(value, dict) or set(value) - {"title", "rows"} or "rows" not in value:
-        raise BlockError("A block is an object with a title and rows.")
+    24 characters and a text of 1-200, plain text only, and an optional
+    `"labels": "commands"`."""
+    if not isinstance(value, dict) or set(value) - {"title", "rows", "labels"} or "rows" not in value:
+        raise BlockError("A block is an object with a title, rows and optional labels.")
+    if "labels" in value and value["labels"] != LABELS_COMMANDS:
+        raise BlockError(f"A block's labels, when given, must be \"{LABELS_COMMANDS}\".")
     title = _plain(value.get("title"), "title", MAX_TITLE)
     rows = value["rows"]
     if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_ROWS:
@@ -85,7 +99,7 @@ def parse_block(value) -> BotBlock:
             raise BlockError("A block row is an object with a text and an optional label.")
         parsed.append((_plain(row.get("label"), "row label", MAX_LABEL, optional=True),
                        _plain(row["text"], "row text", MAX_TEXT)))
-    return BotBlock(title, tuple(parsed))
+    return BotBlock(title, tuple(parsed), value.get("labels"))
 
 
 def block_from_wire(value) -> BotBlock | None:

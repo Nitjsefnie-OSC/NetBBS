@@ -1,8 +1,8 @@
 """A third-party-style bot that answers with titled blocks, for issue #1373's
 tests. It speaks the raw protocol, without botkit.
 
-`block <x>` replies with a small block, `private <x>` answers privately with
-one, `tall` replies with the largest block the host takes, and `hello`
+`block <x>` replies with a small block, `commands <x>` with one whose labels
+are command syntax, `private <x>` answers privately with one, `tall` replies with the largest block the host takes, and `hello`
 says what the hello offered. `both`, `bad` and `say-block` send what the
 host refuses; every refusal is then replied as a plain line, `refused: ...`.
 """
@@ -26,6 +26,10 @@ for line in sys.stdin:
         if command == "block":
             send(id="b:" + request, action="reply", request=request,
                  block={"title": "Node stats", "rows": rows + [{"text": rest}]})
+        elif command == "commands":
+            send(id="c:" + request, action="reply", request=request,
+                 block={"title": "Commands", "labels": "commands",
+                        "rows": [{"label": "remind <when> <text>", "text": "a reminder"}, {"text": rest}]})
         elif command == "private":
             send(id="p:" + request, action="reply", request=request, private=True,
                  block={"title": "Your reminders", "rows": [{"label": "#1", "text": rest}]})

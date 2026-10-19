@@ -171,6 +171,91 @@ def test_botkit_reply_block_cuts_to_the_bounds_the_host_checks():
     assert block.rows[0][0] == "l" * 24 and len(block.rows[0][1]) == 200 and block.rows[1] == ("", "plain")
 
 
+# -- labels as command syntax ---------------------------------------------------
+
+COMMANDS = {"title": "Commands", "labels": "commands", "rows": [
+    {"text": "Happy to help!"},
+    {"label": "remind <when> <text>", "text": "a reminder here, shown publicly"},
+    {"label": "reminders, cancel <id>", "text": "your reminders here; cancel one of yours"},
+    {"label": "roll [NdS+M], coin", "text": "dice and a coin"},
+]}
+
+
+def test_a_block_may_mark_its_labels_as_command_syntax_and_nothing_else():
+    block = parse_block(COMMANDS)
+    assert block.labels == "commands" and block.to_wire()["labels"] == "commands"
+    assert parse_block(block.to_wire()) == block and block_from_json(block.to_json()) == block
+    assert block.fallback().startswith("Commands: Happy to help!; remind <when> <text> a reminder")
+    # Absent means plain labels, and a plain block's wire shape is unchanged.
+    plain = parse_block(STATS)
+    assert plain.labels is None and "labels" not in plain.to_wire()
+    assert plain.to_json() == json.dumps(STATS, separators=(",", ":"))
+    for bad in ("plain", "Commands", None, "", 1, True, ["commands"], {"commands": True}):
+        with pytest.raises(BotError, match="labels"):
+            check_block({**STATS, "labels": bad})
+        assert block_from_wire({**STATS, "labels": bad}) is None
+    # The marker costs a few bytes: the largest block still fits the wire bound.
+    largest = {"title": "\U0001F4E1" * 40, "labels": "commands",
+               "rows": [{"label": "\U0001F4E1" * 24, "text": "\U0001F4E1" * 200} for _ in range(12)]}
+    assert bot_block_bytes(parse_block(largest).to_wire()) <= BOT_BLOCK_MAX_BYTES
+
+
+def test_command_labels_are_styled_as_help_styles_the_same_syntax(db, sysop, alice, channel):
+    from netbbs.net.node_theme import effective_accent_color_256
+    from netbbs.rendering import colored
+    from netbbs.rendering.theme import MUTED_COLOR
+    bot = _install(db, sysop, channel)
+    _, message = publish(db, bot.id, channel.name, None, block=check_block(COMMANDS))
+    lines = chat_flow._render_channel_message(db, channel, alice, message, width=80).lines
+    accent = effective_accent_color_256(db)
+    help_row = chat_flow._render_help_entry("remind <when> <text>", "x", width=80, syntax_width=24,
+                                            accent_color=accent)[0]
+    remind = chat_flow._styled_help_syntax("remind <when> <text>", "remind", first=True, accent_color=accent)
+    assert remind in help_row and remind in lines[2]  # /help's styling, byte for byte
+    assert colored("remind", fg_color=accent, bold=True) in lines[2]
+    assert colored("<", fg_color=MUTED_COLOR) in lines[2] and colored("when", fg_color=chat_flow.LABEL_COLOR) in lines[2]
+    # Each command of a list styled on its own, the separators muted.
+    listed = (chat_flow._styled_help_syntax("reminders", "reminders", first=True, accent_color=accent)
+              + colored(", ", fg_color=MUTED_COLOR)
+              + chat_flow._styled_help_syntax("cancel <id>", "cancel", first=True, accent_color=accent))
+    assert listed in lines[3]
+    assert colored("coin", fg_color=accent, bold=True) in lines[4]
+    # The text column lines up by visible width, as the plain block's does.
+    plain = check_block({key: value for key, value in COMMANDS.items() if key != "labels"})
+    _, plain_message = publish(db, bot.id, channel.name, None, block=plain)
+    plain_lines = chat_flow._render_channel_message(db, channel, alice, plain_message, width=80).lines
+    assert [_plain(line) for line in lines[1:]] == [_plain(line) for line in plain_lines[1:]]
+    # The same rule draws a private answer.
+    answer = BotPrivateAnswer("Peer.bot", message.body, utc_now_iso(), block=message.block)
+    assert remind in chat_flow._render_bot_private_answer(db, alice, answer, width=80).lines[2]
+
+
+def test_a_plain_block_draws_its_labels_as_before(db, sysop, alice, channel):
+    from netbbs.rendering import colored
+    bot = _install(db, sysop, channel)
+    _, message = publish(db, bot.id, channel.name, None, block=check_block(STATS))
+    lines = chat_flow._render_channel_message(db, channel, alice, message, width=80).lines
+    assert list(lines[1:]) == [
+        " " + colored("Online", fg_color=chat_flow.LABEL_COLOR) + "  " + colored("4 people", fg_color=chat_flow.VALUE_COLOR),
+        " " + colored("Uptime", fg_color=chat_flow.LABEL_COLOR) + "  " + colored("3h 12m", fg_color=chat_flow.VALUE_COLOR),
+    ]
+
+
+def test_botkit_and_baud_mark_the_help_list_as_commands():
+    from netbbs.bots.botkit import Bot, Message
+    sent = []
+    bot = Bot({"blocks": True}, sent.append)
+    message = Message({"request": "r", "caller": {"name": "alice"}})
+    message.bot = bot
+    message.reply_block("T", [("help", "this")])
+    assert "labels" not in sent[-1]["block"]
+    message.reply_block("T", [("help", "this")], labels="commands")
+    assert check_block(sent[-1]["block"]).labels == "commands"
+    Baud({"blocks": True, "queries": ["stats", "seen", "top"]}, sent.append).handle(
+        {"type": "message", "request": "r", "caller": {"id": 7, "name": "alice"}, "channel": "c", "text": "help"})
+    assert check_block(sent[-1]["block"]).labels == "commands"
+
+
 # -- real bot processes and the real chat loop -----------------------------------
 
 class _Interactive(FakeSession):
@@ -300,7 +385,7 @@ def test_blocks_over_a_real_loopback_link_with_one_node_lacking_the_capability(t
 
             # The signed event carries the block beside the fallback body.
             row = host.db.connection.execute(
-                "SELECT link_event_json FROM channel_messages WHERE author_kind='bot'").fetchone()
+                "SELECT link_event_json FROM channel_messages WHERE author_kind='bot' ORDER BY id").fetchone()
             signed = SignedChannelMessage.from_dict(json.loads(row[0]))
             assert signed.payload["body"] == live.body and signed.payload["block"] == live.block.to_wire()
             # Async catch-up materializes it once; live dedup sees one line.
@@ -315,6 +400,22 @@ def test_blocks_over_a_real_loopback_link_with_one_node_lacking_the_capability(t
             mute_remote_bot(caller.db, cc, "Peer.bot", fingerprint, actor=caller.sysop, mute=False)
             remote = chat_flow._render_channel_message(caller.db, cc, caller.alice, materialized)
             assert _plain(remote.lines[0]).startswith("── [BOT] Peer.bot@")
+
+            # A block whose labels are command syntax keeps the marker, live
+            # and in the signed event, between two current nodes.
+            assert await caller.address(cc, f"Peer.bot@{fingerprint}: commands over link") is None
+            commands = await next_line(cq, "Commands: remind <when> <text> a reminder")
+            assert commands.block.labels == "commands" and commands.block.rows[-1] == ("", "over link")
+            await eventually(lambda: not caller.bots.requests)
+            row = host.db.connection.execute(
+                "SELECT link_event_json FROM channel_messages WHERE author_kind='bot' AND body LIKE 'Commands:%'"
+            ).fetchone()
+            signed_commands = SignedChannelMessage.from_dict(json.loads(row[0]))
+            assert signed_commands.payload["block"]["labels"] == "commands"
+            assert materialize_carried_channel_message(
+                caller.db, signed_commands, sender_fingerprint=fingerprint).block == commands.block
+            older_commands = await next_line(oq, "Commands: remind <when> <text> a reminder")
+            assert older_commands.block is None
 
             # A private block comes back inside bot_result.
             assert caller.bots.request(cc, caller.alice, ParticipantId("alice", 1), fingerprint, "Peer.bot",
