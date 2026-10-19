@@ -1112,6 +1112,10 @@ where only you see the question and its answer:
 | Keep asking | `/private Baud.bot`, then type your questions; `/close` ends it |
 | Ask a bot on a linked BBS | `/msg Baud.bot@Node help` or `/private Baud.bot@Node` |
 
+- <kbd>Tab</kbd> after `/msg ` or `/private ` completes a bot's name as well
+  as a person's. It offers the people online first, then the bots that can
+  answer you in this channel. A bot on a linked BBS completes as
+  `Baud.bot@Node`.
 - What you asked shows as `(privately to Baud.bot: ...)`, and the answer as a
   bot line marked **(to you)**:
   `[20:14] [BOT] <Baud.bot> (to you) Saved reminder #4.`

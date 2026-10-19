@@ -587,7 +587,12 @@ protocol is `docs/NetBBS-bot-api.md`. What a caller sees of one:
   relayed to MRC or seen by bots that read the channel, and its answer is
   always private. Its channel is the caller's current one, so the bot must be
   allowed there and every grant, mute and `/bots` setting applies (§16,
-  issue #1372).
+  issue #1372). Tab after `/msg ` or `/private ` offers, after the people
+  online, exactly the bots that would answer there: this node's running
+  bots with an addressed grant, and the linked bots the channel's roster
+  shows whose node can answer privately, as `Name.bot@Node`; muted, hidden
+  and stopped bots are left out. `/whois`, `/finger` and `/invite` complete
+  people only.
 - **Private answers.** A bot may answer any request privately. The answer is
   a bot line marked `(to you)`, shown only to the requesting session, kept
   in that session's lines like `/msg` and never in the channel's history,
