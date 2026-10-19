@@ -20,7 +20,7 @@ option. Nothing that worked before changes.
 
 | Door | Release | What it reports |
 | --- | --- | --- |
-| Voidrunner | v1.4.0 | rank promotions, silver and gold accolades; `!top voidrunner` is the Hall of Fame by best credits |
+| Voidrunner | v1.4.0 | rank promotions, silver and gold achievements; `!top voidrunner` is the Hall of Fame by best credits |
 | War Dialer | v1.3.1 | rank tiers, season medals, exchange captures; `!top wardialer` is the season ranking |
 | Retro Trivia | v1.2.0 | perfect rounds (no `!top`: the game keeps no scores) |
 
@@ -31,8 +31,8 @@ option. Nothing that worked before changes.
   announcements**. For `!top`, switch on **Grant door standings query**. Only
   doors every caller may play (minimum play level 0) can be sources.
 - **Only live results are announced.** A Voidrunner career that unlocks old
-  accolades the first time it opens in v1.4.0 sends none of them, and a save
-  that fails reports nothing. Bronze accolades are not announced.
+  achievements the first time it opens in v1.4.0 sends none of them, and a save
+  that fails reports nothing. Bronze achievements are not announced.
 - **Standings appear from the first session.** Each game sends its table
   when reporting starts, then again whenever its order changes. War Dialer
   v1.3.0 only sent it once the top ten changed; v1.3.1 fixes that (found in

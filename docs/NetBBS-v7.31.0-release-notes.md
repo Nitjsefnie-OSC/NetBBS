@@ -432,7 +432,7 @@ All additive, at bot API version 1. The bot API guide describes each.
 - **The bundled games don't emit door events yet.** Their repositories need
   changes before they report anything :
   - Voidrunner: `rank` after a committed promotion, `achievement` for
-    accolades of tier 2 and above (never catch-up unlocks on a career's first
+    achievements of tier 2 and above (silver and gold) (never catch-up unlocks on a career's first
     open), and standings from the Hall of Fame;
   - War Dialer: `rank` for rank tiers, `medal` at a season's close, `capture`
     for exchange captures, and standings for the season;
