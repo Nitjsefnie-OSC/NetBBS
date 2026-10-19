@@ -109,8 +109,9 @@ its own process, and the caller's lines are typed into the channel, so every
 `[BOT]` line on the landing page is an answer Baud actually gave. The
 channel's clock is pinned to one evening and each line gets its own minute, so a
 recapture shows the same times whenever it runs; the bot host's clock, which
-stamps a private `(to you)` answer, is pinned with it. Voidrunner's Hall of Fame
-for `!top` is dropped through the door outbound hook before Baud starts. No
+stamps a private `(to you)` answer, is pinned with it. The top ten for `!top`
+comes from a made-up third-party door, dropped through the door outbound hook
+before Baud starts: the bundled games do not report game events yet. No
 reminder is shown: Baud's confirmation names the time it falls due from Baud's
 own clock, which runs in its own process and cannot be pinned.
 

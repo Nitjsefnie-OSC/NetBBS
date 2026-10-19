@@ -390,7 +390,7 @@ async def capture_chat(tmp: Path) -> str:
 
     Baud runs for real: its own process under `BotRuntime`, answering what
     the caller types into the channel. It greets the caller on joining,
-    answers `top` with Voidrunner's Hall of Fame as a titled block, answers
+    answers `top` with a door's top ten as a titled block, answers
     `seen` privately ("(to you)", asked with `/msg`), and answers `stats`.
     The channel's clock is pinned to one evening, and each live line is
     stamped with its own minute, so a recapture shows the same times
@@ -434,22 +434,24 @@ async def capture_chat(tmp: Path) -> str:
                                  description="General chat")
         channel = set_topic(db, channel, "release day: 7.31.0", set_by=people["keeper"])
 
-        # Voidrunner reports its Hall of Fame through the door outbound
+        # A third-party door reports its top ten through the door outbound
         # hook, the way a door with game events on does (door API 5):
-        # `!top voidrunner` answers it as a titled block.
-        workdir = tmp / "voidrunner"
+        # `!top lunar lander` answers it as a titled block. Not a bundled
+        # game: those do not report game events yet, and the capture must
+        # not show one doing so.
+        workdir = tmp / "lunar_lander"
         workdir.mkdir()
-        door = create_door(db, "Voidrunner", sys.executable, creator=people["keeper"])
+        door = create_door(db, "Lunar Lander", sys.executable, creator=people["keeper"])
         enable_outbound(db, door, enabled_by=people["keeper"])
         set_events_enabled(db, door, True, changed_by=people["keeper"])
         (workdir / OUTBOUND_DIRNAME).mkdir()
         (workdir / OUTBOUND_DIRNAME / "req0000001.json").write_text(json.dumps({"standings": {
-            "title": "Hall of Fame",
+            "title": "Top pilots",
             "rows": [{"user_id": people[name].id, "value": value, "label": label}
-                     for name, value, label in (("wren", "48,210 pts", "Commodore"),
-                                                ("otto", "41,775 pts", "Fleet Captain"),
-                                                ("keeper", "29,040 pts", "Merchant Captain"),
-                                                ("alice", "12,380 pts", "Ensign"))]}}), encoding="utf-8")
+                     for name, value, label in (("wren", "9,840 pts", "14 soft landings"),
+                                                ("otto", "9,215 pts", "12 soft landings"),
+                                                ("keeper", "7,060 pts", "9 soft landings"),
+                                                ("alice", "4,380 pts", "5 soft landings"))]}}), encoding="utf-8")
         drain(db, door, workdir)
 
         # alice called earlier this evening and has gone: what `seen` reports.
@@ -545,9 +547,9 @@ async def capture_chat(tmp: Path) -> str:
                 await until(lambda: shown(answer), f"the answer to {line!r}")
 
             await type_(3, "evening all. 7.31.0 is out", "7.31.0 is out")
-            await say(4, "wren", "saw it! Baud keeps the voidrunner hall of fame now")
-            await type_(5, "!top voidrunner", "Hall of Fame")
-            await say(6, "otto", "second again. one more run tonight")
+            await say(4, "wren", "saw it! Baud keeps the lunar lander top ten now")
+            await type_(5, "!top lunar lander", "Top pilots")
+            await say(6, "otto", "second again. one more landing tonight")
             await say(7, "wren", "hi keeper! ask Baud about alice, she was on earlier")
             # Asked privately: the answer is drawn "(to you)", for keeper alone.
             await type_(8, "/msg Baud.bot seen alice", "last recorded")
