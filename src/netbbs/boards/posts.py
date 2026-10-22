@@ -154,6 +154,10 @@ def create_post(
     `layout` (issue #711) is "art" for a body written in the ANSI art
     editor, whose lines are kept as drawn, and "prose" otherwise.
 
+    On a board that sends real names to its FTN network (issue #1443) the
+    post is refused unless `author` has a verified real name that fits the
+    From field (`netbbs.ftn.scanner.real_name_refusal`).
+
     Enforces `board.min_write_level` via the same level-gating plumbing
     (`netbbs.permissions.require_level`) built in Phase 1 — this is the
     first real feature to plug into it, which is exactly the point of
@@ -177,6 +181,7 @@ def create_post(
     """
     require_write_gate(db, author, board)
     _refuse_new_post(db, board, subject, body, layout=layout)
+    _refuse_unsendable_author(db, board, author, subject, body, parent_post_id=parent_post_id)
     files = list(files or [])
     problem = sender_ref_problem(db, author, files, noun="post", verb="publish") if files else None
     if problem is not None:
@@ -210,6 +215,20 @@ def _check_poll(db: Database, board: Board, poll: PollSpec, *, parent_post_id: s
     if is_board_ftn(db, board):
         raise PollError("polls are not offered on a board gated to an FTN network, which cannot carry them")
     validate_poll_spec(poll)
+
+
+def _refuse_unsendable_author(
+    db: Database, board: Board, author: User, subject: str, body: str, *, parent_post_id: str | None,
+) -> None:
+    """Refuse, with `PostError`, a post on a board that sends real names to
+    its FTN network (issue #1443) that could not go out under `author`'s
+    verified real name: they have none, or it is too long for the From
+    field. Asked of a SysOp too, whom the name gate itself lets through."""
+    from netbbs.ftn.scanner import real_name_refusal
+
+    reason = real_name_refusal(db, board, author, subject=subject, body=body, parent_post_id=parent_post_id)
+    if reason is not None:
+        raise PostError(reason)
 
 
 def _refuse_new_post(db: Database, board: Board, subject: str, body: str, *, layout: str) -> None:
@@ -370,6 +389,7 @@ def create_crosspost(
             raise CrosspostRefused(board, "you cannot post on this message board") from None
         try:
             _refuse_new_post(db, board, subject, body, layout=layout)
+            _refuse_unsendable_author(db, board, author, subject, body, parent_post_id=None)
         except PostError as exc:
             raise CrosspostRefused(board, str(exc)) from None
         if layout == "art" and not board.allow_color:

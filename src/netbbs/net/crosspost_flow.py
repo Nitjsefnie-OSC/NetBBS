@@ -97,6 +97,12 @@ def crosspost_refusal(
         return "posting needs a verified name"
     if not meets_resource_age(db, user, board):
         return "posting has an age requirement you do not meet"
+    from netbbs.ftn.scanner import real_name_refusal
+
+    # Issue #1443: a board sending real names to its FTN network.
+    real_name_problem = real_name_refusal(db, board, user, short=True)
+    if real_name_problem is not None:
+        return real_name_problem
     refusal = posting_refusal(db, board, own_fingerprint=own_fingerprint, is_reply=False)
     if refusal is not None:
         return "only the board's origin node starts threads here"

@@ -2219,6 +2219,25 @@ per board. Nothing is mapped by default.
   local board, Linked board or other network's echo, and is left out when
   there is no other echo on the network.
 
+  **From name.** A post goes out under its author's username, except on a
+  **real-name echo** (issue #1443): a board whose effective name requirement
+  (§5.5, its own or its Community's) is `verified_and_displayed` sends the
+  author's verified real name instead. That board alone does; the same
+  author's posts on any other echo, on Link and in chat keep the username.
+  A reply there is addressed to the parent author's verified real name when
+  the parent is a local post, so its To matches the From the network saw.
+  A post that could not go out under a verified real name is refused before
+  it is written: the author has none, or it is longer than the From field's
+  35 bytes in the character set the message is written in. The board page
+  says why in place of `[P]ost`, the cross-post picker marks the board, and
+  every way of writing a post meets the same check -- a reply, a cross-post
+  copy, a bot's post, and a door's, whose label is nobody's name. It applies
+  to a local SysOp too, whom the name gate itself lets through. A post that
+  reaches the exporter without a usable name anyway (its author's
+  verification was revoked or replaced while a moderator held it, or it was
+  carried from elsewhere) stays local with a node-log warning, as for a full
+  queue. It is never sent under the username or with the name cut short.
+
   A post that arrived from FTN is never exported again. SEEN-BY and PATH on
   tossed messages are kept intact, so loop detection works.
 - *Edits and deletions* have no FTN equivalent. A local edit is not
@@ -2242,10 +2261,14 @@ per board. Nothing is mapped by default.
 - **Kludges.** INTL, FMPT and TOPT (FTS-4001) are written whenever zones or
   points need them.
 - **Inbound delivery.** Netmail is delivered by matching the To name,
-  case-insensitively, against a username: addressing uses the canonical
-  identity (§6.3), never a chat alias. A netmail matching no account, or an
-  account that takes no mail, goes to the SysOp, marked as addressed to
-  someone else. It is not bounced.
+  case-insensitively, against a username, or a name an account was renamed
+  away from: addressing uses the canonical identity (§6.3), never a chat
+  alias. Failing that, it goes to the one account whose verified real name
+  it is, compared exactly but for case and surrounding spaces -- the name a
+  real-name echo sent (issue #1443). An unverified display name never
+  matches. A netmail matching no account, a verified real name two accounts
+  share, or an account that takes no mail goes to the SysOp, marked as
+  addressed to someone else. It is not bounced.
 - **Robots.** AreaFix is netmail too. The console's Areas screen sends `+TAG`,
   `-TAG` and `%LIST` to the uplink's AreaFix and shows the replies.
 
@@ -2253,7 +2276,8 @@ per board. Nothing is mapped by default.
 one, the network's default is used, CP437 unless the SysOp sets another.
 Outbound text is written in CP437 when every character fits, and in UTF-8
 otherwise. The kludge always names the set used. To, From and Subject are cut
-on character boundaries to FTS-0001's 35 and 71 bytes. Inbound text is
+on character boundaries to FTS-0001's 35 and 71 bytes, except a real-name
+echo's From, which is never cut (above). Inbound text is
 sanitized before display like any other external content.
 
 **Not part of this design:** file echoes (TIC), file requests, acting as a

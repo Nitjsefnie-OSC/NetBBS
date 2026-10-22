@@ -260,6 +260,25 @@ def test_a_board_outside_the_allowlist_is_refused_by_name(db, door, sysop, board
     assert _posts(db, board, sysop) == []
 
 
+def test_a_board_sending_real_names_to_an_ftn_network_refuses_a_door(db, door, sysop, tmp_path):
+    """Issue #1443: a door's label is no one's verified real name."""
+    from netbbs.ftn.address import FtnAddress
+    from netbbs.ftn.networks import FtnNetwork, save_network, set_board_area
+
+    network = save_network(db, FtnNetwork(
+        name="nixNet", domain="nixnet", our_address=FtnAddress(86, 1, 7), uplink_address=FtnAddress(86, 1, 1),
+        uplink_host="hub.example", enabled=True,
+    ))
+    admin = create_board(db, "nixNet admin", creator=sysop, name_requirement="verified_and_displayed")
+    set_board_area(db, admin, network.id, "NIX_ADMIN")
+    _enable(db, door, sysop, admin)
+    request = _request(tmp_path, board="nixNet admin", subject="Season 1", body="...")
+
+    assert drain(db, door, tmp_path) == (0, 1)
+    assert "verified real names to an FTN network" in _result(db, door, request)["reason"]
+    assert _posts(db, admin, sysop) == []
+
+
 @pytest.mark.parametrize("payload", [
     {"body": "no subject"},
     {"subject": "  ", "body": "blank subject"},

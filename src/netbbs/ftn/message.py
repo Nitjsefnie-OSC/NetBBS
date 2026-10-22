@@ -191,6 +191,22 @@ def decode_message(packed: PackedMessage, *, default_charset: str = DEFAULT_CHAR
     return message
 
 
+def outbound_charset(message: FtnMessage) -> Charset:
+    """The character set `encode_message` writes `message` in:
+    `message.charset` when set, otherwise CP437 if every text field fits
+    it and UTF-8 if not."""
+    if message.charset:
+        return Charset(message.charset, kludge_for_codec(message.charset))
+    return choose_outbound_charset(message.to_name, message.from_name, message.subject,
+                                   message.body, message.origin or "", message.tear_line or "")
+
+
+def encoded_name_bytes(name: str, charset: Charset) -> int:
+    """How many bytes `name` takes in a To or From field written in
+    `charset`, before any cut to `MAX_NAME_BYTES`."""
+    return len(name.encode(charset.codec, errors="replace"))
+
+
 def encode_message(message: FtnMessage) -> PackedMessage:
     """Write `message` as a packed message.
 
@@ -199,11 +215,7 @@ def encode_message(message: FtnMessage) -> PackedMessage:
     naming the set actually used. To and From are cut to 35 bytes and the
     subject to 71, on character boundaries.
     """
-    if message.charset:
-        charset = Charset(message.charset, kludge_for_codec(message.charset))
-    else:
-        charset = choose_outbound_charset(message.to_name, message.from_name, message.subject,
-                                          message.body, message.origin or "", message.tear_line or "")
+    charset = outbound_charset(message)
     kludges = [(name, value) for name, value in message.kludges if name.upper() not in ("CHRS", "CHARSET")]
     kludges.append(("CHRS", charset.kludge))
 

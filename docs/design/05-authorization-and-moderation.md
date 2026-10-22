@@ -327,7 +327,10 @@ names may not contain the reserved `=` marker, and untrusted text cannot inject
 ANSI styling.
 
 Disclosure is resource-scoped. A resource which requires visible identity must
-not cause the real name to leak into unrelated screens.
+not cause the real name to leak into unrelated screens. A board carrying an FTN
+echo extends that scope to the echo: with `verified_and_displayed` its posts go
+out under their authors' verified real names, and nothing else the author
+writes does (§6.8, issue #1443).
 
 Remote propagation of attestations requires:
 

@@ -103,7 +103,7 @@ from netbbs.link.boards import (
 from netbbs.link.polls import queue_board_poll_vote_if_linked
 from netbbs.moderation import BoardPermission, has_permission
 from netbbs.ftn.networks import is_board_ftn
-from netbbs.ftn.scanner import export_post_if_ftn
+from netbbs.ftn.scanner import export_post_if_ftn, real_name_refusal
 from netbbs.mail import MAX_MAIL_SUBJECT_BYTES
 from netbbs.file_refs import FileRef, body_with_link_text, open_ref, refs_some_readers_cannot_open
 from netbbs.net.board_list_banner import load_board_list_banner, load_board_list_slot_art
@@ -1054,12 +1054,18 @@ async def _board_screen(
     # doc §9.5), so [P]ost is not offered on one: the caller would write a
     # whole post before learning that (issue #677).
     closed = is_board_closed(db, board)
-    may_write = (
+    passes_gates = (
         not closed
         and meets_write_gate(db, user, board)
         and meets_resource_age(db, user, board)
         and meets_name_requirement(db, user, get_effective_name_requirement(db, board))
     )
+    # Issue #1443: a board that sends real names to its FTN network takes no
+    # post from an author without a verified one, or with one too long for
+    # the network -- a SysOp, whom the name gate lets through, included. Said
+    # here, before anything is written for nothing.
+    real_name_problem = real_name_refusal(db, board, user) if passes_gates else None
+    may_write = passes_gates and real_name_problem is None
     # Issue #993: the board's origin may have kept new threads, or all
     # posting, to its own callers. [P]ost (a new thread) and [R]eply follow
     # it here instead of a post being refused after it was written.
@@ -1089,6 +1095,8 @@ async def _board_screen(
     board_unmet = unmet_gates(db, user, board)
     if can_post:
         read_only_reason = None
+    elif real_name_problem is not None:
+        read_only_reason = f"Read only: {real_name_problem}"
     elif may_write:
         read_only_reason = posting_refusal(db, board, own_fingerprint=own_fingerprint, is_reply=False)
     elif unmet_gates_shown(
