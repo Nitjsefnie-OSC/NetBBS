@@ -1182,10 +1182,13 @@ through <kbd>V</kbd> **Verify** on the main menu.
 #### Who can verify
 
 - As SysOp you can always verify; the account screen's **Can verify
-  identity** row says so.
+  identity** row says so. You can verify yourself too: your own account is
+  in **Verify**'s list, and its history entry says `(self)`. A verification
+  you make of yourself is never shared over Link, because other nodes
+  couldn't tell it from one someone else made.
 - For anyone else, switch it on with <kbd>I</kbd> **Identity verification**
   on their account, or <kbd>V</kbd> **Verify identity** on their staff
-  screen.
+  screen. They verify others only, never themselves.
 
 The right is separate from making someone a moderator, and the
 **Co-SysOp preset** does not include it: vouching for someone's age or name is
@@ -2282,6 +2285,9 @@ Verified ages and names cross the Link only when three people agree:
 3. The other SysOp names your node under **Identity authorities** on their
    side.
 
+A verification you made of yourself never crosses: your Profile shows its
+sharing as `off (you verified it yourself)`.
+
 Your node then sends each recipient one sealed snapshot of everything it should
 hold from you: directly if the recipient can be dialed, otherwise through the
 relays that recipient names. Only the recipient can open it; a relay sees that
@@ -2822,15 +2828,13 @@ To carry such an echo:
    such as `NIX_ADMIN`.
 2. Edit the board and set **Name requirement** to **Verified and displayed**.
 3. Verify the real name of everyone who will post there, yourself included,
-   with <kbd>V</kbd> **Verify** on the main menu. Enter the name as the
-   network should see it, such as `Jane Doe`.
+   with <kbd>V</kbd> **Verify** on the main menu: your own account is in its
+   list. Enter the name as the network should see it, such as `Jane Doe`.
 
 > [!IMPORTANT]
 > Your SysOp level lets you past the board's name requirement, but not past
 > this one: the network still needs a name. Until your own real name is
-> verified, the board reads `Read only` for you too. The **Verify** list
-> leaves out your own account, so have another account that may verify
-> identity verify you (see [Who can verify](#who-can-verify)).
+> verified, the board reads `Read only` for you too.
 
 The From field holds 35 bytes. A name with letters outside plain ASCII, such
 as `é`, can take two bytes each when the message goes out in UTF-8, which

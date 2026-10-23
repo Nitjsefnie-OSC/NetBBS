@@ -314,3 +314,9 @@ def test_netmail_to_an_unverified_display_name_goes_to_the_sysop(db, sysop, netw
 
     assert list_inbox(db, member) == []
     assert len(list_inbox(db, sysop)) == 1
+
+
+def test_the_refusal_tells_a_sysop_to_verify_themselves_and_a_member_whom_to_ask(db, sysop, network, admin_echo):
+    member = create_user(db, "night_owl", password="hunter2")
+    assert real_name_refusal(db, admin_echo, sysop).endswith("Verify it yourself with [V]erify on the main menu.")
+    assert real_name_refusal(db, admin_echo, member).endswith("Ask the SysOp to verify it.")

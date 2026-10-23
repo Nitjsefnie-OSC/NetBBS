@@ -310,6 +310,17 @@ birthdate (Your profile › Name & details) and who to ask (the Staff list), and
 the gate editors' help says who verifies. (Maintainer decision 2026-10-06,
 issue #1103.)
 
+**Only a local SysOp verifies themselves.** A SysOp passes every identity gate
+without a verification, but a real-name FTN echo (§6.8) still needs their
+verified name, so the **Verify** picker lists a SysOp's own account and
+`attestation.attest_name`/`attest_age` accept it. Staff with
+`can_verify_identity` vouch for others only, and the domain refuses their own
+account as well as the picker leaving it out. The history entry of a
+self-verification says `(self)`. A self-verification is never shared over
+Link: the signed object names only the issuing node, so a remote node could
+not tell it from a third party's, and the consent toggle refuses it.
+(Maintainer decision 2026-10-23, issue #1443.)
+
 Name requirements are:
 
 - `none`;

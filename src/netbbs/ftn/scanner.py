@@ -38,7 +38,7 @@ from netbbs import __version__
 from netbbs.boards import Board
 from netbbs.boards.posts import Post, crosspost_copies
 from netbbs.config import get_node_display_name
-from netbbs.auth.users import User
+from netbbs.auth.users import SYSOP_LEVEL, User
 from netbbs.ftn.chrs import MAX_NAME_BYTES, choose_outbound_charset
 from netbbs.ftn.message import (
     FtnMessage,
@@ -210,10 +210,12 @@ def real_name_refusal(
     if name is None:
         if short:
             return f"sends real names to {network.name}; yours is not verified"
-        return (
-            f"{board.name} sends real names to {network.name}, and your account has no verified real name. "
-            "Someone who may verify identity can do it with [V]erify on the main menu."
+        # A SysOp verifies themselves (maintainer decision 2026-10-23).
+        how = (
+            "Verify it yourself with [V]erify on the main menu." if author.user_level >= SYSOP_LEVEL
+            else "Ask the SysOp to verify it."
         )
+        return f"{board.name} sends real names to {network.name}, and your account has no verified real name. {how}"
     if subject is None or body is None:
         charset = choose_outbound_charset(name)
     else:
@@ -234,7 +236,7 @@ def real_name_refusal(
         return f"your verified real name is too long for {network.name}"
     return (
         f"Your verified real name is {size} bytes; {network.name} allows {MAX_NAME_BYTES}. "
-        "Ask a SysOp to verify a shorter form."
+        + ("Verify a shorter form of it." if author.user_level >= SYSOP_LEVEL else "Ask a SysOp to verify a shorter form.")
     )
 
 

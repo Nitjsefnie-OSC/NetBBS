@@ -57,3 +57,21 @@ or cut short. Rejected:
 real name when the parent is a local post, so it matches the From the network
 saw; an FTN parent keeps its own name, as before. Inbound echomail is
 unaffected.
+
+**Amendment — a SysOp verifies themselves (maintainer decision 2026-10-23).**
+As built first, the **Verify** picker left out the verifier's own account, so
+a SysOp could take part in a real-name echo only after a second account with
+"Can verify identity" verified them. A local SysOp now finds their own account
+in the picker, and `attest_name`/`attest_age` accept it; the history entry
+says `(self)`. Staff with "Can verify identity" still verify others only, and
+the domain refuses their own account, not just the picker. Rejected: letting
+any verifier verify themselves, which would let a helper grant themselves
+whatever a verified age or name opens.
+
+A self-verification is never shared over Link. The signed
+`remote_identity_attestation` names only the issuing node, so a receiving node
+could not tell a SysOp's word about themselves from a third party's check.
+Turning sharing on refuses it, the Link export skips it, and the Profile shows
+sharing as `off (you verified it yourself)`. Rejected: marking the object as
+self-attested, which changes a signed protocol object for a case a
+receiving SysOp has no policy for yet.

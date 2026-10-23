@@ -253,6 +253,10 @@ def build_link_visible_remote_attestation(
     attestation = get_attestation(db, user, _validate_attribute(attribute))
     if attestation is None or not attestation.link_visible:
         raise ValueError("local attestation is missing or not explicitly Link-visible")
+    if attestation.self_attested:
+        # Issue #1443: the signed object names only this node as issuer, so a
+        # SysOp's verification of themselves would read as a third party's.
+        raise ValueError("a self-verification is never shared over Link")
     return build_remote_attestation(
         signing_key,
         issuer_fingerprint=home_node_fingerprint,
@@ -1127,8 +1131,11 @@ def reconcile_issued_attestations(
         consented = {
             (int(row["subject_user_id"]), str(row["attribute"])): str(row["attested_value"])
             for row in db.connection.execute(
+                # A self-verification (issue #1443) is never consented to
+                # share; one that somehow is gets revoked, not issued.
                 """SELECT subject_user_id, attribute, attested_value FROM user_attestations
-                   WHERE link_visible = 1"""
+                   WHERE link_visible = 1
+                     AND (verifier_user_id IS NULL OR verifier_user_id != subject_user_id)"""
             ).fetchall()
         }
         live = db.connection.execute(

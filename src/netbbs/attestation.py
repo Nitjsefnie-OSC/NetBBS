@@ -429,6 +429,20 @@ class UserAttestation:
     created_at: str
     link_visible: bool
 
+    @property
+    def self_attested(self) -> bool:
+        """Whether the subject verified themselves: a SysOp's own name or age
+        (maintainer decision 2026-10-23, issue #1443). Never shared over
+        Link: another node could not tell it from a third party's."""
+        return self.verifier_user_id is not None and self.verifier_user_id == self.subject_user_id
+
+
+#: Why a self-verification is never shared over Link (issue #1443).
+SELF_ATTESTED_NOT_SHARED = (
+    "a verification you made of yourself is not shared over Link: other nodes could not tell it "
+    "from one someone else made"
+)
+
 
 def _require_verifier(verifier: User) -> None:
     """SysOp always passes, with no `can_verify_identity` row needed —
@@ -438,15 +452,25 @@ def _require_verifier(verifier: User) -> None:
         raise AttestationError(f"{verifier.username!r} is not authorized to verify identity")
 
 
-def attest_age(db: Database, subject: User, birthdate: date, *, verifier: User) -> UserAttestation:
+def _require_may_attest(verifier: User, subject: User) -> None:
+    """`_require_verifier`, and only a local SysOp verifies themselves
+    (maintainer decision 2026-10-23, issue #1443): a SysOp runs the node and
+    already passes every identity gate, but a real-name echo still needs
+    their name. Staff with "Can verify identity" vouch for others only."""
     _require_verifier(verifier)
+    if verifier.id == subject.id and verifier.user_level < SYSOP_LEVEL:
+        raise AttestationError("only a SysOp can verify their own identity")
+
+
+def attest_age(db: Database, subject: User, birthdate: date, *, verifier: User) -> UserAttestation:
+    _require_may_attest(verifier, subject)
     if birthdate > _today():
         raise AttestationError("attested birthdate cannot be in the future")
     return _store_attestation(db, subject, attribute="age", attested_value=birthdate.isoformat(), verifier=verifier)
 
 
 def attest_name(db: Database, subject: User, real_name: str, *, verifier: User) -> UserAttestation:
-    _require_verifier(verifier)
+    _require_may_attest(verifier, subject)
     real_name = real_name.strip()
     if not real_name:
         raise AttestationError("attested real name cannot be blank")
@@ -479,7 +503,7 @@ def _store_attestation(
     db.connection.commit()
     record_action(
         db, actor=verifier, action=f"attest_{attribute}", target_user_id=subject.id,
-        detail=f"attested {attribute} for {subject.username!r}",
+        detail=f"attested {attribute} for {subject.username!r}" + (" (self)" if verifier.id == subject.id else ""),
     )
     return get_attestation(db, subject, attribute)
 
@@ -547,8 +571,11 @@ def set_attestation_link_visible(
     """
     if attribute not in {"age", "name"}:
         raise AttestationError(f"unknown attestation attribute: {attribute!r}")
-    if get_attestation(db, user, attribute) is None:
+    current = get_attestation(db, user, attribute)
+    if current is None:
         raise AttestationError(f"cannot share missing {attribute} attestation")
+    if visible and current.self_attested:
+        raise AttestationError(SELF_ATTESTED_NOT_SHARED)
     db.connection.execute(
         """UPDATE user_attestations SET link_visible = ?
            WHERE subject_user_id = ? AND attribute = ?""",
