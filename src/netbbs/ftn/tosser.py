@@ -17,8 +17,10 @@ The tosser: inbound FTN packets into boards and Mail (design doc §6.8).
   An area no board carries is skipped and counted, which is normal while
   a hub still sends an echo the SysOp has unmapped.
 - **Netmail** addressed to this node is delivered to the account whose
-  username matches its To name, case-insensitively. A name matching no
-  account, or an account that takes no mail, goes to the SysOp with a
+  username (or a name it was renamed away from) matches its To name,
+  case-insensitively, else to the one account whose verified real name it
+  is (issue #1443). A name matching no account, or two accounts' verified
+  real names, or an account that takes no mail, goes to the SysOp with a
   line saying who it was for (Decision 7). Netmail for another node is
   not routed: this node is not a hub. It is skipped and counted.
 - **Duplicates** are dropped by MSGID, or by a hash of the message when
@@ -39,7 +41,7 @@ import logging
 from dataclasses import dataclass, field
 
 from netbbs.auth.renames import get_recipient_by_name
-from netbbs.auth.users import AuthError, User, get_user_by_username, is_usable_sysop, list_users
+from netbbs.auth.users import AuthError, User, get_user_by_id, get_user_by_username, is_usable_sysop, list_users
 from netbbs.boards.boards import get_board_by_id
 from netbbs.boards.limits import MAX_BODY_BYTES
 from netbbs.boards.posts import PostError, create_labelled_post
@@ -222,20 +224,40 @@ def _toss_netmail(db, network, message: FtnMessage, packed, header: PacketHeader
 
 def _netmail_recipient(db: Database, to_name: str) -> tuple[User, str | None]:
     """The account a netmail is for, or the SysOp with a note saying who it
-    was for (Decision 7)."""
+    was for (Decision 7).
+
+    A username, or one renamed away from, decides first; then a verified
+    real name, which a board sending real names makes the name the network
+    knows its author by (issue #1443), when exactly one account has it."""
     name = to_name.strip()
     try:
         # A name renamed away from reaches the renamed account (issue #1306):
         # FTN networks have no rename, and keep writing to the old one.
         user = get_recipient_by_name(db, name)
     except AuthError:
-        user = None
+        user = _account_with_verified_name(db, name)
     if user is not None and mail_recipient_refusal(db, user) is None:
         return user, None
     sysops = sorted((u for u in list_users(db) if is_usable_sysop(u)), key=lambda u: u.id)
     if not sysops:
         raise _Unstorable(f"no account named {name!r} and no SysOp to give it to")
     return sysops[0], f"[This netmail was addressed to {name!r}, who has no mailbox on this node.]"
+
+
+def _account_with_verified_name(db: Database, name: str) -> User | None:
+    """The one account whose verified real name is `name`, compared without
+    case or surrounding spaces; `None` when no account has it, or more than
+    one does -- a netmail that could be for either is not given to one."""
+    wanted = name.strip().casefold()
+    if not wanted:
+        return None
+    rows = db.connection.execute(
+        "SELECT subject_user_id, attested_value FROM user_attestations WHERE attribute = 'name'"
+    ).fetchall()
+    matches = {row["subject_user_id"] for row in rows if row["attested_value"].strip().casefold() == wanted}
+    if len(matches) != 1:
+        return None
+    return get_user_by_id(db, matches.pop())
 
 
 def author_label(message: FtnMessage, network: FtnNetwork) -> str:

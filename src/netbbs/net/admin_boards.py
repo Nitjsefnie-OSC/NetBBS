@@ -1102,7 +1102,11 @@ def _board_field_specs(
             render=lambda d: _name_requirement_label(d.get("name_requirement")),
             prompt=_name_requirement_field(),
             step=_name_requirement_step(),
-            help=_NAME_REQUIREMENT_HELP,
+            help=_NAME_REQUIREMENT_HELP + (
+                " On a board carrying an FTN echo, 'verified_and_displayed' also sends that name to the "
+                "network as the poster's From, and refuses a post from anyone, you included, without one "
+                "that fits its 35 bytes."
+            ),
             brief="How posters must be identified",
             section="Access",
         ),

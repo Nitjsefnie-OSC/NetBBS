@@ -1322,6 +1322,14 @@ def _handle_one(db: Database, door, config: OutboundConfig, actor: User, launch:
     if refusal is not None:
         answer({"status": "rejected", "reason": refusal})
         return "post refused"
+    # Issue #1443: a board that sends real names to its FTN network takes no
+    # post under a door's label, which is no one's verified real name.
+    from netbbs.ftn.scanner import sends_real_names
+
+    if sends_real_names(db, board):
+        reason = "this message board sends its authors' verified real names to an FTN network, and a door has none"
+        answer({"status": "rejected", "reason": reason})
+        return "post refused"
 
     # One transaction for the post, the rate debit and the audit entry. The
     # same shape `netbbs.auth.users` uses for a key removal and its audit

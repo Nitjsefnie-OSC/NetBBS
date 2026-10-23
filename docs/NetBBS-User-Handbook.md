@@ -245,6 +245,11 @@ what you post there goes out to them too.
 - Their posts are signed with a name and an FTN address, as in
   `Joe Bloggs (21:3/110)`.
 - **Reply** works as on any board.
+- Your posts go out under your username, except in an echo that shows
+  verified names beside posts. Some echoes take real names only, so there
+  your post goes out under your verified real name. Without one, or with one
+  longer than the network allows (35 bytes), the board is read only for you
+  and says why. Ask the SysOp to verify your name, or a shorter form of it.
 
 > [!NOTE]
 > In an echo, an edit or a deletion stays on this BBS, because other BBSes

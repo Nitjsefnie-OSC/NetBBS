@@ -1225,7 +1225,9 @@ inherited.
 
 - As a SysOp (level 255) you pass every minimum age, verified-age and
   verified-name requirement on your own node without verifying yourself, the
-  same way you pass every level.
+  same way you pass every level. A board that sends real names to an FTN
+  echo is the exception: it needs your verified name to post (see
+  [Real-name echoes](#real-name-echoes)).
 - Staff and other accounts do not: a helper you gave staff permissions still
   needs the age or name the resource asks for.
 - Callers from other nodes are always held to their own verified age and
@@ -2802,6 +2804,49 @@ In this chapter: [Join a network](#join-a-network) · [Netmail](#netmail) ·
   and address, and goes through the board's own moderation.
 - What callers post on an FTN board goes out with the next call.
 - Edits and deletions stay on this BBS, because FTN has no way to carry them.
+- Posts go out under the author's username, except on a real-name echo
+  (below).
+
+#### Real-name echoes
+
+Some echoes take posts under real names only. nixNet, for example, allows
+aliases in every echo except NIX_ADMIN. A board sends its authors' verified
+real names to its echo when its **Name requirement** is **Verified and
+displayed**, set on the board or inherited from its Community. Only that
+board does: the same account's posts on other echoes, on Link and in chat
+keep the username.
+
+To carry such an echo:
+
+1. On the board's screen, give it the echo with <kbd>E</kbd> **Echo (FTN)**,
+   such as `NIX_ADMIN`.
+2. Edit the board and set **Name requirement** to **Verified and displayed**.
+3. Verify the real name of everyone who will post there, yourself included,
+   with <kbd>V</kbd> **Verify** on the main menu. Enter the name as the
+   network should see it, such as `Jane Doe`.
+
+> [!IMPORTANT]
+> Your SysOp level lets you past the board's name requirement, but not past
+> this one: the network still needs a name. Until your own real name is
+> verified, the board reads `Read only` for you too. The **Verify** list
+> leaves out your own account, so have another account that may verify
+> identity verify you (see [Who can verify](#who-can-verify)).
+
+The From field holds 35 bytes. A name with letters outside plain ASCII, such
+as `é`, can take two bytes each when the message goes out in UTF-8, which
+happens when the post has characters CP437 lacks. A post whose name doesn't
+fit is refused with the name's length; verify a shorter form of the name,
+such as an initial for a middle name. Nothing is ever cut short or sent
+under the username instead.
+
+- **Replies.** A reply to a local post on the board is addressed to that
+  author's real name, the name the network saw.
+- **Netmail.** Netmail to a verified real name reaches its account (see
+  [Netmail](#netmail)).
+- **Doors** can't post there: a door's label is nobody's real name.
+- **Held posts.** If a verification is revoked or changed while a moderator
+  holds a post, the approved post stays on this BBS, and the node log says
+  why.
 
 ### Netmail
 
@@ -2810,7 +2855,7 @@ Netmail is personal mail to an address written as `Name (zone:net/node)`.
 | Netmail | |
 | --- | --- |
 | **Who may send it** | Each network has a **Netmail level**, and only accounts at that level may send netmail. It starts at 255, SysOp only, because netmail leaves under this BBS's address. |
-| **Who receives it** | Every account. Netmail for a name with no account here comes to you. |
+| **Who receives it** | Every account, by username, a username it had before a rename, or its verified real name. Netmail for a name with no account here comes to you, and so does netmail for a real name two accounts share. |
 | **Direct delivery** | Import the network's nodelist (below). Netmail to a node whose nodelist entry gives a BinkP host then goes to it directly. |
 | **Via the hub** | The rest goes through the hub, and so does anything a direct call fails to deliver after three tries. |
 
