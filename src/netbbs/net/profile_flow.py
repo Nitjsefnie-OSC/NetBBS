@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable, Sequence
 from netbbs.rendering.layout import MenuEntry
 from netbbs.rendering.menu import continue_prompt, highlight_hotkeys
 from netbbs.attestation import (
+    SELF_ATTESTED_NOT_SHARED,
     AttestationError,
     ProfileFieldError,
     attest_age,
@@ -2430,6 +2431,10 @@ async def _identity_details_screen(
             current = get_attestation(db, user, attribute)
             if current is None or current != shown:
                 return False, current
+            if current.self_attested and not current.link_visible:
+                # Issue #1443: said, not toggled -- a press here is not the
+                # "changed since this screen was drawn" race below.
+                return False, current
             try:
                 return True, set_attestation_link_visible(db, user, attribute, not current.link_visible)
             except AttestationError:
@@ -2448,6 +2453,9 @@ async def _identity_details_screen(
             draft["recipient_count"] = await lane.run(count_attestation_recipients)
             draft[f"delivered_{attribute}"] = (await lane.run(attestation_delivery_counts, user.id, attribute))[0]
             if toggled:
+                return
+            if attestation is not None and attestation == shown and attestation.self_attested:
+                await session.write_line(colored(f"Not shared: {SELF_ATTESTED_NOT_SHARED}.", fg_color=MUTED_COLOR))
                 return
             if attestation is None:
                 await session.write_line(
@@ -2476,6 +2484,8 @@ async def _identity_details_screen(
             attestation = d[key]
             if attestation is None:
                 return "(not verified)"
+            if attestation.self_attested:
+                return "off (you verified it yourself)"
             if not attestation.link_visible:
                 return "off"
             # Said beside the value rather than only in the help, because
@@ -2692,7 +2702,11 @@ async def _verify_identity_menu(session: Session, db: Database, verifier: User) 
     rather than inside the admin menu, since a granted verifier may not
     have admin access otherwise (design doc §18).
     """
-    candidates = [u for u in list_users(db) if u.id != verifier.id]
+    # A SysOp verifies themselves too (maintainer decision 2026-10-23, issue
+    # #1443): a real-name echo needs their name. Anyone else vouches for
+    # others only, as `attestation.attest_name` enforces.
+    may_self_verify = verifier.user_level >= SYSOP_LEVEL
+    candidates = [u for u in list_users(db) if may_self_verify or u.id != verifier.id]
     selected = await pick_item(
         session,
         candidates,
@@ -2701,7 +2715,7 @@ async def _verify_identity_menu(session: Session, db: Database, verifier: User) 
         description_of=lambda u: _verification_status_description(db, u),
         title="Verify a user's identity",
         own=True,
-        empty_message="No other users to verify.",
+        empty_message="No users to verify." if may_self_verify else "No other users to verify.",
         redraw_in_place=redraw_in_place_enabled(db, verifier),
         unicode_style=unicode_style_enabled(db, verifier),
         collapsed=breadcrumb_collapsed_enabled(db, verifier),
